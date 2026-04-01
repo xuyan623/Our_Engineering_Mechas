@@ -1,0 +1,65 @@
+# dot files
+/.vscode/launch.json
+/.settings
+/.eide/
+/.eide.usr.ctx.json
+/.vscode/
+.cmsis/
+USER/.cmsis/
+USER/.eide/
+USER/.vscode/
+USER/DebugConfig/
+USER/Listings/
+
+# project out
+/build
+/bin
+/obj
+/out
+/OBJ/
+
+# Keil project files
+*.uvguix.*      # 用户特定GUI配置
+*.uvoptx        # 用户特定选项（窗口布局、断点等）
+# *.uvprojx    # 工程主文件（保留，不忽略）
+*.jscope
+*.elf
+*.hex
+*.crf
+*.htm
+*.dep
+*.lnp
+*.iex
+*.i
+*.d
+*.sct
+*.map
+*.axf
+*.tra
+*.log
+*.lst
+*.tmp
+*.txt
+# Keil intermediate directories
+RTE/
+DebugConfig/
+Listings/
+Objects/
+
+# eide template
+*.ept
+*.eide-template
+
+# Keil kill script (可以保留，也可以忽略，根据需要)
+# keilkill.bat
+
+# Backup files
+*~
+*.bak
+*.backup
+*.old
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
