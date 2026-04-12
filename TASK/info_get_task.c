@@ -105,7 +105,7 @@ void info_get_task(void *parm)
 				vofa_debug[4]=Motor[Pitch2].Brushless.angle_ref + GO8010_init_angle1;		
 			  vofa_debug[5]=Motor[Pitch2].Brushless.angle_fdb;
         gain_angle();					
-        custom_arm_ik(T_target,doq) ;
+     //   custom_arm_ik(T_target,doq) ;
 
 				
 
