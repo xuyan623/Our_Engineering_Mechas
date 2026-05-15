@@ -189,7 +189,7 @@ static void damiao_dm4310_test_task_entry(void* arg)
         g_damiao_dm4310_test_debug.tx_count++;
         g_damiao_dm4310_test_debug.loop_count++;
         damiao_dm4310_test_refresh_debug(runtime, target_position_rad);
-        (void)system_health_beat(SYSTEM_HEALTH_TASK_DAMIAO_SMOKE);
+        (void)sh_beat(SH_TASK_DAMIAO_SMOKE);
 
         (void)osal_delay_until(&deadline_cursor_ms, DAMIAO_DM4310_TEST_LOOP_PERIOD_MS, OM_NULL);
     }

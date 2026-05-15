@@ -3,6 +3,6 @@
 
 #include "core/om_def.h"
 
-OmRet system_health_self_test_task_start(void);
+OmRet sh_self_test_task_start(void);
 
 #endif

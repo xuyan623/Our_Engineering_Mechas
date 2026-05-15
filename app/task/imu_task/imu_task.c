@@ -76,7 +76,7 @@ static void imu_task_entry(void* arg)
 
             if (event_bus_publish(&g_event_bus, EVT_IMU_DATA_READY) != OSAL_OK)
             {
-                system_health_report_fatal(SYSTEM_HEALTH_ERR_EVT_IMU_DATA_READY_PUBLISH_FAIL, "event_bus_publish EVT_IMU_DATA_READY failed");
+                sh_report_fatal(SH_ERR_EVT_IMU_DATA_READY_PUBLISH_FAIL, "event_bus_publish EVT_IMU_DATA_READY failed");
                 for (;;)
                 {
                     osal_sleep_ms(1000U);

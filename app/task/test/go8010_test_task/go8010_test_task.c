@@ -161,7 +161,7 @@ static void go8010_test_task_entry(void* arg)
         go8010_rx_service(&runtime->bus);
         go8010_test_refresh_feedback(runtime);
         go8010_test_update_online_flag(runtime);
-        (void)system_health_beat(SYSTEM_HEALTH_TASK_GO8010_SMOKE);
+        (void)sh_beat(SH_TASK_GO8010_SMOKE);
 
         if (g_go8010_test_debug.online_flag == 0u &&
             g_go8010_test_debug.feedback_seen_count == 0u)

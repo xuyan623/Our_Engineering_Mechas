@@ -667,8 +667,8 @@ static void chassis_task_run_once(ChassisTaskContext* context)
 
     if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
     {
-        system_health_report_fatal(
-            SYSTEM_HEALTH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL,
+        sh_report_fatal(
+            SH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL,
             "event_bus_publish EVT_MOTOR_TX_REQUEST failed");
         for (;;)
         {
@@ -685,7 +685,7 @@ static void chassis_task_entry(void* arg)
     while (1)
     {
         chassis_task_run_once(context);
-        (void)system_health_beat(SYSTEM_HEALTH_TASK_CHASSIS);
+        (void)sh_beat(SH_TASK_CHASSIS);
         (void)osal_delay_until(&deadline_cursor_ms, CHASSIS_TASK_PERIOD_MS, OM_NULL);
     }
 }

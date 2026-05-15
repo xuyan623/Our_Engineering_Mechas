@@ -465,12 +465,12 @@ static void motor_recovery_update_fault(void)
 
     if (any_degraded == OM_TRUE)
     {
-        (void)system_health_report_runtime_fault(SYSTEM_HEALTH_ERR_MOTOR_RECOVERY_DEGRADED);
+        (void)sh_report_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
         g_motor_recovery.runtime_fault_active = OM_TRUE;
     }
     else if (g_motor_recovery.runtime_fault_active == OM_TRUE)
     {
-        (void)system_health_clear_runtime_fault(SYSTEM_HEALTH_ERR_MOTOR_RECOVERY_DEGRADED);
+        (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
         g_motor_recovery.runtime_fault_active = OM_FALSE;
     }
 }

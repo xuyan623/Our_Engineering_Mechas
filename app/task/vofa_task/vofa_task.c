@@ -10,7 +10,9 @@
 
 #define VOFA_TASK_PERIOD_MS             (10u)
 #define VOFA_MOTOR_FEEDBACK_COUNT       (14u)
-#define VOFA_CHANNEL_COUNT              (VOFA_MOTOR_FEEDBACK_COUNT)
+#define VOFA_EXTRA_CHANNEL_COUNT        (1u)
+#define VOFA_CHANNEL_INDEX_PITCH2_ZERO  (VOFA_MOTOR_FEEDBACK_COUNT)
+#define VOFA_CHANNEL_COUNT              (VOFA_MOTOR_FEEDBACK_COUNT + VOFA_EXTRA_CHANNEL_COUNT)
 #define VOFA_TASK_UART7_BAUDRATE        (115200u)
 #define VOFA_TASK_UART7_TX_BUFSIZE      (128u)
 #define VOFA_TASK_UART7_RX_BUFSIZE      (64u)
@@ -19,6 +21,32 @@
 
 static MotorFeedbackSnapshot g_vofa_feedback_snapshots[VOFA_MOTOR_FEEDBACK_COUNT] = {0};
 static float g_vofa_frame[VOFA_CHANNEL_COUNT] = {0.0f};
+
+static void vofa_task_fill_pitch2_zero(float frame[VOFA_CHANNEL_COUNT])
+{
+    Motor* pitch2_motor = OM_NULL;
+    float pitch2_zero_angle_rad = 0.0f;
+
+    if (frame == OM_NULL)
+    {
+        return;
+    }
+
+    pitch2_motor = motor_find_by_name("pitch2");
+    if (pitch2_motor == OM_NULL || pitch2_motor->binding.go8010.driver == OM_NULL)
+    {
+        return;
+    }
+
+    if (go8010_get_initial_position_zero(
+            pitch2_motor->binding.go8010.driver,
+            &pitch2_zero_angle_rad) != OM_TRUE)
+    {
+        return;
+    }
+
+    frame[VOFA_CHANNEL_INDEX_PITCH2_ZERO] = pitch2_zero_angle_rad;
+}
 
 static OmRet vofa_task_prepare_uart7(Device* uart7_device)
 {
@@ -83,6 +111,8 @@ static void vofa_task_fill_frame(float frame[VOFA_CHANNEL_COUNT])
     {
         frame[index] = g_vofa_feedback_snapshots[index].feedback.angle;
     }
+
+    vofa_task_fill_pitch2_zero(frame);
 }
 
 static void vofa_task_entry(void* arg)

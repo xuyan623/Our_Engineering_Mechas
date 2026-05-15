@@ -437,3 +437,30 @@ OmBool go8010_is_online(Go8010MotorDrv* motor, uint32_t timeout_ms)
     motor->onlineFlag = (age_ms <= timeout_ms) ? OM_TRUE : OM_FALSE;
     return motor->onlineFlag;
 }
+
+void go8010_capture_initial_position_zero(Go8010MotorDrv* motor)
+{
+    if (motor == OM_NULL || motor->initialPositionCaptured == OM_TRUE)
+    {
+        return;
+    }
+
+    if (motor->feedback.timestampMs == 0u)
+    {
+        return;
+    }
+
+    motor->initialPositionZero = motor->feedback.position;
+    motor->initialPositionCaptured = OM_TRUE;
+}
+
+OmBool go8010_get_initial_position_zero(const Go8010MotorDrv* motor, float* zero_angle_rad)
+{
+    if (motor == OM_NULL || zero_angle_rad == OM_NULL || motor->initialPositionCaptured != OM_TRUE)
+    {
+        return OM_FALSE;
+    }
+
+    *zero_angle_rad = motor->initialPositionZero;
+    return OM_TRUE;
+}

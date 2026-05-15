@@ -67,7 +67,7 @@ typedef struct
  * - 直接持有机械臂各轴电机句柄
  * - 维护 roll3 的双环 PID
  * - 保存最近一次共享控制事实，用于动作时间窗推进
- * - 记录 pitch2 的零位，供 GO8010 目标和重力补偿共用
+ * - pitch2 零位由 GO8010 owner 锁存，这里只读消费
  */
 typedef struct
 {
@@ -83,8 +83,6 @@ typedef struct
     ArmTaskSnapshot last_snapshot;
     ArmTaskMotorTargets smoothed_targets;
     OsalTimeMs command_since_ms;
-    float pitch2_zero_angle_rad;
-    OmBool pitch2_zero_initialized;
     OmBool motors_bound_flag;
     OmBool snapshot_initialized;
     OmBool smoothed_targets_initialized;
@@ -314,27 +312,23 @@ static OmRet arm_task_try_bind_motors(ArmTaskContext* context)
     return OM_OK;
 }
 
-/* pitch2 采用 GO8010 绝对位置模式。
- * 这里沿用旧工程思路：等待首个在线反馈到来后，把当前读数作为零位基准。
+/* pitch2 的绝对位置零位由 GO8010 owner 在正式通信 bring-up 中锁存。
+ * arm_task 只读这个基准，不再自己维护初始化事实。
  */
-static void arm_task_refresh_pitch2_zero(ArmTaskContext* context)
+static OmBool arm_task_get_pitch2_zero_angle_rad(
+    const ArmTaskContext* context,
+    float* pitch2_zero_angle_rad)
 {
-    const MotorFeedback* feedback = OM_NULL;
-
-    if (context == OM_NULL || context->pitch2_motor == OM_NULL ||
-        context->pitch2_zero_initialized == OM_TRUE)
+    if (context == OM_NULL || pitch2_zero_angle_rad == OM_NULL ||
+        context->pitch2_motor == OM_NULL ||
+        context->pitch2_motor->binding.go8010.driver == OM_NULL)
     {
-        return;
+        return OM_FALSE;
     }
 
-    feedback = motor_get_feedback(context->pitch2_motor);
-    if (feedback == OM_NULL || feedback->online != OM_TRUE)
-    {
-        return;
-    }
-
-    context->pitch2_zero_angle_rad = feedback->angle;
-    context->pitch2_zero_initialized = OM_TRUE;
+    return go8010_get_initial_position_zero(
+        context->pitch2_motor->binding.go8010.driver,
+        pitch2_zero_angle_rad);
 }
 
 static void arm_task_refresh_smoothed_targets_from_feedback(ArmTaskContext* context)
@@ -353,7 +347,14 @@ static void arm_task_refresh_smoothed_targets_from_feedback(ArmTaskContext* cont
     context->smoothed_targets.pitch1_rad = (feedback != OM_NULL) ? feedback->angle : 0.0f;
 
     feedback = motor_get_feedback(context->pitch2_motor);
-    context->smoothed_targets.pitch2_rad = (feedback != OM_NULL) ? feedback->angle : context->pitch2_zero_angle_rad;
+    if (feedback != OM_NULL)
+    {
+        context->smoothed_targets.pitch2_rad = feedback->angle;
+    }
+    else if (arm_task_get_pitch2_zero_angle_rad(context, &context->smoothed_targets.pitch2_rad) != OM_TRUE)
+    {
+        context->smoothed_targets.pitch2_rad = 0.0f;
+    }
 
     feedback = motor_get_feedback(context->roll2_motor);
     context->smoothed_targets.roll2_rad = (feedback != OM_NULL) ? feedback->angle : 0.0f;
@@ -681,11 +682,8 @@ static void arm_task_resolve_motor_targets(
         return;
     }
 
-    if (context->pitch2_zero_initialized == OM_TRUE)
-    {
-        pitch2_zero_angle_rad = context->pitch2_zero_angle_rad;
-    }
-    else if (context->pitch2_motor != OM_NULL && motor_get_feedback(context->pitch2_motor) != OM_NULL)
+    if (arm_task_get_pitch2_zero_angle_rad(context, &pitch2_zero_angle_rad) != OM_TRUE &&
+        context->pitch2_motor != OM_NULL && motor_get_feedback(context->pitch2_motor) != OM_NULL)
     {
         pitch2_zero_angle_rad = motor_get_feedback(context->pitch2_motor)->angle;
     }
@@ -738,6 +736,7 @@ static void arm_task_compute_gravity_feedforward(
     const MotorFeedback* roll2_feedback = OM_NULL;
     const MotorFeedback* pitch3_feedback = OM_NULL;
     float pitch1_angle_rad = 0.0f;
+    float pitch2_zero_angle_rad = 0.0f;
     float pitch2_angle_rad = 0.0f;
     float roll2_angle_rad = 0.0f;
     float pitch3_angle_rad = 0.0f;
@@ -759,14 +758,19 @@ static void arm_task_compute_gravity_feedforward(
      * 把反馈角转换回旧工程的机械臂符号约定，避免前馈方向与实际重力方向相反。
      */
     pitch1_angle_rad = (pitch1_feedback != OM_NULL) ? (pitch1_feedback->angle * APP_ARM_PITCH1_TARGET_RATIO) : 0.0f;
-    pitch2_angle_rad = (pitch2_feedback != OM_NULL) ? pitch2_feedback->angle : context->pitch2_zero_angle_rad;
+    if (arm_task_get_pitch2_zero_angle_rad(context, &pitch2_zero_angle_rad) != OM_TRUE && pitch2_feedback != OM_NULL)
+    {
+        pitch2_zero_angle_rad = pitch2_feedback->angle;
+    }
+
+    pitch2_angle_rad = (pitch2_feedback != OM_NULL) ? pitch2_feedback->angle : pitch2_zero_angle_rad;
     roll2_angle_rad = (roll2_feedback != OM_NULL) ? roll2_feedback->angle : 0.0f;
     pitch3_angle_rad = (pitch3_feedback != OM_NULL) ? pitch3_feedback->angle : 0.0f;
 
     *pitch2_torque_ff = pitch2_grav_torque_calculate(
         pitch1_angle_rad,
         pitch2_angle_rad,
-        context->pitch2_zero_angle_rad,
+        pitch2_zero_angle_rad,
         pitch3_angle_rad,
         roll2_angle_rad);
     *pitch2_torque_ff = arm_task_clamp_float(
@@ -777,7 +781,7 @@ static void arm_task_compute_gravity_feedforward(
     *pitch1_torque_ff = pitch1_grav_torque_calcuate(
         pitch1_angle_rad,
         pitch2_angle_rad,
-        context->pitch2_zero_angle_rad,
+        pitch2_zero_angle_rad,
         pitch3_angle_rad,
         roll2_angle_rad);
     *pitch1_torque_ff = arm_task_clamp_float(
@@ -788,13 +792,13 @@ static void arm_task_compute_gravity_feedforward(
     *pitch3_torque_ff = pitch3_grav_torque_calcuate(
         pitch1_angle_rad,
         pitch2_angle_rad,
-        context->pitch2_zero_angle_rad,
+        pitch2_zero_angle_rad,
         pitch3_angle_rad,
         roll2_angle_rad);
     *roll2_torque_ff = roll2_grav_torque_calculate(
         pitch1_angle_rad,
         pitch2_angle_rad,
-        context->pitch2_zero_angle_rad,
+        pitch2_zero_angle_rad,
         pitch3_angle_rad,
         roll2_angle_rad);
 }
@@ -1027,8 +1031,6 @@ static void arm_task_run_once(ArmTaskContext* context)
 
     arm_task_load_snapshot(&snapshot);
     arm_task_update_command_timer(context, &snapshot);
-    arm_task_refresh_pitch2_zero(context);
-
     if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
         arm_task_apply_release_output(context);
@@ -1087,8 +1089,8 @@ static void arm_task_run_once(ArmTaskContext* context)
 
     if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
     {
-        system_health_report_fatal(
-            SYSTEM_HEALTH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL,
+        sh_report_fatal(
+            SH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL,
             "event_bus_publish EVT_MOTOR_TX_REQUEST failed");
         for (;;)
         {
@@ -1106,7 +1108,7 @@ static void arm_task_entry(void* arg)
     while (1)
     {
         arm_task_run_once(context);
-        (void)system_health_beat(SYSTEM_HEALTH_TASK_ARM);
+        (void)sh_beat(SH_TASK_ARM);
         (void)osal_delay_until(&deadline_cursor_ms, ARM_TASK_PERIOD_MS, OM_NULL);
     }
 }

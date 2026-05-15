@@ -464,7 +464,7 @@ static void mode_task_run_once(ModeTaskContext* context)
     {
         if (event_bus_publish(&g_event_bus, EVT_MODE_CHANGED) != OSAL_OK)
         {
-            system_health_report_fatal(SYSTEM_HEALTH_ERR_EVT_MODE_CHANGED_PUBLISH_FAIL, "event_bus_publish EVT_MODE_CHANGED failed");
+            sh_report_fatal(SH_ERR_EVT_MODE_CHANGED_PUBLISH_FAIL, "event_bus_publish EVT_MODE_CHANGED failed");
             for (;;)
             {
                 osal_sleep_ms(1000U);

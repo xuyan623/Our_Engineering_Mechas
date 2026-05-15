@@ -351,7 +351,7 @@ static void p1010b_left_leg_test_task_entry(void* arg)
         }
 
         p1010b_left_leg_test_update_online_flag(runtime);
-        (void)system_health_beat(SYSTEM_HEALTH_TASK_P1010B_LEFT_LEG_SMOKE);
+        (void)sh_beat(SH_TASK_P1010B_LEFT_LEG_SMOKE);
         (void)osal_delay_until(&deadline_cursor_ms, P1010B_LEFT_LEG_TEST_LOOP_PERIOD_MS, OM_NULL);
     }
 }
