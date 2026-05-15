@@ -4,6 +4,7 @@
 
 ## 入口文档
 
+- [从零部署教程](./getting_started.md)
 - [项目概况](./project_overview.md)
 - [Git 协作规范](./process/git_collaboration_spec.md)
 - [文档治理规范](./process/document_governance_spec.md)

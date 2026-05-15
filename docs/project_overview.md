@@ -22,7 +22,7 @@
 
 关键子目录：
 
-1. `app/inc/main.c`：正式启动链入口。
+1. `app/main.c`：正式启动链入口。
 2. `app/task/`：`imu_task`、`input_task`、`mode_task`、`chassis_task`、`arm_task`、`motor_communications_task`、`vofa_task`。
 3. `app/module/`：`event_bus`、`motor_recovery`、`system_health` 等基础模块。
 4. `app/task/test/`：真实测试任务源码，属于正式仓库内容，不是临时垃圾目录。
@@ -47,7 +47,7 @@
 
 ## 4. 正式启动链与 owner 边界
 
-当前正式启动链位于 `app/inc/main.c`，顺序为：
+当前正式启动链位于 `app/main.c`，顺序为：
 
 1. `bsp_register_all()`
 2. `event_bus_init(...)`
@@ -55,7 +55,7 @@
 4. `imu_task_start()`
 5. `input_task_start(...)`
 6. `mode_task_start()`
-7. `motor_communications_task_start(...)`
+7. `mct_start(...)`
 8. `chassis_task_start()`
 9. `arm_task_start()`
 10. `vofa_task_start(...)`
