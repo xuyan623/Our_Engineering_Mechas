@@ -38,8 +38,8 @@ cd D:\robot_workspace
 # 1) 克隆应用层工程（new_robot_code）—— 开发分支为 feature/new_robot_code
 git clone -b feature/new_robot_code https://github.com/xuyan623/Our_Engineering_Mechas.git new_robot_code
 
-# 2) 克隆框架依赖（oh-my-robot-framework）
-git clone https://github.com/oh-my-robot/oh-my-robot-framework.git
+# 2) 克隆框架依赖（oh-my-robot-framework）—— 默认分支为 integration
+git clone -b integration https://github.com/oh-my-robot/oh-my-robot-framework.git
 ```
 
 > **注意**：如果你参与了框架层的开发，请按 [`docs/process/git_collaboration_spec.md`](./process/git_collaboration_spec.md) 使用 Forking Workflow，把 `oh-my-robot-framework` 的 `origin` 指向你自己的 Fork。
