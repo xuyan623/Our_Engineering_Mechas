@@ -14,11 +14,11 @@
 /tmp/
 /testlogs/
 
-# Project-local private preset
-/om_preset.lua
+# Simulation files (not version controlled)
+/simulation/
 
 # Intentionally kept under version control:
 # - /docs/**
 # - /app/task/test/**
-# - /om_preset.example.lua
-# - /.vscode/** (shared launch/settings may be committed later)
+# Note:
+# - workspace-root `om_preset.lua` and `.vscode/` are not owned by `new_robot_code`
