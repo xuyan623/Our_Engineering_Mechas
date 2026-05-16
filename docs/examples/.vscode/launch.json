@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "J-Link | STM32F427II | gcc",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "jlink",
+      "device": "STM32F427II",
+      "interface": "swd",
+      "cwd": "${workspaceFolder}",
+      "executable": "build/cross/arm/debug/robot_project.elf",
+      "runToEntryPoint": "main",
+      "svdFile": "${workspaceFolder}/oh-my-robot-framework/platform/bsp/vendor/STM32/STM32F4/SVD/STM32F427.svd",
+      "serverpath": "D:/Jlink/JLink/JLinkGDBServerCL.exe",
+      "armToolchainPath": "D:/arm-gnu-toolchain-15.2.rel1-mingw-w64-i686-arm-none-eabi/bin",
+      "preLaunchCommands": [
+        "monitor reset"
+      ]
+    },
+    {
+      "name": "J-Link | STM32F427II | gcc | Attach",
+      "type": "cortex-debug",
+      "request": "attach",
+      "servertype": "jlink",
+      "device": "STM32F427II",
+      "interface": "swd",
+      "cwd": "${workspaceFolder}",
+      "executable": "build/cross/arm/debug/robot_project.elf",
+      "svdFile": "${workspaceFolder}/oh-my-robot-framework/platform/bsp/vendor/STM32/STM32F4/SVD/STM32F427.svd",
+      "serverpath": "D:/Jlink/JLink/JLinkGDBServerCL.exe",
+      "armToolchainPath": "D:/arm-gnu-toolchain-15.2.rel1-mingw-w64-i686-arm-none-eabi/bin"
+    },
+    {
+      "name": "J-Link | STM32F427II | armclang",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "jlink",
+      "device": "STM32F427II",
+      "interface": "swd",
+      "cwd": "${workspaceFolder}",
+      "executable": "build/cross/arm/debug/robot_project.elf",
+      "runToEntryPoint": "main",
+      "svdFile": "${workspaceFolder}/oh-my-robot-framework/platform/bsp/vendor/STM32/STM32F4/SVD/STM32F427.svd",
+      "serverpath": "D:/Jlink/JLink/JLinkGDBServerCL.exe",
+      "armToolchainPath": "D:/arm-gnu-toolchain-15.2.rel1-mingw-w64-i686-arm-none-eabi/bin",
+      "preLaunchCommands": [
+        "monitor semihosting enable",
+        "monitor semihosting breakonerror 0",
+        "set mem inaccessible-by-default off"
+      ]
+    }
+  ]
+}

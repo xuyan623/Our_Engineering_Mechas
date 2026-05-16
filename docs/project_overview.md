@@ -13,11 +13,18 @@
 ## 2. 当前目录结构
 
 ```text
-<repo-root>/
-├─ app/       # 应用层算法、模块、任务、入口
-├─ docs/      # 仓库级说明与仿真参考
-├─ driver/    # 项目内 vendor/适配层驱动
-└─ xmake.lua  # 项目顶层构建入口
+<workspace>/
+├─ .vscode/             # 工作区级 IntelliSense / 调试入口
+├─ .xmake/              # 构建自动生成
+├─ build/               # 构建自动生成
+├─ new_robot_code/
+│  ├─ app/              # 应用层算法、模块、任务、入口
+│  ├─ docs/             # 仓库级说明与仿真参考
+│  ├─ driver/           # 项目内 vendor/适配层驱动
+│  └─ workspace_target.lua  # 内部 target 定义，不是用户入口
+├─ oh-my-robot-framework/
+├─ om_preset.lua
+└─ xmake.lua            # 工作区唯一正式构建入口
 ```
 
 关键子目录：
@@ -32,15 +39,18 @@
 
 当前工程不是自包含仓库，构建时通过相对路径依赖同级的 `oh-my-robot-framework`：
 
-- `xmake.lua` 使用 `includes("../oh-my-robot-framework")`
+- `workspace_target.lua` 使用 `includes("../oh-my-robot-framework")`
 - 同时引用 `../oh-my-robot-framework/platform/bsp/boards/rm-a-board`
 
 因此当前推荐工作区布局是：
 
 ```text
 <workspace>/
-├─ <this-repo>/
-└─ oh-my-robot-framework/
+├─ .vscode/
+├─ new_robot_code/
+├─ oh-my-robot-framework/
+├─ om_preset.lua
+└─ xmake.lua
 ```
 
 本轮不改变这种依赖方式，也不引入 submodule / subtree。后续如果要把框架依赖固定到某个版本或改成子模块，应单独设计并落文档。
@@ -70,7 +80,8 @@ owner 边界：
 
 ## 5. 构建入口与命名关系
 
-当前仓库的真实构建入口就是仓库根目录的 `xmake.lua`。
+当前工作区的真实构建入口是**工作区根目录**的 `xmake.lua`。  
+`new_robot_code/workspace_target.lua` 只是被根入口 `includes(...)` 的内部描述文件。
 
 当前统一命名关系：
 
@@ -86,18 +97,21 @@ owner 边界：
 
 ## 6. 本地预设文件约定
 
-独立仓库内提供：
+文档示例提供：
 
-- `om_preset.example.lua`：可提交模板
+- `docs/examples/om_preset.example.lua`：供创建工作区根 `om_preset.lua` 参考
+- `docs/examples/xmake.lua`：供创建工作区根 `xmake.lua` 参考
+- `docs/examples/.vscode/`：供创建工作区根 `.vscode/` 参考
 
-开发者本机使用：
+开发者本机实际使用：
 
-- `om_preset.lua`：由开发者复制模板后按本机路径修改
+- `<workspace>/om_preset.lua`
+- `<workspace>/xmake.lua`
 
 约束：
 
-1. `om_preset.lua` 只用于本机，不入库。
-2. `om_preset.example.lua` 必须保持可用，作为新开发者配置起点。
+1. `om_preset.lua` 只用于本机，不入共享仓库。
+2. 不要在 `new_robot_code/` 根下再放一份 `om_preset.lua`、`xmake.lua` 或 `.vscode/launch.json`，否则会误导新成员把代码区当成工作区根。
 
 ## 7. 与仿真参考文档的边界
 

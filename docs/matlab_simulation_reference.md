@@ -16,13 +16,13 @@
 
 后续 MATLAB 建模时，以下文件是当前正式链的事实源：
 
-- `app/inc/main.c`
+- `app/main.c`
 - `app/config/app_config.h`
 - `app/task/mode_task/mode_task.h`
 - `app/task/mode_task/mode_task.c`
 - `app/task/chassis_task/chassis_task.c`
 - `app/task/arm_task/arm_task.c`
-- `app/task/motor_communications_task/motor_communications_task.c`
+- `app/task/motor_communications_task/mct.c`
 - `app/algorithm/kinematics/kinematics.c`
 - `app/algorithm/gravity_comp/gravity_comp.c`
 - `app/task/vofa_task/vofa_task.c`
@@ -39,7 +39,7 @@
 4. `imu_task_start()`
 5. `input_task_start(devices)`
 6. `mode_task_start()`
-7. `motor_communications_task_start(devices)`
+7. `mct_start(devices)`
 8. `chassis_task_start()`
 9. `arm_task_start()`
 10. `vofa_task_start(devices)`

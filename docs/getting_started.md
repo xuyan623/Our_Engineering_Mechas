@@ -32,7 +32,7 @@ cd D:\robot_workspace
 
 ### 2.2 克隆两个仓库
 
-`new_robot_code` 不是自包含仓库，构建时必须与 `oh-my-robot-framework` 保持**同级目录**。
+`new_robot_code` 不是自包含仓库，构建时必须与 `oh-my-robot-framework` 保持**同级目录**，并且工作区根目录还需要单独放置 `xmake.lua`、`om_preset.lua` 和 `.vscode/`。
 
 ```powershell
 # 1) 克隆应用层工程（new_robot_code）
@@ -50,33 +50,41 @@ git clone https://github.com/oh-my-robot/oh-my-robot-framework.git
 
 ```text
 D:\robot_workspace/
-├─ new_robot_code/           ← 应用层工程
+├─ .vscode/
+│  ├─ c_cpp_properties.json  ← 构建配置
+│  └─ launch.json            ← 调试/烧录配置
+├─ .xmake/                   ← 构建自动生成
+├─ build/                    ← 构建自动生成
+├─ new_robot_code/           ← 应用层代码区
 │  ├─ app/
 │  ├─ driver/
 │  ├─ docs/
-│  └─ xmake.lua              ← 项目构建入口
-└─ oh-my-robot-framework/    ← 框架依赖（与 new_robot_code 同级）
-   ├─ lib/
-   ├─ platform/
-   └─ xmake.lua
+│  └─ workspace_target.lua   ← 内部 target 描述，不是用户入口
+├─ oh-my-robot-framework/    ← 框架依赖（与 new_robot_code 同级）
+├─ om_preset.lua             ← 工作区本机预设
+└─ xmake.lua                 ← 工作区唯一正式构建入口
 ```
 
-如果同级目录里没有 `oh-my-robot-framework`，后续构建会失败。
+如果同级目录里没有 `oh-my-robot-framework`，或你把构建入口/预设/调试配置错误地放进 `new_robot_code/`，后续构建与调试都会失败或误导新成员。
 
 ---
 
 ## 3. 配置本机预设文件
 
-### 3.1 复制模板
+### 3.1 准备工作区根模板
 
-在项目根目录（与 `xmake.lua` 同级）创建 `om_preset.lua`：
+在工作区根目录创建 `xmake.lua`、`om_preset.lua` 和 `.vscode/`。推荐直接参考本仓库提供的示例文件：
 
 ```powershell
-cd D:\robot_workspace\new_robot_code
-copy ..\oh-my-robot-framework\om_preset.example.lua om_preset.lua
+cd D:\robot_workspace
+copy .\new_robot_code\docs\examples\xmake.lua .\xmake.lua
+copy .\new_robot_code\docs\examples\om_preset.example.lua .\om_preset.lua
+mkdir .\.vscode
+copy .\new_robot_code\docs\examples\.vscode\launch.json .\.vscode\launch.json
+copy .\new_robot_code\docs\examples\.vscode\c_cpp_properties.json .\.vscode\c_cpp_properties.json
 ```
 
-> `om_preset.lua` 仅用于本机，已被 `.gitignore` 忽略，**不要提交到仓库**。
+> `om_preset.lua` 仅用于本机，**不要提交到共享仓库**。
 
 ### 3.2 按本机路径修改
 
@@ -135,10 +143,10 @@ end
 
 ## 4. 配置工程并编译
 
-### 4.1 进入项目根目录
+### 4.1 进入工作区根目录
 
 ```powershell
-cd D:\robot_workspace\new_robot_code
+cd D:\robot_workspace
 ```
 
 ### 4.2 执行配置
@@ -170,13 +178,14 @@ xmake build
 编译成功时，产物位于：
 
 ```text
-new_robot_code/build/cross/arm/debug/robot_project.elf
+D:\robot_workspace\build\cross\arm\debug\robot_project.elf
 ```
 
 如果编译失败，请检查：
 
 1. `om_preset.lua` 中的工具链路径是否指向了存在的目录。
 2. `oh-my-robot-framework` 是否与 `new_robot_code` 同级。
+3. 是否误把 `xmake.lua` / `om_preset.lua` 放进了 `new_robot_code/` 而不是工作区根目录。
 
 ---
 
@@ -204,10 +213,10 @@ xmake run flash
 
 ### 6.1 打开工程
 
-用 VSCode 打开 `new_robot_code` 文件夹：
+用 VSCode 打开**工作区根目录**：
 
 ```powershell
-code D:\robot_workspace\new_robot_code
+code D:\robot_workspace
 ```
 
 ### 6.2 启动 J-Link GDB Server
@@ -226,13 +235,13 @@ JLinkGDBServerCL -device STM32F427II -if SWD -speed 4000
 2. 选择 `"robot_project (J-Link + GNU-RM)"`。
 3. 如果 `launch.json` 中 `miDebuggerPath` 指向了正确的 `arm-none-eabi-gdb.exe`，调试器会自动连接并停在 `main()` 入口。
 
-VSCode 调试配置已经随仓库提供，位于 `.vscode/launch.json`，默认面向：
+VSCode 调试配置应位于**工作区根目录** `.vscode/launch.json`，默认面向：
 
 - `rm-a-board`
 - `J-Link`
 - `gnu-rm` 与 `armclang` 两条调试链
 
-如果 `arm-none-eabi-gdb` 未在 `PATH` 中，请手动修改 `.vscode/launch.json` 里的 `miDebuggerPath` 为你本机的绝对路径。
+如果 `arm-none-eabi-gdb` 未在 `PATH` 中，请手动修改工作区根 `.vscode/launch.json` 里的对应路径。
 
 ---
 

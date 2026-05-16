@@ -4,35 +4,46 @@
 
 ## 1. 工作区布局
 
-当前仓库不是自包含工程，构建时依赖同级 `oh-my-robot-framework`：
+`new_robot_code` 是**代码区**，不是独立工作区根目录。正确工作区布局应是：
 
 ```text
 <workspace>/
-├─ new_robot_code/
-└─ oh-my-robot-framework/
+├─ .vscode/
+│  ├─ c_cpp_properties.json
+│  └─ launch.json
+├─ .xmake/          # 构建后自动生成
+├─ build/           # 构建后自动生成
+├─ new_robot_code/  # 新代码区域
+├─ oh-my-robot-framework/
+├─ om_preset.lua
+└─ xmake.lua
 ```
 
 关键点：
 
-1. 本仓库根目录的 `xmake.lua` 是唯一正式构建入口。
-2. 构建脚本通过 `../oh-my-robot-framework` 引入框架与板级资产。
-3. 如果同级没有 `oh-my-robot-framework`，构建与调试都不会工作。
+1. **工作区根目录** 的 `xmake.lua` 是唯一正式构建入口。
+2. **工作区根目录** 的 `om_preset.lua` 是唯一正式本机预设。
+3. **工作区根目录** 的 `.vscode/` 是唯一正式 VSCode 调试配置。
+4. `new_robot_code/` 内部只保留代码和内部构建描述文件 `workspace_target.lua`，不再作为新成员的直接配置入口。
+5. 如果同级没有 `oh-my-robot-framework`，构建与调试都不会工作。
 
 ## 2. 快速开始
 
 ### 2.1 本机预设
 
-1. 复制 `om_preset.example.lua` 为 `om_preset.lua`
-2. 按本机实际路径修改：
+1. 在**工作区根目录**创建 `om_preset.lua`
+2. 可参考 [`docs/examples/om_preset.example.lua`](./docs/examples/om_preset.example.lua)
+3. 按本机实际路径修改：
    - GNU Arm 工具链 `sdk/bin`
    - `armclang` 工具链 `sdk/bin`
    - `JLink.exe` 路径
 
-`om_preset.lua` 仅用于本机，已被 `.gitignore` 忽略。
+`om_preset.lua` 仅用于本机，不应进入共享仓库。
 
 ### 2.2 构建
 
 ```powershell
+cd <workspace>
 xmake f -c --toolchain=gnu-rm -m debug
 xmake build
 ```
@@ -54,7 +65,12 @@ xmake build
 
 ## 4. VSCode 调试
 
-仓库已提供 `.vscode/launch.json`，默认面向：
+应使用**工作区根目录**的 `.vscode/launch.json` 与 `.vscode/c_cpp_properties.json`，可参考：
+
+- [`docs/examples/.vscode/launch.json`](./docs/examples/.vscode/launch.json)
+- [`docs/examples/.vscode/c_cpp_properties.json`](./docs/examples/.vscode/c_cpp_properties.json)
+
+默认面向：
 
 1. `rm-a-board`
 2. `J-Link`
@@ -63,7 +79,7 @@ xmake build
 前提：
 
 1. `JLinkGDBServerCL.exe` 与 `arm-none-eabi-gdb` 已加入 `PATH`，或你按需自行改本地调试配置。
-2. `oh-my-robot-framework` 与本仓库保持同级目录。
+2. `oh-my-robot-framework` 与 `new_robot_code` 保持同级目录。
 
 ## 5. 当前范围
 
