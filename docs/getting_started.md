@@ -35,8 +35,8 @@ cd D:\robot_workspace
 `new_robot_code` 不是自包含仓库，构建时必须与 `oh-my-robot-framework` 保持**同级目录**，并且工作区根目录还需要单独放置 `xmake.lua`、`om_preset.lua` 和 `.vscode/`。
 
 ```powershell
-# 1) 克隆应用层工程（new_robot_code）
-git clone https://github.com/xuyan623/Our_Engineering_Mechas.git new_robot_code
+# 1) 克隆应用层工程（new_robot_code）—— 开发分支为 feature/new_robot_code
+git clone -b feature/new_robot_code https://github.com/xuyan623/Our_Engineering_Mechas.git new_robot_code
 
 # 2) 克隆框架依赖（oh-my-robot-framework）
 git clone https://github.com/oh-my-robot/oh-my-robot-framework.git
