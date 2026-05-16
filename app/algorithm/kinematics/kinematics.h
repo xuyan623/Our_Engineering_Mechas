@@ -15,6 +15,17 @@ typedef enum
 } MecanumWheelId;
 
 void mecanum_calc(float vx_mm_per_s, float vy_mm_per_s, float vw_deg_per_s, int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT]);
+/* 三麦轮降级解算：
+ * - offline_wheel_id 指明当前掉线轮位
+ * - 仅对剩余三轮输出目标转速
+ * - 掉线轮参考强制为 0，限幅只按存活三轮计算
+ */
+void mecanum_calc_three_wheel(
+    float vx_mm_per_s,
+    float vy_mm_per_s,
+    float vw_deg_per_s,
+    MecanumWheelId offline_wheel_id,
+    int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT]);
 
 /* 输出的是电机参考角：
  * - pitch1_motor_angle_rad：Pitch1 电机参考角（rad）

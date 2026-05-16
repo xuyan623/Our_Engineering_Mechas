@@ -259,25 +259,30 @@
 #define APP_GRAVITY_M6_KG (0.37708f)
 #define APP_GRAVITY_M7_KG (0.631f)
 
-/* 旧工程重力模型使用的关节零位偏置，单位 rad。 */
+/* Pitch1 重力补偿保留当前 app 层参数。
+ * 这一路当前正式链不下发 torque ff，但函数仍保留在算法层，便于后续再评估启用。
+ */
 #define APP_GRAVITY_Q2_OFFSET_RAD (0.261799f)
-#define APP_GRAVITY_Q3_OFFSET_RAD (0.383972f)
-#define APP_GRAVITY_Q6_OFFSET_RAD (0.1f)
-
-/* Pitch1 重力补偿使用的等效力臂与质心偏移，单位 m。 */
 #define APP_GRAVITY_PITCH1_EQUIVALENT_LEVER_M (1.1728f)
 #define APP_GRAVITY_PITCH1_RY2_M (-0.000476f)
 
-/* Pitch2 重力补偿使用的等效参数，单位 m。 */
-#define APP_GRAVITY_PITCH2_LM56_M (0.16f)
+/* Pitch2 / Roll2 使用旧工程 main 的重力模型参数。 */
+#define APP_GRAVITY_PITCH2_Q2_OFFSET_RAD (0.366519f)
+#define APP_GRAVITY_PITCH2_Q3_OFFSET_RAD (-0.353786f)
+#define APP_GRAVITY_PITCH2_Q6_OFFSET_RAD (0.15f)
 #define APP_GRAVITY_PITCH2_LM34_M (0.30228f)
-#define APP_GRAVITY_PITCH2_D5_M (0.14f)
-#define APP_GRAVITY_PITCH2_D4_M (0.16f)
-#define APP_GRAVITY_PITCH2_RX3_M (0.004006f)
-#define APP_GRAVITY_PITCH2_RX4_M (0.002649f)
+#define APP_GRAVITY_PITCH2_LM56_M (0.13f)
+#define APP_GRAVITY_PITCH2_D45_M (0.3f)
+#define APP_GRAVITY_PITCH2_M67_KG (1.4327f)
 #define APP_GRAVITY_PITCH2_RY4_M (0.003381f)
 
-/* Pitch3 / Roll2 重力补偿使用的等效参数，单位 m。 */
+/* Pitch3 使用旧工程 main 的独立角度偏置与等效力臂。 */
+#define APP_GRAVITY_PITCH3_Q2_OFFSET_RAD (0.20944f)
+#define APP_GRAVITY_PITCH3_Q3_OFFSET_RAD (0.079799f)
+#define APP_GRAVITY_PITCH3_Q6_OFFSET_RAD (0.15f)
+#define APP_GRAVITY_PITCH3_EFFECTIVE_LEVER_M (0.1525f)
+
+/* Pitch3 / Roll2 使用的公共几何参数，单位 m。 */
 #define APP_GRAVITY_PITCH3_RZ7_M (0.062165f)
 #define APP_GRAVITY_PITCH3_RY6_M (0.05038f)
 #define APP_GRAVITY_PITCH3_D7_M (0.057f)

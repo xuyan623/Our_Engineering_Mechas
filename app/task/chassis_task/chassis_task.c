@@ -544,14 +544,69 @@ static void chassis_task_apply_big_yaw_hold(ChassisTaskContext* context)
 #endif
 }
 
+static void chassis_task_resolve_wheel_online_flags(
+    ChassisTaskContext* context,
+    OmBool wheel_online_flags[CHASSIS_TASK_WHEEL_COUNT],
+    uint32_t* online_wheel_count,
+    OmBool* degraded_mode_enabled,
+    MecanumWheelId* offline_wheel_id)
+{
+    uint32_t index = 0u;
+    uint32_t offline_wheel_count = 0u;
+    MecanumWheelId last_offline_wheel_id = MECANUM_WHEEL_FRONT_RIGHT;
+
+    if (wheel_online_flags == OM_NULL || online_wheel_count == OM_NULL ||
+        degraded_mode_enabled == OM_NULL || offline_wheel_id == OM_NULL)
+    {
+        return;
+    }
+
+    *online_wheel_count = 0u;
+    *degraded_mode_enabled = OM_FALSE;
+    *offline_wheel_id = MECANUM_WHEEL_FRONT_RIGHT;
+
+    for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
+    {
+        const MotorFeedback* feedback = OM_NULL;
+
+        wheel_online_flags[index] = OM_FALSE;
+
+        if (context == OM_NULL || context->wheel_motors[index] == OM_NULL)
+        {
+            offline_wheel_count++;
+            last_offline_wheel_id = (MecanumWheelId)index;
+            continue;
+        }
+
+        feedback = motor_get_feedback(context->wheel_motors[index]);
+        if (feedback != OM_NULL && feedback->online == OM_TRUE)
+        {
+            wheel_online_flags[index] = OM_TRUE;
+            (*online_wheel_count)++;
+            continue;
+        }
+
+        offline_wheel_count++;
+        last_offline_wheel_id = (MecanumWheelId)index;
+    }
+
+    if (offline_wheel_count == 1u)
+    {
+        /* 恰好掉 1 个轮电机时启用三麦轮降级，2 个及以上则不再维持底盘运动。 */
+        *degraded_mode_enabled = OM_TRUE;
+        *offline_wheel_id = last_offline_wheel_id;
+    }
+}
+
 static void chassis_task_apply_wheel_control(
     ChassisTaskContext* context,
     const int16_t wheel_speed_ref_rpm[CHASSIS_TASK_WHEEL_COUNT],
+    const OmBool wheel_active_flags[CHASSIS_TASK_WHEEL_COUNT],
     float current_tick_s)
 {
     uint32_t index = 0u;
 
-    if (context == OM_NULL || wheel_speed_ref_rpm == OM_NULL)
+    if (context == OM_NULL || wheel_speed_ref_rpm == OM_NULL || wheel_active_flags == OM_NULL)
     {
         return;
     }
@@ -559,9 +614,18 @@ static void chassis_task_apply_wheel_control(
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
         const MotorFeedback* feedback = motor_get_feedback(context->wheel_motors[index]);
-        const float wheel_speed_fdb_rpm =
-            (feedback != OM_NULL) ? chassis_task_rad_per_s_to_rpm(feedback->speed) : 0.0f;
-        const float current_cmd =
+        float wheel_speed_fdb_rpm = 0.0f;
+        float current_cmd = 0.0f;
+
+        if (wheel_active_flags[index] != OM_TRUE || feedback == OM_NULL || feedback->online != OM_TRUE)
+        {
+            pid_reset(&context->wheel_speed_pids[index]);
+            chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);
+            continue;
+        }
+
+        wheel_speed_fdb_rpm = chassis_task_rad_per_s_to_rpm(feedback->speed);
+        current_cmd =
             pid_compute(
                 &context->wheel_speed_pids[index],
                 (float)wheel_speed_ref_rpm[index],
@@ -621,7 +685,11 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     float vy_mm_per_s = 0.0f;
     float vw_deg_per_s = 0.0f;
     int16_t wheel_speed_ref_rpm[CHASSIS_TASK_WHEEL_COUNT] = {0};
+    OmBool wheel_online_flags[CHASSIS_TASK_WHEEL_COUNT] = {OM_FALSE};
     float leg_reference_deg[CHASSIS_TASK_LEG_COUNT] = {0.0f};
+    uint32_t online_wheel_count = 0u;
+    OmBool degraded_mode_enabled = OM_FALSE;
+    MecanumWheelId offline_wheel_id = MECANUM_WHEEL_FRONT_RIGHT;
     const float current_tick_s = chassis_task_now_s();
 
     if (context == OM_NULL)
@@ -638,6 +706,12 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     }
 
     chassis_task_load_snapshot(&snapshot);
+    chassis_task_resolve_wheel_online_flags(
+        context,
+        wheel_online_flags,
+        &online_wheel_count,
+        &degraded_mode_enabled,
+        &offline_wheel_id);
 
     if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
@@ -647,15 +721,23 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     else if (chassis_task_mode_allows_chassis_motion(snapshot.chassis_mode) == OM_TRUE)
     {
         chassis_task_compute_chassis_velocity(context, &snapshot, &vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
-        mecanum_calc(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_speed_ref_rpm);
+        if (online_wheel_count >= CHASSIS_TASK_WHEEL_COUNT)
+        {
+            mecanum_calc(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_speed_ref_rpm);
+        }
+        else if (degraded_mode_enabled == OM_TRUE)
+        {
+            mecanum_calc_three_wheel(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, offline_wheel_id, wheel_speed_ref_rpm);
+        }
+
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
-        chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, current_tick_s);
+        chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, wheel_online_flags, current_tick_s);
         chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
     }
     else if (chassis_task_mode_allows_leg_control(snapshot.chassis_mode) == OM_TRUE)
     {
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
-        chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, current_tick_s);
+        chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, wheel_online_flags, current_tick_s);
         chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
     }
     else

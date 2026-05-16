@@ -1,5 +1,6 @@
 #include "task/vofa_task/vofa_task.h"
 
+#include "config/app_config.h"
 #include "driver/motor/motor.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "function/vofa/vofa.h"
@@ -22,30 +23,68 @@
 static MotorFeedbackSnapshot g_vofa_feedback_snapshots[VOFA_MOTOR_FEEDBACK_COUNT] = {0};
 static float g_vofa_frame[VOFA_CHANNEL_COUNT] = {0.0f};
 
-static void vofa_task_fill_pitch2_zero(float frame[VOFA_CHANNEL_COUNT])
+static float vofa_task_rad_to_deg(float angle_rad)
+{
+    return angle_rad * (180.0f / APP_PI);
+}
+
+static float vofa_task_resolve_pitch2_zero_angle_rad(void)
 {
     Motor* pitch2_motor = OM_NULL;
     float pitch2_zero_angle_rad = 0.0f;
 
-    if (frame == OM_NULL)
-    {
-        return;
-    }
-
     pitch2_motor = motor_find_by_name("pitch2");
     if (pitch2_motor == OM_NULL || pitch2_motor->binding.go8010.driver == OM_NULL)
     {
-        return;
+        return 0.0f;
     }
 
     if (go8010_get_initial_position_zero(
             pitch2_motor->binding.go8010.driver,
             &pitch2_zero_angle_rad) != OM_TRUE)
     {
+        return 0.0f;
+    }
+
+    return pitch2_zero_angle_rad;
+}
+
+static float vofa_task_convert_feedback_angle_to_action_unit(const MotorFeedbackSnapshot* snapshot)
+{
+    float pitch2_zero_angle_rad = 0.0f;
+
+    if (snapshot == OM_NULL || snapshot->name == OM_NULL)
+    {
+        return 0.0f;
+    }
+
+    if (strcmp(snapshot->name, "pitch1") == 0)
+    {
+        return snapshot->feedback.angle * APP_ARM_PITCH1_TARGET_RATIO;
+    }
+
+    if (strcmp(snapshot->name, "pitch2") == 0)
+    {
+        pitch2_zero_angle_rad = vofa_task_resolve_pitch2_zero_angle_rad();
+        return (pitch2_zero_angle_rad - snapshot->feedback.angle) / APP_ARM_PITCH2_GEAR_RATIO;
+    }
+
+    if (strcmp(snapshot->name, "roll3") == 0)
+    {
+        return vofa_task_rad_to_deg(snapshot->feedback.angle);
+    }
+
+    return snapshot->feedback.angle;
+}
+
+static void vofa_task_fill_pitch2_zero(float frame[VOFA_CHANNEL_COUNT])
+{
+    if (frame == OM_NULL)
+    {
         return;
     }
 
-    frame[VOFA_CHANNEL_INDEX_PITCH2_ZERO] = pitch2_zero_angle_rad;
+    frame[VOFA_CHANNEL_INDEX_PITCH2_ZERO] = vofa_task_resolve_pitch2_zero_angle_rad();
 }
 
 static OmRet vofa_task_prepare_uart7(Device* uart7_device)
@@ -109,7 +148,7 @@ static void vofa_task_fill_frame(float frame[VOFA_CHANNEL_COUNT])
 
     for (index = 0u; index < snapshot_count; index++)
     {
-        frame[index] = g_vofa_feedback_snapshots[index].feedback.angle;
+        frame[index] = vofa_task_convert_feedback_angle_to_action_unit(&g_vofa_feedback_snapshots[index]);
     }
 
     vofa_task_fill_pitch2_zero(frame);

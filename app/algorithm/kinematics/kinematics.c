@@ -2,6 +2,7 @@
 
 #include "config/app_config.h"
 #include <math.h>
+#include <string.h>
 
 static float kinematics_clamp_float(float value, float min_value, float max_value)
 {
@@ -38,6 +39,105 @@ static float kinematics_normalize_angle(float angle_rad)
     return angle_rad;
 }
 
+static void kinematics_clamp_chassis_velocity(
+    float* vx_mm_per_s,
+    float* vy_mm_per_s,
+    float* vw_deg_per_s)
+{
+    if (vx_mm_per_s == OM_NULL || vy_mm_per_s == OM_NULL || vw_deg_per_s == OM_NULL)
+    {
+        return;
+    }
+
+    *vx_mm_per_s = kinematics_clamp_float(*vx_mm_per_s, -APP_CHASSIS_MAX_VX_MM_PER_S, APP_CHASSIS_MAX_VX_MM_PER_S);
+    *vy_mm_per_s = kinematics_clamp_float(*vy_mm_per_s, -APP_CHASSIS_MAX_VY_MM_PER_S, APP_CHASSIS_MAX_VY_MM_PER_S);
+    *vw_deg_per_s = kinematics_clamp_float(*vw_deg_per_s, -APP_CHASSIS_MAX_VW_DEG_PER_S, APP_CHASSIS_MAX_VW_DEG_PER_S);
+}
+
+static void kinematics_compute_mecanum_wheel_rpm_float(
+    float vx_mm_per_s,
+    float vy_mm_per_s,
+    float vw_deg_per_s,
+    float wheel_rpm_float[MECANUM_WHEEL_COUNT])
+{
+    const float rotate_ratio = ((APP_CHASSIS_WHEEL_BASE_MM + APP_CHASSIS_WHEEL_TRACK_MM) / 2.0f) / APP_RADIAN_COEF;
+    const float wheel_rpm_ratio = 60.0f / (APP_CHASSIS_WHEEL_PERIMETER_MM * APP_CHASSIS_DECEL_RATIO);
+
+    if (wheel_rpm_float == OM_NULL)
+    {
+        return;
+    }
+
+    wheel_rpm_float[MECANUM_WHEEL_FRONT_RIGHT] =
+        (-vx_mm_per_s - vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
+    wheel_rpm_float[MECANUM_WHEEL_FRONT_LEFT] =
+        (vx_mm_per_s - vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
+    wheel_rpm_float[MECANUM_WHEEL_BACK_LEFT] =
+        (vx_mm_per_s + vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
+    wheel_rpm_float[MECANUM_WHEEL_BACK_RIGHT] =
+        (-vx_mm_per_s + vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
+}
+
+static void kinematics_scale_wheel_rpm_float(
+    float wheel_rpm_float[MECANUM_WHEEL_COUNT],
+    const OmBool active_wheel_flags[MECANUM_WHEEL_COUNT])
+{
+    float max_abs_rpm = 0.0f;
+    uint32_t index = 0u;
+
+    if (wheel_rpm_float == OM_NULL || active_wheel_flags == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MECANUM_WHEEL_COUNT; index++)
+    {
+        const float abs_value = kinematics_abs_float(wheel_rpm_float[index]);
+
+        if (active_wheel_flags[index] != OM_TRUE)
+        {
+            continue;
+        }
+
+        if (abs_value > max_abs_rpm)
+        {
+            max_abs_rpm = abs_value;
+        }
+    }
+
+    if (max_abs_rpm > APP_CHASSIS_MAX_WHEEL_RPM)
+    {
+        const float scale = APP_CHASSIS_MAX_WHEEL_RPM / max_abs_rpm;
+
+        for (index = 0u; index < MECANUM_WHEEL_COUNT; index++)
+        {
+            if (active_wheel_flags[index] != OM_TRUE)
+            {
+                continue;
+            }
+
+            wheel_rpm_float[index] *= scale;
+        }
+    }
+}
+
+static void kinematics_write_wheel_rpm_int16(
+    const float wheel_rpm_float[MECANUM_WHEEL_COUNT],
+    int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT])
+{
+    uint32_t index = 0u;
+
+    if (wheel_rpm_float == OM_NULL || wheel_speeds_rpm == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MECANUM_WHEEL_COUNT; index++)
+    {
+        wheel_speeds_rpm[index] = (int16_t)wheel_rpm_float[index];
+    }
+}
+
 /**
  * @brief 麦轮运动学正解算 - 将底盘速度转换为各轮转速
  * 
@@ -61,48 +161,59 @@ static float kinematics_normalize_angle(float angle_rad)
  */
 void mecanum_calc(float vx_mm_per_s, float vy_mm_per_s, float vw_deg_per_s, int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT])
 {
-    const float rotate_ratio = ((APP_CHASSIS_WHEEL_BASE_MM + APP_CHASSIS_WHEEL_TRACK_MM) / 2.0f) / APP_RADIAN_COEF;
-    const float wheel_rpm_ratio = 60.0f / (APP_CHASSIS_WHEEL_PERIMETER_MM * APP_CHASSIS_DECEL_RATIO);
     float wheel_rpm_float[MECANUM_WHEEL_COUNT] = {0.0f};
-    float max_abs_rpm = 0.0f;
-    uint32_t index = 0U;
+    const OmBool active_wheel_flags[MECANUM_WHEEL_COUNT] = {OM_TRUE, OM_TRUE, OM_TRUE, OM_TRUE};
 
     if (wheel_speeds_rpm == OM_NULL)
     {
         return;
     }
 
-    vx_mm_per_s = kinematics_clamp_float(vx_mm_per_s, -APP_CHASSIS_MAX_VX_MM_PER_S, APP_CHASSIS_MAX_VX_MM_PER_S);
-    vy_mm_per_s = kinematics_clamp_float(vy_mm_per_s, -APP_CHASSIS_MAX_VY_MM_PER_S, APP_CHASSIS_MAX_VY_MM_PER_S);
-    vw_deg_per_s = kinematics_clamp_float(vw_deg_per_s, -APP_CHASSIS_MAX_VW_DEG_PER_S, APP_CHASSIS_MAX_VW_DEG_PER_S);
+    kinematics_clamp_chassis_velocity(&vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
+    kinematics_compute_mecanum_wheel_rpm_float(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_rpm_float);
+    kinematics_scale_wheel_rpm_float(wheel_rpm_float, active_wheel_flags);
+    kinematics_write_wheel_rpm_int16(wheel_rpm_float, wheel_speeds_rpm);
+}
 
-    wheel_rpm_float[MECANUM_WHEEL_FRONT_RIGHT] = (-vx_mm_per_s - vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
-    wheel_rpm_float[MECANUM_WHEEL_FRONT_LEFT] = (vx_mm_per_s - vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
-    wheel_rpm_float[MECANUM_WHEEL_BACK_LEFT] = (vx_mm_per_s + vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
-    wheel_rpm_float[MECANUM_WHEEL_BACK_RIGHT] = (-vx_mm_per_s + vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
+void mecanum_calc_three_wheel(
+    float vx_mm_per_s,
+    float vy_mm_per_s,
+    float vw_deg_per_s,
+    MecanumWheelId offline_wheel_id,
+    int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT])
+{
+    float wheel_rpm_float[MECANUM_WHEEL_COUNT] = {0.0f};
+    OmBool active_wheel_flags[MECANUM_WHEEL_COUNT] = {OM_TRUE, OM_TRUE, OM_TRUE, OM_TRUE};
 
-    for (index = 0U; index < MECANUM_WHEEL_COUNT; index++)
+    if (wheel_speeds_rpm == OM_NULL)
     {
-        const float abs_value = kinematics_abs_float(wheel_rpm_float[index]);
-        if (abs_value > max_abs_rpm)
-        {
-            max_abs_rpm = abs_value;
-        }
+        return;
     }
 
-    if (max_abs_rpm > APP_CHASSIS_MAX_WHEEL_RPM)
+    switch (offline_wheel_id)
     {
-        const float scale = APP_CHASSIS_MAX_WHEEL_RPM / max_abs_rpm;
-        for (index = 0U; index < MECANUM_WHEEL_COUNT; index++)
-        {
-            wheel_rpm_float[index] *= scale;
-        }
+    case MECANUM_WHEEL_FRONT_RIGHT:
+        active_wheel_flags[MECANUM_WHEEL_FRONT_RIGHT] = OM_FALSE;
+        break;
+    case MECANUM_WHEEL_FRONT_LEFT:
+        active_wheel_flags[MECANUM_WHEEL_FRONT_LEFT] = OM_FALSE;
+        break;
+    case MECANUM_WHEEL_BACK_LEFT:
+        active_wheel_flags[MECANUM_WHEEL_BACK_LEFT] = OM_FALSE;
+        break;
+    case MECANUM_WHEEL_BACK_RIGHT:
+        active_wheel_flags[MECANUM_WHEEL_BACK_RIGHT] = OM_FALSE;
+        break;
+    default:
+        memset(wheel_speeds_rpm, 0, sizeof(int16_t) * MECANUM_WHEEL_COUNT);
+        return;
     }
 
-    for (index = 0U; index < MECANUM_WHEEL_COUNT; index++)
-    {
-        wheel_speeds_rpm[index] = (int16_t)wheel_rpm_float[index];
-    }
+    kinematics_clamp_chassis_velocity(&vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
+    kinematics_compute_mecanum_wheel_rpm_float(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_rpm_float);
+    wheel_rpm_float[offline_wheel_id] = 0.0f;
+    kinematics_scale_wheel_rpm_float(wheel_rpm_float, active_wheel_flags);
+    kinematics_write_wheel_rpm_int16(wheel_rpm_float, wheel_speeds_rpm);
 }
 
 /**

@@ -778,16 +778,11 @@ static void arm_task_compute_gravity_feedforward(
         APP_ARM_PITCH2_GRAVITY_FF_MIN,
         APP_ARM_PITCH2_GRAVITY_FF_MAX);
 
-    *pitch1_torque_ff = pitch1_grav_torque_calcuate(
-        pitch1_angle_rad,
-        pitch2_angle_rad,
-        pitch2_zero_angle_rad,
-        pitch3_angle_rad,
-        roll2_angle_rad);
-    *pitch1_torque_ff = arm_task_clamp_float(
-        *pitch1_torque_ff,
-        APP_ARM_PITCH1_GRAVITY_FF_MIN,
-        APP_ARM_PITCH1_GRAVITY_FF_MAX);
+    /* 旧工程 main 的 Pitch1 实际发送链走 Position 帧，
+     * Motor_mit_tff_caculation() 里对应的 pitch1 tff 也处于注释关闭状态。
+     * 当前正式链保留这一路为 0，不改变现有控制语义。
+     */
+    *pitch1_torque_ff = 0.0f;
 
     *pitch3_torque_ff = pitch3_grav_torque_calcuate(
         pitch1_angle_rad,
