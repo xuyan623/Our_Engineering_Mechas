@@ -147,8 +147,8 @@ static OmBool motor_recovery_is_entry_online(const MotorRecoveryEntry* entry)
     switch (entry->vendor)
     {
     case MOTOR_VENDOR_DJI:
-        return (entry->motor->feedback.timestamp_ms != 0u &&
-                (uint32_t)(now_ms - entry->motor->feedback.timestamp_ms) <= timeout_ms) ?
+        return (dji_motor_get_feedback_timestamp_ms((DJIMotorDrv*)entry->driver) != 0u &&
+                (uint32_t)(now_ms - dji_motor_get_feedback_timestamp_ms((DJIMotorDrv*)entry->driver)) <= timeout_ms) ?
                    OM_TRUE :
                    OM_FALSE;
 

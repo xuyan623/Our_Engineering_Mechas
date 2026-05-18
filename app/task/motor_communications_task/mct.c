@@ -1,7 +1,5 @@
 #include "task/motor_communications_task/mct_internal.h"
-#include "module/data_pool/data_pool.h"
 #include "module/system_health/system_health.h"
-#include "task/mode_task/mode_task.h"
 
 /* mct.c 只保留 façade：
  * - 任务主循环
@@ -20,16 +18,10 @@
  * 7. 基于最新反馈推进恢复模块与 runtime fault
  * 8. 再打一拍心跳，表示本轮物理通信已完整走完
  */
-static OmBool mct_release_active(void)
-{
-    return ((GlobalMode)DP_LOAD_UINT8(&g_data_pool.mode.global_mode) == MODE_GLOBAL_RELEASE_CTRL) ? OM_TRUE : OM_FALSE;
-}
-
 static void mct_entry(void* arg)
 {
     MctRuntime* runtime = (MctRuntime*)arg;
     OsalStatus wait_status = OSAL_INVALID;
-    OmBool release_active = OM_FALSE;
 
     if (runtime == OM_NULL)
     {
@@ -52,9 +44,6 @@ static void mct_entry(void* arg)
             0u);
 
         (void)wait_status;
-        release_active = mct_release_active();
-        mct_apply_release_gate(runtime, release_active);
-        runtime->release_active = release_active;
         (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
         mct_query_one_p1010b(runtime);
         (void)motor_transmit_all();
@@ -64,14 +53,7 @@ static void mct_entry(void* arg)
             mct_capture_go8010_zero(runtime);
             (void)event_bus_publish(&g_event_bus, EVT_MOTOR_FEEDBACK_READY);
         }
-        if (release_active != OM_TRUE)
-        {
-            motor_recovery_tick();
-        }
-        else
-        {
-            (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
-        }
+        motor_recovery_tick();
 
         (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
     }
