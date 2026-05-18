@@ -1,6 +1,7 @@
 #include "task/vofa_task/vofa_task.h"
 
 #include "config/app_config.h"
+#include "module/data_pool/data_pool.h"
 #include "driver/motor/motor.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "function/vofa/vofa.h"
@@ -11,8 +12,16 @@
 
 #define VOFA_TASK_PERIOD_MS             (10u)
 #define VOFA_MOTOR_FEEDBACK_COUNT       (14u)
-#define VOFA_EXTRA_CHANNEL_COUNT        (1u)
+#define VOFA_RC_CHANNEL_COUNT           (7u)
+#define VOFA_EXTRA_CHANNEL_COUNT        (1u + VOFA_RC_CHANNEL_COUNT)
 #define VOFA_CHANNEL_INDEX_PITCH2_ZERO  (VOFA_MOTOR_FEEDBACK_COUNT)
+#define VOFA_CHANNEL_INDEX_RC_CH1       (VOFA_CHANNEL_INDEX_PITCH2_ZERO + 1u)
+#define VOFA_CHANNEL_INDEX_RC_CH2       (VOFA_CHANNEL_INDEX_RC_CH1 + 1u)
+#define VOFA_CHANNEL_INDEX_RC_CH3       (VOFA_CHANNEL_INDEX_RC_CH2 + 1u)
+#define VOFA_CHANNEL_INDEX_RC_CH4       (VOFA_CHANNEL_INDEX_RC_CH3 + 1u)
+#define VOFA_CHANNEL_INDEX_RC_SW1       (VOFA_CHANNEL_INDEX_RC_CH4 + 1u)
+#define VOFA_CHANNEL_INDEX_RC_SW2       (VOFA_CHANNEL_INDEX_RC_SW1 + 1u)
+#define VOFA_CHANNEL_INDEX_RC_IW        (VOFA_CHANNEL_INDEX_RC_SW2 + 1u)
 #define VOFA_CHANNEL_COUNT              (VOFA_MOTOR_FEEDBACK_COUNT + VOFA_EXTRA_CHANNEL_COUNT)
 #define VOFA_TASK_UART7_BAUDRATE        (115200u)
 #define VOFA_TASK_UART7_TX_BUFSIZE      (128u)
@@ -100,6 +109,22 @@ static void vofa_task_fill_pitch2_zero(float frame[VOFA_CHANNEL_COUNT])
     frame[VOFA_CHANNEL_INDEX_PITCH2_ZERO] = vofa_task_resolve_pitch2_zero_angle_rad();
 }
 
+static void vofa_task_fill_rc_snapshot(float frame[VOFA_CHANNEL_COUNT])
+{
+    if (frame == OM_NULL)
+    {
+        return;
+    }
+
+    frame[VOFA_CHANNEL_INDEX_RC_CH1] = (float)DP_LOAD_INT16(&g_data_pool.rc.ch1);
+    frame[VOFA_CHANNEL_INDEX_RC_CH2] = (float)DP_LOAD_INT16(&g_data_pool.rc.ch2);
+    frame[VOFA_CHANNEL_INDEX_RC_CH3] = (float)DP_LOAD_INT16(&g_data_pool.rc.ch3);
+    frame[VOFA_CHANNEL_INDEX_RC_CH4] = (float)DP_LOAD_INT16(&g_data_pool.rc.ch4);
+    frame[VOFA_CHANNEL_INDEX_RC_SW1] = (float)DP_LOAD_UINT8(&g_data_pool.rc.sw1);
+    frame[VOFA_CHANNEL_INDEX_RC_SW2] = (float)DP_LOAD_UINT8(&g_data_pool.rc.sw2);
+    frame[VOFA_CHANNEL_INDEX_RC_IW] = (float)DP_LOAD_UINT16(&g_data_pool.rc.iw);
+}
+
 static OmRet vofa_task_prepare_uart7(Device* uart7_device)
 {
     SerialCfg serial_cfg = SERIAL_DEFAULT_CFG;
@@ -165,6 +190,7 @@ static void vofa_task_fill_frame(float frame[VOFA_CHANNEL_COUNT])
     }
 
     vofa_task_fill_pitch2_zero(frame);
+    vofa_task_fill_rc_snapshot(frame);
 }
 
 static void vofa_task_entry(void* arg)
