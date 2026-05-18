@@ -29,6 +29,8 @@
 #define CHASSIS_TASK_KEY_SHIFT_MASK   (1u << 4u)
 #define CHASSIS_TASK_KEY_CTRL_MASK    (1u << 5u)
 
+static const uint32_t g_chassis_task_wheel_feedback_timeout_ms = 20u;
+
 typedef struct
 {
     int16_t ch1;
@@ -114,6 +116,16 @@ static float chassis_task_normalize_deg(float angle_deg)
         angle_deg += 360.0f;
     }
     return angle_deg;
+}
+
+static OmBool chassis_task_feedback_recent(const MotorFeedback* feedback, uint32_t timeout_ms)
+{
+    if (feedback == OM_NULL || feedback->online != OM_TRUE || feedback->timestamp_ms == 0u)
+    {
+        return OM_FALSE;
+    }
+
+    return ((uint32_t)(osal_time_now_monotonic() - feedback->timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
 }
 
 static OmBool chassis_task_key_is_down(uint16_t keyboard_bits, uint16_t mask)
@@ -579,7 +591,7 @@ static void chassis_task_resolve_wheel_online_flags(
         }
 
         feedback = motor_get_feedback(context->wheel_motors[index]);
-        if (feedback != OM_NULL && feedback->online == OM_TRUE)
+        if (chassis_task_feedback_recent(feedback, g_chassis_task_wheel_feedback_timeout_ms) == OM_TRUE)
         {
             wheel_online_flags[index] = OM_TRUE;
             (*online_wheel_count)++;
@@ -617,7 +629,8 @@ static void chassis_task_apply_wheel_control(
         float wheel_speed_fdb_rpm = 0.0f;
         float current_cmd = 0.0f;
 
-        if (wheel_active_flags[index] != OM_TRUE || feedback == OM_NULL || feedback->online != OM_TRUE)
+        if (wheel_active_flags[index] != OM_TRUE ||
+            chassis_task_feedback_recent(feedback, g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
         {
             pid_reset(&context->wheel_speed_pids[index]);
             chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);

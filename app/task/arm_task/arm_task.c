@@ -106,31 +106,35 @@ static const char* g_arm_task_grip_name = "grip";
  * 这样才能与旧工程的
  *   angle_ref = normal_angle + mode_angle + offset_angle
  * 保持一致。
+ *
+ * 注意：
+ * - 当前 roll3 更换 GM6020 后，实物初始平衡角从旧基准 148 deg 变为 -157.743149 deg
+ * - 为保持旧动作链对应的物理终点不变，下面所有 roll3 mode angle 都已按新平衡角重算
  */
 static const ArmTaskMachinePose g_arm_pose_zero = {
     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_normal = {
-    {0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 148.0f, 1.8f}};
+    {0.0f, 0.0f, 0.0f, 0.0f, 0.1f, -157.743149f, 1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy = {
-    {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 0.0f, -1.8f}};
+    {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 305.743149f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy1 = {
-    {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, -90.39f, -1.8f}};
+    {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 215.353149f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy2 = {
-    {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, -54.396f, -1.8f}};
+    {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, 251.347149f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_store_energy = {
-    {1.141f, 1.1042f, 1.18567f, 0.016975f, -1.55555f, -50.519f, 0.0f}};
+    {1.141f, 1.1042f, 1.18567f, 0.016975f, -1.55555f, 255.224149f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_store_energy1 = {
-    {-1.9018459f, 1.00080109f, 1.008974f, 0.09136295f, -1.222925131f, 20.4541016f, 0.0f}};
+    {-1.9018459f, 1.00080109f, 1.008974f, 0.09136295f, -1.222925131f, 326.197251f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_exchange = {
-    {0.0f, 0.64218f, 1.0447f, 0.0f, 0.0f, 0.0f, 0.0f}};
+    {0.0f, 0.64218f, 1.0447f, 0.0f, 0.0f, 305.743149f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_exchange_pick = {
-    {1.041f, 1.2042f, 1.08567f, 0.016975f, -1.55555f, -50.519f, -1.8f}};
+    {1.041f, 1.2042f, 1.08567f, 0.016975f, -1.55555f, 255.224149f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_exchange_pick1 = {
-    {-1.90189481f, 1.1f, 1.00948341f, 0.092153325f, -1.363282f, 15.583f, -1.8f}};
+    {-1.90189481f, 1.1f, 1.00948341f, 0.092153325f, -1.363282f, 321.326149f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_primary = {
-    {0.0f, 1.46691f, 2.0053f, 0.1192f, -1.6f, 180.0f, 0.0f}};
+    {0.0f, 1.46691f, 2.0053f, 0.1192f, -1.6f, 485.743149f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_secondary_ore = {
-    {0.0f, 1.48691f, 0.85f, -1.57f, 0.0f, 0.0f, 0.0f}};
+    {0.0f, 1.48691f, 0.85f, -1.57f, 0.0f, 305.743149f, 0.0f}};
 
 static float arm_task_clamp_float(float value, float min_value, float max_value)
 {
@@ -153,6 +157,47 @@ static float arm_task_rad_to_deg(float angle_rad)
 static float arm_task_deg_to_rad(float angle_deg)
 {
     return angle_deg * (APP_PI / 180.0f);
+}
+
+static float arm_task_normalize_deg(float angle_deg)
+{
+    while (angle_deg > 180.0f)
+    {
+        angle_deg -= 360.0f;
+    }
+    while (angle_deg <= -180.0f)
+    {
+        angle_deg += 360.0f;
+    }
+    return angle_deg;
+}
+
+static float arm_task_resolve_nearest_equivalent_deg(float target_deg, float reference_deg)
+{
+    float target_normalized_deg = arm_task_normalize_deg(target_deg);
+    float reference_normalized_deg = arm_task_normalize_deg(reference_deg);
+    float delta_deg = target_normalized_deg - reference_normalized_deg;
+
+    while (delta_deg > 180.0f)
+    {
+        target_normalized_deg -= 360.0f;
+        delta_deg -= 360.0f;
+    }
+    while (delta_deg < -180.0f)
+    {
+        target_normalized_deg += 360.0f;
+        delta_deg += 360.0f;
+    }
+
+    return target_normalized_deg + (reference_deg - reference_normalized_deg);
+}
+
+static float arm_task_resolve_nearest_equivalent_rad(float target_rad, float reference_rad)
+{
+    return arm_task_deg_to_rad(
+        arm_task_resolve_nearest_equivalent_deg(
+            arm_task_rad_to_deg(target_rad),
+            arm_task_rad_to_deg(reference_rad)));
 }
 
 static float arm_task_rad_per_s_to_rpm(float speed_rad_per_s)
@@ -210,6 +255,62 @@ static OmBool arm_task_snapshot_changed(const ArmTaskSnapshot* lhs, const ArmTas
             lhs->primary_turn_ore_flag != rhs->primary_turn_ore_flag)
                ? OM_TRUE
                : OM_FALSE;
+}
+
+static OmBool arm_task_feedback_online(const MotorFeedback* feedback)
+{
+    return (feedback != OM_NULL && feedback->online == OM_TRUE) ? OM_TRUE : OM_FALSE;
+}
+
+static OmBool arm_task_motor_online(const Motor* motor)
+{
+    return arm_task_feedback_online(motor_get_feedback(motor));
+}
+
+static OmBool arm_task_all_motors_online(const ArmTaskContext* context)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    return (arm_task_motor_online(context->big_yaw_motor) == OM_TRUE &&
+            arm_task_motor_online(context->pitch1_motor) == OM_TRUE &&
+            arm_task_motor_online(context->pitch2_motor) == OM_TRUE &&
+            arm_task_motor_online(context->roll2_motor) == OM_TRUE &&
+            arm_task_motor_online(context->pitch3_motor) == OM_TRUE &&
+            arm_task_motor_online(context->roll3_motor) == OM_TRUE &&
+            arm_task_motor_online(context->grip_motor) == OM_TRUE)
+               ? OM_TRUE
+               : OM_FALSE;
+}
+
+static OmBool arm_task_get_roll3_feedback_angle_rad(
+    const ArmTaskContext* context,
+    float* angle_rad)
+{
+    const MotorFeedback* feedback = OM_NULL;
+
+    if (context == OM_NULL || angle_rad == OM_NULL || context->roll3_motor == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->roll3_motor->binding.dji.driver != OM_NULL)
+    {
+        *angle_rad = arm_task_deg_to_rad(
+            dji_motor_get_singgle_angle(context->roll3_motor->binding.dji.driver));
+        return OM_TRUE;
+    }
+
+    feedback = motor_get_feedback(context->roll3_motor);
+    if (feedback == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    *angle_rad = feedback->angle;
+    return OM_TRUE;
 }
 
 /* roll3 双环 PID 的通用初始化 helper。 */
@@ -362,8 +463,10 @@ static void arm_task_refresh_smoothed_targets_from_feedback(ArmTaskContext* cont
     feedback = motor_get_feedback(context->pitch3_motor);
     context->smoothed_targets.pitch3_rad = (feedback != OM_NULL) ? feedback->angle : 0.0f;
 
-    feedback = motor_get_feedback(context->roll3_motor);
-    context->smoothed_targets.roll3_rad = (feedback != OM_NULL) ? feedback->angle : 0.0f;
+    if (arm_task_get_roll3_feedback_angle_rad(context, &context->smoothed_targets.roll3_rad) != OM_TRUE)
+    {
+        context->smoothed_targets.roll3_rad = 0.0f;
+    }
 
     feedback = motor_get_feedback(context->grip_motor);
     context->smoothed_targets.grip_rad = (feedback != OM_NULL) ? feedback->angle : 0.0f;
@@ -409,7 +512,7 @@ static void arm_task_apply_exchange_pick_action_one(ArmTaskMachinePose* pose, Os
         pose->machine_values[ARM_TASK_MACHINE_PITCH2] = 0.82f;
         pose->machine_values[ARM_TASK_MACHINE_PITCH3] = -1.0f;
         pose->machine_values[ARM_TASK_MACHINE_ROLL2] = -0.04512f;
-        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = -49.3427f;
+        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = 256.400449f;
     }
     if (elapsed_ms >= 1800u)
     {
@@ -543,7 +646,7 @@ static void arm_task_apply_primary(ArmTaskMachinePose* pose, ClampAction action,
         break;
     case MODE_CLAMP_ACTION_TWO:
         arm_task_assign_pose(pose, &g_arm_pose_primary);
-        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = (primary_turn_ore_flag != 0u) ? 180.0f : 0.0f;
+        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = (primary_turn_ore_flag != 0u) ? 485.743149f : 305.743149f;
         break;
     case MODE_CLAMP_ACTION_THREE:
         arm_task_assign_pose(pose, &g_arm_pose_primary);
@@ -843,7 +946,9 @@ static void arm_task_update_smoothed_targets(
     context->smoothed_targets.roll3_rad =
         arm_task_slew_value(
             context->smoothed_targets.roll3_rad,
-            desired_targets->roll3_rad,
+            arm_task_resolve_nearest_equivalent_rad(
+                desired_targets->roll3_rad,
+                context->smoothed_targets.roll3_rad),
             APP_ARM_ROLL3_MAX_RATE_RAD_PER_S,
             current_tick_s);
     context->smoothed_targets.grip_rad =
@@ -874,13 +979,37 @@ static void arm_task_apply_angle_target(
     (void)motor_control_compute(motor);
 }
 
+static void arm_task_apply_hold_angle_target(
+    Motor* motor,
+    float kp,
+    float kd)
+{
+    const MotorFeedback* feedback = OM_NULL;
+
+    if (motor == OM_NULL)
+    {
+        return;
+    }
+
+    feedback = motor_get_feedback(motor);
+    if (arm_task_feedback_online(feedback) != OM_TRUE)
+    {
+        arm_task_apply_angle_target(motor, 0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
+
+    arm_task_apply_angle_target(motor, feedback->angle, kp, kd, 0.0f);
+}
+
 /* roll3 仍沿用旧工程的双环思路。
  * 当前 motor 层没有 DJI 的 angle mode，因此这里直接算到电流目标。
  */
 static void arm_task_apply_roll3_target(ArmTaskContext* context, float target_roll3_rad, float current_tick_s)
 {
     const MotorFeedback* feedback = OM_NULL;
+    float angle_feedback_rad = 0.0f;
     float angle_feedback_deg = 0.0f;
+    float target_roll3_deg = 0.0f;
     float speed_feedback_rpm = 0.0f;
     float speed_reference_rpm = 0.0f;
     float current_command = 0.0f;
@@ -891,18 +1020,23 @@ static void arm_task_apply_roll3_target(ArmTaskContext* context, float target_ro
     }
 
     feedback = motor_get_feedback(context->roll3_motor);
-    if (feedback == OM_NULL)
+    if (feedback == OM_NULL || arm_task_feedback_online(feedback) != OM_TRUE ||
+        arm_task_get_roll3_feedback_angle_rad(context, &angle_feedback_rad) != OM_TRUE)
     {
         arm_task_apply_angle_target(context->roll3_motor, 0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
 
-    angle_feedback_deg = arm_task_rad_to_deg(feedback->angle);
+    angle_feedback_deg = arm_task_rad_to_deg(angle_feedback_rad);
+    target_roll3_deg =
+        arm_task_resolve_nearest_equivalent_deg(
+            arm_task_rad_to_deg(target_roll3_rad),
+            angle_feedback_deg);
     speed_feedback_rpm = arm_task_rad_per_s_to_rpm(feedback->speed);
     speed_reference_rpm =
         pid_compute(
             &context->roll3_angle_pid,
-            arm_task_rad_to_deg(target_roll3_rad),
+            target_roll3_deg,
             angle_feedback_deg,
             current_tick_s);
     current_command =
@@ -914,6 +1048,54 @@ static void arm_task_apply_roll3_target(ArmTaskContext* context, float target_ro
 
     (void)motor_set_current(context->roll3_motor, current_command);
     (void)motor_control_compute(context->roll3_motor);
+}
+
+static void arm_task_apply_offline_guard_output(ArmTaskContext* context, float current_tick_s)
+{
+    const MotorFeedback* roll3_feedback = OM_NULL;
+    float roll3_angle_rad = 0.0f;
+
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    arm_task_apply_hold_angle_target(
+        context->big_yaw_motor,
+        APP_ARM_BIG_YAW_KP,
+        APP_ARM_BIG_YAW_KD);
+    arm_task_apply_hold_angle_target(
+        context->pitch1_motor,
+        APP_ARM_PITCH1_KP,
+        APP_ARM_PITCH1_KD);
+    arm_task_apply_hold_angle_target(
+        context->pitch2_motor,
+        APP_ARM_PITCH2_KP,
+        APP_ARM_PITCH2_KD);
+    arm_task_apply_hold_angle_target(
+        context->roll2_motor,
+        APP_ARM_ROLL2_KP,
+        APP_ARM_ROLL2_KD);
+    arm_task_apply_hold_angle_target(
+        context->pitch3_motor,
+        APP_ARM_PITCH3_KP,
+        APP_ARM_PITCH3_KD);
+    arm_task_apply_hold_angle_target(
+        context->grip_motor,
+        APP_ARM_GRIP_KP,
+        APP_ARM_GRIP_KD);
+
+    roll3_feedback = motor_get_feedback(context->roll3_motor);
+    if (arm_task_feedback_online(roll3_feedback) == OM_TRUE &&
+        arm_task_get_roll3_feedback_angle_rad(context, &roll3_angle_rad) == OM_TRUE)
+    {
+        arm_task_apply_roll3_target(context, roll3_angle_rad, current_tick_s);
+    }
+    else
+    {
+        (void)motor_set_current(context->roll3_motor, 0.0f);
+        (void)motor_control_compute(context->roll3_motor);
+    }
 }
 
 /* RELEASE 模式不推进动作，只把各角轴保持在当前反馈位置。 */
@@ -1026,7 +1208,13 @@ static void arm_task_run_once(ArmTaskContext* context)
 
     arm_task_load_snapshot(&snapshot);
     arm_task_update_command_timer(context, &snapshot);
-    if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
+    if (arm_task_all_motors_online(context) != OM_TRUE)
+    {
+        context->snapshot_initialized = OM_FALSE;
+        context->smoothed_targets_initialized = OM_FALSE;
+        arm_task_apply_offline_guard_output(context, current_tick_s);
+    }
+    else if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
         arm_task_apply_release_output(context);
     }

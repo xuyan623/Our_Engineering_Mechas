@@ -16,7 +16,7 @@
 #define MCT_DJI_CHASSIS_COUNT              (4u)
 #define MCT_P1010B_COUNT                   (2u)
 #define MCT_DAMIAO_COUNT                   (6u)
-#define MCT_DJI_ROLL3_ID                   (6u)
+#define MCT_DJI_ROLL3_ID                   (5u)
 #define MCT_GO8010_PITCH2_ID               (1u)
 #define MCT_P1010B_QUERY_PERIOD_MS         (10u)
 #define MCT_DAMIAO_CTRL_MODE_RID           (10u)
