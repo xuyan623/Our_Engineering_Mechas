@@ -29,7 +29,11 @@
 #define CHASSIS_TASK_KEY_SHIFT_MASK   (1u << 4u)
 #define CHASSIS_TASK_KEY_CTRL_MASK    (1u << 5u)
 
-static const uint32_t g_chassis_task_wheel_feedback_timeout_ms = 20u;
+/* 底盘轮控需要比通用 online 判据更快地切断 stale feedback，
+ * 但 20ms 在当前 5ms 通信循环 + CAN1 多电机负载下过紧，容易把瞬时调度抖动误判成四轮同时离线。
+ * 这里放宽到 50ms，仍显著快于 driver 层 100ms online 超时，同时避免遥控正常但底盘被误清零。
+ */
+static const uint32_t g_chassis_task_wheel_feedback_timeout_ms = 50u;
 
 typedef struct
 {
@@ -490,6 +494,21 @@ static void chassis_task_reset_leg_command(ChassisTaskContext* context)
     }
 }
 
+static void chassis_task_reset_wheel_control_state(ChassisTaskContext* context)
+{
+    uint32_t index = 0u;
+
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
+    {
+        pid_reset(&context->wheel_speed_pids[index]);
+    }
+}
+
 static void chassis_task_apply_current_command(Motor* motor, float current)
 {
     if (motor == OM_NULL)
@@ -509,6 +528,8 @@ static void chassis_task_apply_zero_output(ChassisTaskContext* context)
     {
         return;
     }
+
+    chassis_task_reset_wheel_control_state(context);
 
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
@@ -741,6 +762,11 @@ static void chassis_task_run_once(ChassisTaskContext* context)
         else if (degraded_mode_enabled == OM_TRUE)
         {
             mecanum_calc_three_wheel(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, offline_wheel_id, wheel_speed_ref_rpm);
+        }
+        else
+        {
+            memset(wheel_online_flags, 0, sizeof(wheel_online_flags));
+            chassis_task_reset_wheel_control_state(context);
         }
 
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);

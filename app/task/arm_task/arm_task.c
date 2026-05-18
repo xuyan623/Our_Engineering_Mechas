@@ -41,9 +41,9 @@ typedef struct
     uint8_t primary_turn_ore_flag;
 } ArmTaskSnapshot;
 
-/* 机械臂姿态使用旧工程的“机构角”定义：
+/* 机械臂姿态使用当前正式链的“机构角”定义：
  * - big_yaw / pitch1 / pitch2 / roll2 / pitch3 / grip：单位 rad
- * - roll3：旧工程使用 GM6020 的角度语义，单位 deg
+ * - roll3：GM6020 单圈物理角，单位 deg，动作表统一按单圈目标角填写
  *
  * 后续统一在一个地方映射到当前 motor 抽象层的绝对目标值。
  */
@@ -108,33 +108,35 @@ static const char* g_arm_task_grip_name = "grip";
  * 保持一致。
  *
  * 注意：
- * - 当前 roll3 更换 GM6020 后，实物初始平衡角从旧基准 148 deg 变为 -157.743149 deg
- * - 为保持旧动作链对应的物理终点不变，下面所有 roll3 mode angle 都已按新平衡角重算
+ * - roll3 当前不再沿用“normal + mode_delta”的相对平衡角写法
+ * - 所有 roll3 数值都统一写成 GM6020 单圈物理目标角（deg）
+ * - 旧工程 roll3 基准是 normal_angle = 271 deg，当前新电机的平衡位改为 213.75 deg
+ * - 因此各动作 roll3 目标按“213.75 + 旧 mode_angle”重算到新的单圈物理角
  */
 static const ArmTaskMachinePose g_arm_pose_zero = {
-    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}};
+    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 213.75f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_normal = {
-    {0.0f, 0.0f, 0.0f, 0.0f, 0.1f, -157.743149f, 1.8f}};
+    {0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.0f, 1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy = {
-    {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 305.743149f, -1.8f}};
+    {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 213.75f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy1 = {
-    {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 215.353149f, -1.8f}};
+    {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 123.36f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy2 = {
-    {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, 251.347149f, -1.8f}};
+    {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, 159.354f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_store_energy = {
-    {1.141f, 1.1042f, 1.18567f, 0.016975f, -1.55555f, 255.224149f, 0.0f}};
+    {1.141f, 1.1042f, 1.18567f, 0.016975f, -1.55555f, 163.231f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_store_energy1 = {
-    {-1.9018459f, 1.00080109f, 1.008974f, 0.09136295f, -1.222925131f, 326.197251f, 0.0f}};
+    {-1.9018459f, 1.00080109f, 1.008974f, 0.09136295f, -1.222925131f, 234.204102f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_exchange = {
-    {0.0f, 0.64218f, 1.0447f, 0.0f, 0.0f, 305.743149f, 0.0f}};
+    {0.0f, 0.64218f, 1.0447f, 0.0f, 0.0f, 213.75f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_exchange_pick = {
-    {1.041f, 1.2042f, 1.08567f, 0.016975f, -1.55555f, 255.224149f, -1.8f}};
+    {1.041f, 1.2042f, 1.08567f, 0.016975f, -1.55555f, 163.231f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_exchange_pick1 = {
-    {-1.90189481f, 1.1f, 1.00948341f, 0.092153325f, -1.363282f, 321.326149f, -1.8f}};
+    {-1.90189481f, 1.1f, 1.00948341f, 0.092153325f, -1.363282f, 229.333f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_primary = {
-    {0.0f, 1.46691f, 2.0053f, 0.1192f, -1.6f, 485.743149f, 0.0f}};
+    {0.0f, 1.46691f, 2.0053f, 0.1192f, -1.6f, 33.75f, 0.0f}};
 static const ArmTaskMachinePose g_arm_pose_secondary_ore = {
-    {0.0f, 1.48691f, 0.85f, -1.57f, 0.0f, 305.743149f, 0.0f}};
+    {0.0f, 1.48691f, 0.85f, -1.57f, 0.0f, 213.75f, 0.0f}};
 
 static float arm_task_clamp_float(float value, float min_value, float max_value)
 {
@@ -512,7 +514,7 @@ static void arm_task_apply_exchange_pick_action_one(ArmTaskMachinePose* pose, Os
         pose->machine_values[ARM_TASK_MACHINE_PITCH2] = 0.82f;
         pose->machine_values[ARM_TASK_MACHINE_PITCH3] = -1.0f;
         pose->machine_values[ARM_TASK_MACHINE_ROLL2] = -0.04512f;
-        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = 256.400449f;
+        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = 164.4073f;
     }
     if (elapsed_ms >= 1800u)
     {
@@ -646,7 +648,7 @@ static void arm_task_apply_primary(ArmTaskMachinePose* pose, ClampAction action,
         break;
     case MODE_CLAMP_ACTION_TWO:
         arm_task_assign_pose(pose, &g_arm_pose_primary);
-        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = (primary_turn_ore_flag != 0u) ? 485.743149f : 305.743149f;
+        pose->machine_values[ARM_TASK_MACHINE_ROLL3] = (primary_turn_ore_flag != 0u) ? 33.75f : 213.75f;
         break;
     case MODE_CLAMP_ACTION_THREE:
         arm_task_assign_pose(pose, &g_arm_pose_primary);
@@ -764,7 +766,7 @@ static void clamp_angle_handle(
 /* 机构角 -> 电机目标角：
  * - pitch1 使用 app_config 中的目标比例映射
  * - pitch2 使用旧工程 -6.33 映射并叠加零位
- * - roll3 旧表仍用 deg，这里统一转成 rad
+ * - roll3 动作表直接写 GM6020 单圈物理角（deg），这里统一转成 rad
  */
 static void arm_task_resolve_motor_targets(
     const ArmTaskContext* context,
@@ -806,9 +808,7 @@ static void arm_task_resolve_motor_targets(
     final_pitch3_rad =
         g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH3] +
         pose->machine_values[ARM_TASK_MACHINE_PITCH3];
-    final_roll3_deg =
-        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_ROLL3] +
-        pose->machine_values[ARM_TASK_MACHINE_ROLL3];
+    final_roll3_deg = pose->machine_values[ARM_TASK_MACHINE_ROLL3];
     final_grip_rad =
         g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP] +
         pose->machine_values[ARM_TASK_MACHINE_GRIP];

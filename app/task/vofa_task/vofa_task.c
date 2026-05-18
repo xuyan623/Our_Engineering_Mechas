@@ -49,6 +49,19 @@ static float vofa_task_resolve_pitch2_zero_angle_rad(void)
     return pitch2_zero_angle_rad;
 }
 
+static float vofa_task_resolve_roll3_single_turn_deg(void)
+{
+    Motor* roll3_motor = OM_NULL;
+
+    roll3_motor = motor_find_by_name("roll3");
+    if (roll3_motor == OM_NULL || roll3_motor->binding.dji.driver == OM_NULL)
+    {
+        return 0.0f;
+    }
+
+    return dji_motor_get_singgle_angle(roll3_motor->binding.dji.driver);
+}
+
 static float vofa_task_convert_feedback_angle_to_action_unit(const MotorFeedbackSnapshot* snapshot)
 {
     float pitch2_zero_angle_rad = 0.0f;
@@ -71,7 +84,7 @@ static float vofa_task_convert_feedback_angle_to_action_unit(const MotorFeedback
 
     if (strcmp(snapshot->name, "roll3") == 0)
     {
-        return vofa_task_rad_to_deg(snapshot->feedback.angle);
+        return vofa_task_resolve_roll3_single_turn_deg();
     }
 
     return snapshot->feedback.angle;

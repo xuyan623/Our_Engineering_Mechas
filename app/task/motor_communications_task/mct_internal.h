@@ -80,6 +80,7 @@ typedef struct
     uint32_t next_p1010b_query_index;
     int32_t p1010b_last_query_ret[MCT_P1010B_COUNT];
     OsalTimeMs p1010b_last_query_ok_ms[MCT_P1010B_COUNT];
+    OmBool release_active;
 } MctRuntime;
 
 extern const MctDjiChassisConfig g_mct_dji_chassis_configs[MCT_DJI_CHASSIS_COUNT];
@@ -115,6 +116,13 @@ OmRet mct_register_vendors(MctRuntime* runtime);
  * - Damiao：写 MIT 模式后 enable
  */
 OmRet mct_prepare_startup_motors(MctRuntime* runtime);
+
+/* release 门控：
+ * - release_active=true：owner 把所有正式电机控制模式钳成 disabled，
+ *   并对支持的 vendor 执行一次物理 disable。
+ * - release_active=false：恢复正式控制模式，并对支持的 vendor 执行一次物理 enable。
+ */
+void mct_apply_release_gate(MctRuntime* runtime, OmBool release_active);
 
 /* 正式链里的 P1010B query-mode 轮询入口。 */
 void mct_query_one_p1010b(MctRuntime* runtime);

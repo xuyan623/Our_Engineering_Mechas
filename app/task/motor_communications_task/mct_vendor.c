@@ -4,6 +4,109 @@
  * 这里不跑主循环，也不导出观测快照。
  */
 
+static void mct_set_release_control_modes(MctRuntime* runtime)
+{
+    uint32_t index = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->dji_chassis_motors[index], MOTOR_CONTROL_MODE_DISABLED);
+    }
+
+    (void)motor_set_control_mode(&runtime->dji_roll3_motor, MOTOR_CONTROL_MODE_DISABLED);
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->p1010b_motors[index], MOTOR_CONTROL_MODE_DISABLED);
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->damiao_motors[index], MOTOR_CONTROL_MODE_DISABLED);
+    }
+
+    (void)motor_set_control_mode(&runtime->go8010_pitch2_motor, MOTOR_CONTROL_MODE_DISABLED);
+}
+
+static void mct_set_operational_control_modes(MctRuntime* runtime)
+{
+    uint32_t index = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->dji_chassis_motors[index], MOTOR_CONTROL_MODE_CURRENT);
+    }
+
+    (void)motor_set_control_mode(&runtime->dji_roll3_motor, MOTOR_CONTROL_MODE_CURRENT);
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->p1010b_motors[index], MOTOR_CONTROL_MODE_CURRENT);
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        if (g_mct_damiao_configs[index].installed == OM_TRUE)
+        {
+            (void)motor_set_control_mode(&runtime->damiao_motors[index], MOTOR_CONTROL_MODE_ANGLE);
+        }
+        else
+        {
+            (void)motor_set_control_mode(&runtime->damiao_motors[index], MOTOR_CONTROL_MODE_DISABLED);
+        }
+    }
+
+    (void)motor_set_control_mode(&runtime->go8010_pitch2_motor, MOTOR_CONTROL_MODE_ANGLE);
+}
+
+static void mct_disable_p1010b_motors(MctRuntime* runtime)
+{
+    P1010BResponse response = {0};
+    uint32_t index = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        (void)p1010b_disable(&runtime->p1010b_drivers[index], 0u, &response);
+    }
+}
+
+static void mct_disable_damiao_motors(MctRuntime* runtime)
+{
+    uint32_t index = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        if (g_mct_damiao_configs[index].installed != OM_TRUE)
+        {
+            continue;
+        }
+
+        damiao_motor_disable(&runtime->damiao_drivers[index]);
+    }
+
+    damiao_motor_bus_sync(&runtime->damiao_bus);
+}
+
 /* DJI 只作为 CAN1 上的一个 vendor bus 被正式接入。 */
 static OmRet mct_register_dji(MctRuntime* runtime)
 {
@@ -356,4 +459,29 @@ OmRet mct_prepare_startup_motors(MctRuntime* runtime)
     (void)mct_prepare_p1010b(runtime);
     (void)mct_prepare_damiao(runtime);
     return OM_OK;
+}
+
+void mct_apply_release_gate(MctRuntime* runtime, OmBool release_active)
+{
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    if (release_active == OM_TRUE)
+    {
+        mct_set_release_control_modes(runtime);
+        if (runtime->release_active != OM_TRUE)
+        {
+            mct_disable_p1010b_motors(runtime);
+            mct_disable_damiao_motors(runtime);
+        }
+        return;
+    }
+
+    mct_set_operational_control_modes(runtime);
+    if (runtime->release_active == OM_TRUE)
+    {
+        (void)mct_prepare_startup_motors(runtime);
+    }
 }
