@@ -1,5 +1,6 @@
 #include "task/motor_communications_task/mct_internal.h"
 
+#include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "drivers/peripheral/can/pal_can_dev.h"
 #include <string.h>
 
@@ -105,6 +106,7 @@ OmRet mct_runtime_init(
     runtime->p1010b_last_query_ret[0] = OM_ERROR_EMPTY;
     runtime->p1010b_last_query_ret[1] = OM_ERROR_EMPTY;
     motor_recovery_reset();
+    motor_tx_dispatch_init();
 
     ret = mct_prepare_can(devices->can1);
     if (ret != OM_OK)

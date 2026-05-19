@@ -80,6 +80,8 @@ typedef struct
     uint32_t next_p1010b_query_index;
     int32_t p1010b_last_query_ret[MCT_P1010B_COUNT];
     OsalTimeMs p1010b_last_query_ok_ms[MCT_P1010B_COUNT];
+    uint32_t last_tx_request_sources_mask;
+    OmBool last_tx_request_overflowed;
 } MctRuntime;
 
 extern const MctDjiChassisConfig g_mct_dji_chassis_configs[MCT_DJI_CHASSIS_COUNT];

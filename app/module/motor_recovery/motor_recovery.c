@@ -19,6 +19,8 @@
 #define MOTOR_RECOVERY_P1010B_SYNC_TIMEOUT_MS (5u)
 #define MOTOR_RECOVERY_P1010B_MAX_RETRY_COUNT (0u)
 #define MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS (1u)
+#define MOTOR_RECOVERY_DAMIAO_CTRL_MODE_RID (10u)
+#define MOTOR_RECOVERY_DAMIAO_CTRL_MODE_MIT (1u)
 
 /* 恢复子状态机只在模块内部使用：
  * - P1010B 需要多步同步恢复
@@ -353,16 +355,15 @@ static OmRet motor_recovery_recover_p1010b(MotorRecoveryEntry* entry, OsalTimeMs
     return ret;
 }
 
-/* 达妙恢复动作当前保持最小形态：
- * - 发 enable
- * - 立刻 bus_sync
- * - 重新打开 observation 静置窗口
+/* 达妙恢复需要覆盖“电机晚于主控上电”的场景。
+ * 这时只发 enable 不够，必须先重写 MIT 模式，再在下一轮重试里真正 enable。
  */
 static OmRet motor_recovery_recover_damiao(MotorRecoveryEntry* entry, OsalTimeMs now_ms)
 {
     DamiaoMotorDrv* driver = OM_NULL;
     Motor* motor = OM_NULL;
     DamiaoMotorBus* bus = OM_NULL;
+    OmRet ret = OM_OK;
 
     if (entry == OM_NULL || entry->driver == OM_NULL || entry->motor == OM_NULL)
     {
@@ -372,16 +373,46 @@ static OmRet motor_recovery_recover_damiao(MotorRecoveryEntry* entry, OsalTimeMs
     driver = (DamiaoMotorDrv*)entry->driver;
     motor = entry->motor;
     bus = motor->binding.damiao.bus;
-    damiao_motor_enable(driver);
-    if (bus != OM_NULL)
-    {
-        damiao_motor_bus_sync(bus);
-    }
-    motor_recovery_notify_damiao_enabled(motor);
 
-    entry->vendor_substate = MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_OBSERVE;
-    motor_recovery_mark_attempt(entry, OM_OK, now_ms);
-    return OM_OK;
+    switch (entry->vendor_substate)
+    {
+    case MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_ENABLE_PENDING:
+        if (bus == OM_NULL || bus->canDev == OM_NULL)
+        {
+            ret = OM_ERROR_PARAM;
+            break;
+        }
+
+        ret = damiao_motor_write_register_u32(
+            bus->canDev,
+            driver->link.txId,
+            MOTOR_RECOVERY_DAMIAO_CTRL_MODE_RID,
+            MOTOR_RECOVERY_DAMIAO_CTRL_MODE_MIT);
+        if (ret == OM_OK)
+        {
+            entry->vendor_substate = MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_OBSERVE;
+        }
+        break;
+
+    case MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_OBSERVE:
+        damiao_motor_enable(driver);
+        if (bus != OM_NULL)
+        {
+            damiao_motor_bus_sync(bus);
+        }
+        motor_recovery_notify_damiao_enabled(motor);
+        entry->vendor_substate = MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_ENABLE_PENDING;
+        ret = OM_OK;
+        break;
+
+    default:
+        entry->vendor_substate = MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_ENABLE_PENDING;
+        ret = OM_ERROR_PARAM;
+        break;
+    }
+
+    motor_recovery_mark_attempt(entry, ret, now_ms);
+    return ret;
 }
 
 /* DJI / GO8010 当前不重开链路，只重新下发当前 target。 */

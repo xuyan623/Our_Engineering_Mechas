@@ -6,6 +6,7 @@
 #include "driver/motor/motor.h"
 #include "module/data_pool/data_pool.h"
 #include "module/event_bus/event_bus.h"
+#include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "module/system_health/system_health.h"
 #include "task/mode_task/mode_task.h"
 #include "osal/osal.h"
@@ -130,6 +131,26 @@ static OmBool chassis_task_feedback_recent(const MotorFeedback* feedback, uint32
     }
 
     return ((uint32_t)(osal_time_now_monotonic() - feedback->timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
+}
+
+static OmBool chassis_task_motor_feedback_recent(const Motor* motor, uint32_t timeout_ms)
+{
+    const MotorFeedback* feedback = OM_NULL;
+    uint32_t timestamp_ms = 0u;
+
+    if (motor == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (motor->config.vendor == MOTOR_VENDOR_DJI && motor->binding.dji.driver != OM_NULL)
+    {
+        timestamp_ms = dji_motor_get_feedback_timestamp_ms(motor->binding.dji.driver);
+        return (timestamp_ms != 0u && (uint32_t)(osal_time_now_monotonic() - timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
+    }
+
+    feedback = motor_get_feedback(motor);
+    return chassis_task_feedback_recent(feedback, timeout_ms);
 }
 
 static OmBool chassis_task_key_is_down(uint16_t keyboard_bits, uint16_t mask)
@@ -612,7 +633,7 @@ static void chassis_task_resolve_wheel_online_flags(
         }
 
         feedback = motor_get_feedback(context->wheel_motors[index]);
-        if (chassis_task_feedback_recent(feedback, g_chassis_task_wheel_feedback_timeout_ms) == OM_TRUE)
+        if (chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) == OM_TRUE)
         {
             wheel_online_flags[index] = OM_TRUE;
             (*online_wheel_count)++;
@@ -651,7 +672,7 @@ static void chassis_task_apply_wheel_control(
         float current_cmd = 0.0f;
 
         if (wheel_active_flags[index] != OM_TRUE ||
-            chassis_task_feedback_recent(feedback, g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
+            chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
         {
             pid_reset(&context->wheel_speed_pids[index]);
             chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);
@@ -785,6 +806,8 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     }
 
     chassis_task_apply_big_yaw_hold(context);
+
+    (void)motor_tx_dispatch_submit(MOTOR_TX_SOURCE_CHASSIS);
 
     if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
     {

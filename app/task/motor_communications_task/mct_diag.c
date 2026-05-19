@@ -62,13 +62,6 @@ void mct_query_one_p1010b(MctRuntime* runtime)
     runtime->last_p1010b_query_ms = now_ms;
     driver = &runtime->p1010b_drivers[index];
 
-    /* 电机不在 ENABLED 时，不发 query，直接记 busy。 */
-    if (driver->runtime.state != P1010B_STATE_ENABLED)
-    {
-        runtime->p1010b_last_query_ret[index] = OM_ERROR_BUSY;
-        return;
-    }
-
     query_ret = p1010b_active_query_slots(
         driver,
         P1010B_REPORT_DATA_ABSOLUTE_POSITION,

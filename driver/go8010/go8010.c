@@ -72,6 +72,43 @@ static uint16_t go8010_crc_ccitt(const uint8_t* buffer, size_t length)
     return crc;
 }
 
+static void go8010_drop_rx_cache_prefix(Go8010Bus* bus, size_t drop_length)
+{
+    if (bus == OM_NULL || drop_length == 0u || bus->rxCacheLength == 0u)
+    {
+        return;
+    }
+
+    if (drop_length >= bus->rxCacheLength)
+    {
+        bus->rxCacheLength = 0u;
+        return;
+    }
+
+    memmove(bus->rxCache, bus->rxCache + drop_length, bus->rxCacheLength - drop_length);
+    bus->rxCacheLength -= drop_length;
+}
+
+static size_t go8010_find_frame_start(const uint8_t* buffer, size_t length)
+{
+    size_t index = 0u;
+
+    if (buffer == OM_NULL || length < 2u)
+    {
+        return length;
+    }
+
+    for (index = 0u; index + 1u < length; index++)
+    {
+        if (buffer[index] == GO8010_PACKET_HEAD0 && buffer[index + 1u] == GO8010_PACKET_HEAD1)
+        {
+            return index;
+        }
+    }
+
+    return length;
+}
+
 static OmBool go8010_is_valid_motor_id(uint8_t id)
 {
     return (id <= GO8010_MOTOR_ID_MAX) ? OM_TRUE : OM_FALSE;
@@ -328,8 +365,8 @@ OmRet go8010_parse_feedback(Go8010MotorDrv* motor, const uint8_t* frame, size_t 
 
 void go8010_rx_service(Go8010Bus* bus)
 {
-    uint8_t frame[GO8010_FRAME_RX_SIZE] = {0u};
     size_t read_count = 0u;
+    size_t frame_start = 0u;
     uint8_t motor_id = 0u;
     Go8010MotorDrv* motor = OM_NULL;
 
@@ -338,37 +375,68 @@ void go8010_rx_service(Go8010Bus* bus)
         return;
     }
 
-    if (bus->rxAvailableHint == 0u)
+    while (bus->rxCacheLength < GO8010_RX_CACHE_SIZE)
     {
-        return;
-    }
-
-    do
-    {
-        read_count = device_read(bus->serialDev, 0, frame, GO8010_FRAME_RX_SIZE);
-        if (read_count != GO8010_FRAME_RX_SIZE)
+        read_count = device_read(
+            bus->serialDev,
+            0,
+            bus->rxCache + bus->rxCacheLength,
+            1u);
+        if (read_count == 0u)
         {
             break;
         }
 
-        motor_id = (uint8_t)(frame[2] & 0x0Fu);
+        bus->rxCacheLength += read_count;
+    }
+
+    while (bus->rxCacheLength >= GO8010_FRAME_RX_SIZE)
+    {
+        frame_start = go8010_find_frame_start(bus->rxCache, bus->rxCacheLength);
+        if (frame_start >= bus->rxCacheLength)
+        {
+            if (bus->rxCacheLength < GO8010_FRAME_RX_SIZE)
+            {
+                break;
+            }
+
+            frame_start = 0u;
+        }
+
+        if (frame_start > 0u)
+        {
+            go8010_drop_rx_cache_prefix(bus, frame_start);
+            continue;
+        }
+
+        motor_id = (uint8_t)(bus->rxCache[2] & 0x0Fu);
         if (go8010_is_valid_motor_id(motor_id) != OM_TRUE)
         {
+            if (bus->rxCacheLength > 1u)
+            {
+                go8010_drop_rx_cache_prefix(bus, 1u);
+            }
             continue;
         }
 
         motor = bus->motorMap[motor_id];
         if (motor == OM_NULL)
         {
+            go8010_drop_rx_cache_prefix(bus, 1u);
             continue;
         }
 
-        if (go8010_parse_feedback(motor, frame, GO8010_FRAME_RX_SIZE) == OM_OK)
+        if (go8010_parse_feedback(motor, bus->rxCache, GO8010_FRAME_RX_SIZE) == OM_OK)
         {
             bus->rxFrameCount++;
             bus->lastRxTimestampMs = osal_time_now_monotonic();
+            go8010_drop_rx_cache_prefix(bus, GO8010_FRAME_RX_SIZE);
         }
-    } while (read_count == GO8010_FRAME_RX_SIZE);
+        else
+        {
+            go8010_drop_rx_cache_prefix(bus, 1u);
+        }
+    }
 
     bus->rxAvailableHint = 0u;
 }

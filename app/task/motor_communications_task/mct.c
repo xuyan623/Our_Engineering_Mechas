@@ -1,4 +1,5 @@
 #include "task/motor_communications_task/mct_internal.h"
+#include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "module/system_health/system_health.h"
 
 /* mct.c 只保留 façade：
@@ -22,6 +23,8 @@ static void mct_entry(void* arg)
 {
     MctRuntime* runtime = (MctRuntime*)arg;
     OsalStatus wait_status = OSAL_INVALID;
+    uint32_t sources_mask = 0u;
+    OmBool overflowed = OM_FALSE;
 
     if (runtime == OM_NULL)
     {
@@ -44,6 +47,10 @@ static void mct_entry(void* arg)
             0u);
 
         (void)wait_status;
+        sources_mask = motor_tx_dispatch_drain_sources_mask();
+        overflowed = motor_tx_dispatch_take_overflow_flag();
+        runtime->last_tx_request_sources_mask = sources_mask;
+        runtime->last_tx_request_overflowed = overflowed;
         (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
         mct_query_one_p1010b(runtime);
         (void)motor_transmit_all();

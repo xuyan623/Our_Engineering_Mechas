@@ -6,6 +6,7 @@
 #include "driver/motor/motor.h"
 #include "module/data_pool/data_pool.h"
 #include "module/event_bus/event_bus.h"
+#include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
@@ -1054,6 +1055,7 @@ static void arm_task_apply_offline_guard_output(ArmTaskContext* context, float c
 {
     const MotorFeedback* roll3_feedback = OM_NULL;
     float roll3_angle_rad = 0.0f;
+    float roll3_target_rad = 0.0f;
 
     if (context == OM_NULL)
     {
@@ -1089,7 +1091,14 @@ static void arm_task_apply_offline_guard_output(ArmTaskContext* context, float c
     if (arm_task_feedback_online(roll3_feedback) == OM_TRUE &&
         arm_task_get_roll3_feedback_angle_rad(context, &roll3_angle_rad) == OM_TRUE)
     {
-        arm_task_apply_roll3_target(context, roll3_angle_rad, current_tick_s);
+        /* 别的机械臂轴离线时，roll3 若仍在线，应继续保持“上一份有效目标”，
+         * 不能把目标直接改成当前角，否则 6020 会在离线保护期间变成跟手模式：
+         * 外力偏转时没有反向力，直到整臂恢复后才突然重新给力。
+         */
+        roll3_target_rad = (context->smoothed_targets_initialized == OM_TRUE) ?
+                               context->smoothed_targets.roll3_rad :
+                               roll3_angle_rad;
+        arm_task_apply_roll3_target(context, roll3_target_rad, current_tick_s);
     }
     else
     {
@@ -1269,6 +1278,8 @@ static void arm_task_run_once(ArmTaskContext* context)
             APP_ARM_GRIP_KD,
             0.0f);
     }
+
+    (void)motor_tx_dispatch_submit(MOTOR_TX_SOURCE_ARM);
 
     if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
     {
