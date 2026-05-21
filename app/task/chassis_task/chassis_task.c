@@ -20,6 +20,7 @@
 #define CHASSIS_TASK_PRIORITY         (4u)
 #define CHASSIS_TASK_WHEEL_COUNT      (MECANUM_WHEEL_COUNT)
 #define CHASSIS_TASK_LEG_COUNT        (2u)
+#define CHASSIS_TASK_ENABLE_SETTLE_MS (120u)
 #define CHASSIS_TASK_RIGHT_LEG_INDEX  (0u)
 #define CHASSIS_TASK_LEFT_LEG_INDEX   (1u)
 
@@ -60,9 +61,14 @@ typedef struct
     float pit_leg_cmd_deg;
     float big_yaw_hold_angle_rad;
     OsalTimeMs rc_rotate_saturation_since_ms;
+    OsalTimeMs wheel_enable_settle_until_ms;
+    ChassisMode last_chassis_mode;
     OmBool big_yaw_hold_initialized;
+    OmBool mode_initialized;
     OmBool motors_bound_flag;
 } ChassisTaskContext;
+
+static ChassisTaskDiagSnapshot g_chassis_task_diag_snapshot = {0};
 
 static const char* g_chassis_task_wheel_names[CHASSIS_TASK_WHEEL_COUNT] = {
     "chassis_fr",
@@ -76,11 +82,6 @@ static const char* g_chassis_task_leg_names[CHASSIS_TASK_LEG_COUNT] = {
     "joint_leg_l",
 };
 static const char* g_chassis_task_big_yaw_name = "big_yaw";
-
-static float chassis_task_now_s(void)
-{
-    return ((float)osal_time_now_monotonic()) / 1000.0f;
-}
 
 static float chassis_task_clamp_float(float value, float min_value, float max_value)
 {
@@ -554,6 +555,7 @@ static void chassis_task_apply_zero_output(ChassisTaskContext* context)
 
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
+        g_chassis_task_diag_snapshot.wheel_current_cmd[index] = 0.0f;
         chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);
     }
 
@@ -652,6 +654,35 @@ static void chassis_task_resolve_wheel_online_flags(
     }
 }
 
+static void chassis_task_update_mode_transition(ChassisTaskContext* context, ChassisMode current_mode, OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    if (context->mode_initialized != OM_TRUE)
+    {
+        context->last_chassis_mode = current_mode;
+        context->mode_initialized = OM_TRUE;
+        return;
+    }
+
+    if (context->last_chassis_mode != current_mode)
+    {
+        if (context->last_chassis_mode == MODE_CHASSIS_RELEASE && current_mode != MODE_CHASSIS_RELEASE)
+        {
+            context->wheel_enable_settle_until_ms = now_ms + CHASSIS_TASK_ENABLE_SETTLE_MS;
+        }
+        else if (current_mode == MODE_CHASSIS_RELEASE)
+        {
+            context->wheel_enable_settle_until_ms = 0u;
+        }
+
+        context->last_chassis_mode = current_mode;
+    }
+}
+
 static void chassis_task_apply_wheel_control(
     ChassisTaskContext* context,
     const int16_t wheel_speed_ref_rpm[CHASSIS_TASK_WHEEL_COUNT],
@@ -675,6 +706,8 @@ static void chassis_task_apply_wheel_control(
             chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
         {
             pid_reset(&context->wheel_speed_pids[index]);
+            g_chassis_task_diag_snapshot.wheel_speed_fdb_rpm[index] = wheel_speed_fdb_rpm;
+            g_chassis_task_diag_snapshot.wheel_current_cmd[index] = 0.0f;
             chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);
             continue;
         }
@@ -687,6 +720,8 @@ static void chassis_task_apply_wheel_control(
                 wheel_speed_fdb_rpm,
                 current_tick_s);
 
+        g_chassis_task_diag_snapshot.wheel_speed_fdb_rpm[index] = wheel_speed_fdb_rpm;
+        g_chassis_task_diag_snapshot.wheel_current_cmd[index] = current_cmd;
         chassis_task_apply_current_command(context->wheel_motors[index], current_cmd);
     }
 }
@@ -745,7 +780,8 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     uint32_t online_wheel_count = 0u;
     OmBool degraded_mode_enabled = OM_FALSE;
     MecanumWheelId offline_wheel_id = MECANUM_WHEEL_FRONT_RIGHT;
-    const float current_tick_s = chassis_task_now_s();
+    const float current_tick_s = ((float)CHASSIS_TASK_PERIOD_MS) / 1000.0f;
+    const OsalTimeMs now_ms = osal_time_now_monotonic();
 
     if (context == OM_NULL)
     {
@@ -761,12 +797,16 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     }
 
     chassis_task_load_snapshot(&snapshot);
+    chassis_task_update_mode_transition(context, snapshot.chassis_mode, now_ms);
     chassis_task_resolve_wheel_online_flags(
         context,
         wheel_online_flags,
         &online_wheel_count,
         &degraded_mode_enabled,
         &offline_wheel_id);
+
+    memset(&g_chassis_task_diag_snapshot, 0, sizeof(g_chassis_task_diag_snapshot));
+    g_chassis_task_diag_snapshot.online_wheel_count = online_wheel_count;
 
     if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
@@ -776,6 +816,41 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     else if (chassis_task_mode_allows_chassis_motion(snapshot.chassis_mode) == OM_TRUE)
     {
         chassis_task_compute_chassis_velocity(context, &snapshot, &vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
+        g_chassis_task_diag_snapshot.vx_mm_per_s = vx_mm_per_s;
+        g_chassis_task_diag_snapshot.vy_mm_per_s = vy_mm_per_s;
+        g_chassis_task_diag_snapshot.vw_deg_per_s = vw_deg_per_s;
+
+        if (now_ms < context->wheel_enable_settle_until_ms)
+        {
+            memset(wheel_speed_ref_rpm, 0, sizeof(wheel_speed_ref_rpm));
+            memset(wheel_online_flags, 0, sizeof(wheel_online_flags));
+            chassis_task_reset_wheel_control_state(context);
+
+            for (uint32_t diag_index = 0u; diag_index < CHASSIS_TASK_WHEEL_COUNT; diag_index++)
+            {
+                g_chassis_task_diag_snapshot.wheel_speed_ref_rpm[diag_index] = 0.0f;
+            }
+
+            chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
+            chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, wheel_online_flags, current_tick_s);
+            chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
+            chassis_task_apply_big_yaw_hold(context);
+
+            (void)motor_tx_dispatch_submit(MOTOR_TX_SOURCE_CHASSIS);
+
+            if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
+            {
+                sh_report_fatal(
+                    SH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL,
+                    "event_bus_publish EVT_MOTOR_TX_REQUEST failed");
+                for (;;)
+                {
+                    osal_sleep_ms(1000u);
+                }
+            }
+            return;
+        }
+
         if (online_wheel_count >= CHASSIS_TASK_WHEEL_COUNT)
         {
             mecanum_calc(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_speed_ref_rpm);
@@ -788,6 +863,12 @@ static void chassis_task_run_once(ChassisTaskContext* context)
         {
             memset(wheel_online_flags, 0, sizeof(wheel_online_flags));
             chassis_task_reset_wheel_control_state(context);
+        }
+
+        for (uint32_t diag_index = 0u; diag_index < CHASSIS_TASK_WHEEL_COUNT; diag_index++)
+        {
+            g_chassis_task_diag_snapshot.wheel_speed_ref_rpm[diag_index] =
+                wheel_speed_ref_rpm[diag_index];
         }
 
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
@@ -819,6 +900,17 @@ static void chassis_task_run_once(ChassisTaskContext* context)
             osal_sleep_ms(1000u);
         }
     }
+}
+
+OmRet chassis_task_copy_diag_snapshot(ChassisTaskDiagSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    *snapshot = g_chassis_task_diag_snapshot;
+    return OM_OK;
 }
 
 static void chassis_task_entry(void* arg)
