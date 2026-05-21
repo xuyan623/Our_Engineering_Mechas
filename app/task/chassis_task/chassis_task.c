@@ -439,6 +439,7 @@ static OmBool chassis_task_mode_allows_chassis_motion(ChassisMode chassis_mode)
     switch (chassis_mode)
     {
     case MODE_CHASSIS_NORMAL:
+    case MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL:
     case MODE_CHASSIS_EXCHANGE:
     case MODE_CHASSIS_PRIMARY:
     case MODE_CHASSIS_GET_ENERGY_UNIT:
@@ -456,6 +457,7 @@ static OmBool chassis_task_mode_allows_leg_control(ChassisMode chassis_mode)
     switch (chassis_mode)
     {
     case MODE_CHASSIS_NORMAL:
+    case MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL:
     case MODE_CHASSIS_EXCHANGE:
     case MODE_CHASSIS_PRIMARY:
     case MODE_CHASSIS_GET_ENERGY_UNIT:
@@ -598,6 +600,25 @@ static void chassis_task_apply_big_yaw_hold(ChassisTaskContext* context)
 #endif
 }
 
+/**
+ * @brief 解析轮子在线状态标志，检测离线轮子并判断是否启用降级模式
+ * 
+ * 该函数遍历所有麦轮电机，检查每个电机的反馈数据是否有效（在线），
+ * 统计在线和离线的轮子数量。当恰好有1个轮子离线时，启用三麦轮降级模式；
+ * 当2个及以上轮子离线时，不启用降级模式，底盘将停止运动。
+ * 
+ * @param context 底盘任务上下文指针，包含轮子电机信息
+ * @param wheel_online_flags 输出参数，长度为CHASSIS_TASK_WHEEL_COUNT的布尔数组，
+ *                           用于存储每个轮子的在线状态（OM_TRUE表示在线）
+ * @param online_wheel_count 输出参数，指向在线轮子数量的指针
+ * @param degraded_mode_enabled 输出参数，指向是否启用降级模式的指针，
+ *                              OM_TRUE表示启用三麦轮降级模式
+ * @param offline_wheel_id 输出参数，指向离线轮子ID的指针，
+ *                         仅在恰好1个轮子离线时有效
+ * 
+ * @note 如果任一输出参数为OM_NULL，函数将直接返回而不执行任何操作
+ * @note 降级模式仅在恰好1个轮子离线时启用，多个轮子离线时底盘将停止运动
+ */
 static void chassis_task_resolve_wheel_online_flags(
     ChassisTaskContext* context,
     OmBool wheel_online_flags[CHASSIS_TASK_WHEEL_COUNT],
@@ -609,22 +630,26 @@ static void chassis_task_resolve_wheel_online_flags(
     uint32_t offline_wheel_count = 0u;
     MecanumWheelId last_offline_wheel_id = MECANUM_WHEEL_FRONT_RIGHT;
 
+    /* 参数有效性检查 */
     if (wheel_online_flags == OM_NULL || online_wheel_count == OM_NULL ||
         degraded_mode_enabled == OM_NULL || offline_wheel_id == OM_NULL)
     {
         return;
     }
 
+    /* 初始化输出参数 */
     *online_wheel_count = 0u;
     *degraded_mode_enabled = OM_FALSE;
     *offline_wheel_id = MECANUM_WHEEL_FRONT_RIGHT;
 
+    /* 遍历所有轮子，检测每个轮子的在线状态 */
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
         const MotorFeedback* feedback = OM_NULL;
 
         wheel_online_flags[index] = OM_FALSE;
 
+        /* 检查上下文和电机指针是否有效 */
         if (context == OM_NULL || context->wheel_motors[index] == OM_NULL)
         {
             offline_wheel_count++;
@@ -633,6 +658,7 @@ static void chassis_task_resolve_wheel_online_flags(
         }
 
         feedback = motor_get_feedback(context->wheel_motors[index]);
+        /* 检查电机反馈数据是否在有效时间范围内 */
         if (chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) == OM_TRUE)
         {
             wheel_online_flags[index] = OM_TRUE;
@@ -644,6 +670,7 @@ static void chassis_task_resolve_wheel_online_flags(
         last_offline_wheel_id = (MecanumWheelId)index;
     }
 
+    /* 根据离线轮子数量决定是否启用降级模式 */
     if (offline_wheel_count == 1u)
     {
         /* 恰好掉 1 个轮电机时启用三麦轮降级，2 个及以上则不再维持底盘运动。 */
@@ -652,6 +679,19 @@ static void chassis_task_resolve_wheel_online_flags(
     }
 }
 
+/**
+ * @brief 应用底盘轮速控制指令到各个电机
+ * 
+ * 该函数遍历所有轮子电机，根据参考转速和反馈信息计算并应用电流控制指令。
+ * 对于非活跃或反馈超时的电机会重置PID控制器并停止输出。
+ * 
+ * @param context 底盘任务上下文指针，包含电机句柄和PID控制器等状态信息
+ * @param wheel_speed_ref_rpm 各轮子的参考转速数组（单位：RPM），长度为CHASSIS_TASK_WHEEL_COUNT
+ * @param wheel_active_flags 各轮子的激活标志数组，OM_TRUE表示该轮子需要控制
+ * @param current_tick_s 当前时间戳（单位：秒），用于PID微分计算
+ * 
+ * @return 无返回值
+ */
 static void chassis_task_apply_wheel_control(
     ChassisTaskContext* context,
     const int16_t wheel_speed_ref_rpm[CHASSIS_TASK_WHEEL_COUNT],
@@ -660,17 +700,20 @@ static void chassis_task_apply_wheel_control(
 {
     uint32_t index = 0u;
 
+    /* 参数有效性检查 */
     if (context == OM_NULL || wheel_speed_ref_rpm == OM_NULL || wheel_active_flags == OM_NULL)
     {
         return;
     }
 
+    /* 遍历所有轮子电机，逐个应用速度控制 */
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
         const MotorFeedback* feedback = motor_get_feedback(context->wheel_motors[index]);
         float wheel_speed_fdb_rpm = 0.0f;
         float current_cmd = 0.0f;
 
+        /* 检查轮子是否激活且反馈数据有效，否则重置PID并停止电机 */
         if (wheel_active_flags[index] != OM_TRUE ||
             chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
         {
@@ -679,7 +722,10 @@ static void chassis_task_apply_wheel_control(
             continue;
         }
 
+        /* 将角速度反馈转换为RPM单位 */
         wheel_speed_fdb_rpm = chassis_task_rad_per_s_to_rpm(feedback->speed);
+        
+        /* 使用PID控制器计算电流控制指令 */
         current_cmd =
             pid_compute(
                 &context->wheel_speed_pids[index],
@@ -687,10 +733,25 @@ static void chassis_task_apply_wheel_control(
                 wheel_speed_fdb_rpm,
                 current_tick_s);
 
+        /* 应用电流控制指令到电机 */
         chassis_task_apply_current_command(context->wheel_motors[index], current_cmd);
     }
 }
 
+/**
+ * @brief 应用腿部电机的控制指令，通过级联PID实现角度闭环控制
+ * 
+ * 该函数对每个腿部电机执行以下控制流程：
+ * 1. 获取电机反馈（角度和速度）
+ * 2. 对速度反馈进行一阶低通滤波
+ * 3. 外环角度PID计算期望转速
+ * 4. 内环速度PID计算期望电流
+ * 5. 下发最终电流指令
+ * 
+ * @param context 底盘任务上下文指针，包含电机句柄、PID控制器等状态信息
+ * @param leg_reference_deg 腿部目标角度数组（单位：度），长度为CHASSIS_TASK_LEG_COUNT
+ * @param current_tick_s 当前时间戳（单位：秒），用于PID积分项计算
+ */
 static void chassis_task_apply_leg_control(
     ChassisTaskContext* context,
     const float leg_reference_deg[CHASSIS_TASK_LEG_COUNT],
@@ -713,15 +774,19 @@ static void chassis_task_apply_leg_control(
         float leg_speed_ref_rpm = 0.0f;
         float leg_current_raw = 0.0f;
 
+        /* 对速度反馈进行一阶低通滤波，抑制高频噪声 */
         context->leg_speed_filtered_rpm[index] =
             0.16f * leg_speed_fdb_rpm + 0.84f * context->leg_speed_filtered_rpm[index];
 
+        /* 外环：角度PID控制器计算期望转速 */
         leg_speed_ref_rpm =
             pid_compute(
                 &context->leg_angle_pids[index],
                 leg_reference_deg[index],
                 leg_angle_fdb_deg,
                 current_tick_s);
+        
+        /* 内环：速度PID控制器计算期望电流 */
         leg_current_raw =
             pid_compute(
                 &context->leg_speed_pids[index],
@@ -733,6 +798,32 @@ static void chassis_task_apply_leg_control(
     }
 }
 
+/**
+ * @brief 底盘任务单次执行主循环
+ * 
+ * 该函数是底盘控制任务的核心执行函数，负责：
+ * 1. 电机绑定与初始化检查
+ * 2. 输入数据采集与轮子在线状态检测
+ * 3. 根据底盘模式计算运动学解算（支持四轮全向和三轮降级模式）
+ * 4. 腿部关节角度控制
+ * 5. 大云台保持控制
+ * 6. 电机控制指令下发
+ * 
+ * @param context 底盘任务上下文指针，包含电机句柄、PID控制器状态等信息
+ *                如果为NULL则直接返回
+ * 
+ * @return 无返回值
+ * 
+ * @note 函数内部会根据不同的底盘模式执行不同的控制逻辑：
+ *       - MODE_CHASSIS_RELEASE: 释放模式，清零所有输出
+ *       - 允许底盘运动的模式: 执行速度解算和轮控/腿控
+ *       - 仅允许腿控的模式: 仅执行腿控
+ *       - 其他模式: 清零输出
+ * 
+ * @note 支持降级运行模式：当检测到某个轮子离线时，自动切换到三轮运动学解算
+ * 
+ * @note 如果事件总线发布失败，会触发致命错误并进入死循环
+ */
 static void chassis_task_run_once(ChassisTaskContext* context)
 {
     ChassisTaskInputSnapshot snapshot = {0};
@@ -752,6 +843,7 @@ static void chassis_task_run_once(ChassisTaskContext* context)
         return;
     }
 
+    /* 确保电机已绑定，未绑定时尝试绑定 */
     if (context->motors_bound_flag != OM_TRUE)
     {
         if (chassis_task_try_bind_motors(context) != OM_OK)
@@ -760,6 +852,7 @@ static void chassis_task_run_once(ChassisTaskContext* context)
         }
     }
 
+    /* 加载当前输入快照并解析轮子在线状态 */
     chassis_task_load_snapshot(&snapshot);
     chassis_task_resolve_wheel_online_flags(
         context,
@@ -768,47 +861,59 @@ static void chassis_task_run_once(ChassisTaskContext* context)
         &degraded_mode_enabled,
         &offline_wheel_id);
 
+    /* 根据底盘模式执行相应的控制逻辑 */
     if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
+        /* 释放模式：重置腿部命令并清零所有输出 */
         chassis_task_reset_leg_command(context);
         chassis_task_apply_zero_output(context);
     }
     else if (chassis_task_mode_allows_chassis_motion(snapshot.chassis_mode) == OM_TRUE)
     {
+        /* 计算底盘期望速度并进行运动学解算 */
         chassis_task_compute_chassis_velocity(context, &snapshot, &vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
         if (online_wheel_count >= CHASSIS_TASK_WHEEL_COUNT)
         {
+            /* 四轮在线：使用标准四轮全向运动学解算 */
             mecanum_calc(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_speed_ref_rpm);
         }
         else if (degraded_mode_enabled == OM_TRUE)
         {
+            /* 降级模式：使用三轮运动学解算（排除离线轮） */
             mecanum_calc_three_wheel(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, offline_wheel_id, wheel_speed_ref_rpm);
         }
         else
         {
+            /* 异常状态：清除在线标志并重置轮控状态 */
             memset(wheel_online_flags, 0, sizeof(wheel_online_flags));
             chassis_task_reset_wheel_control_state(context);
         }
 
+        /* 更新腿部参考角度并应用轮控和腿控 */
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
         chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, wheel_online_flags, current_tick_s);
         chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
     }
     else if (chassis_task_mode_allows_leg_control(snapshot.chassis_mode) == OM_TRUE)
     {
+        /* 仅腿控模式：更新腿部参考角度并应用腿控 */
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
         chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, wheel_online_flags, current_tick_s);
         chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
     }
     else
     {
+        /* 其他模式：清零所有输出 */
         chassis_task_apply_zero_output(context);
     }
 
+    /* 应用大云台保持控制 */
     chassis_task_apply_big_yaw_hold(context);
 
+    /* 提交电机发送请求到分发器 */
     (void)motor_tx_dispatch_submit(MOTOR_TX_SOURCE_CHASSIS);
 
+    /* 发布电机发送请求事件，失败则触发致命错误 */
     if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
     {
         sh_report_fatal(
@@ -834,6 +939,20 @@ static void chassis_task_entry(void* arg)
     }
 }
 
+/**
+ * @brief 启动底盘控制任务
+ * 
+ * 该函数负责初始化并启动底盘控制任务线程。主要完成以下工作：
+ * 1. 检查任务是否已启动，防止重复创建
+ * 2. 初始化任务上下文和PID控制器参数
+ * 3. 创建底盘任务线程并开始执行
+ * 
+ * @return OmRet 返回操作结果
+ *         - OM_OK: 任务启动成功
+ *         - OM_ERR_CONFLICT: 任务已经启动，不能重复启动
+ *         - OM_ERROR: 线程创建失败
+ *         - 其他错误码: PID初始化失败时返回的具体错误码
+ */
 OmRet chassis_task_start(void)
 {
     static OsalThread* chassis_task_thread = OM_NULL;
@@ -845,11 +964,13 @@ OmRet chassis_task_start(void)
     OsalStatus status = OSAL_INVALID;
     OmRet ret = OM_OK;
 
+    /* 检查任务是否已经启动，防止重复创建 */
     if (chassis_task_thread != OM_NULL)
     {
         return OM_ERR_CONFLICT;
     }
 
+    /* 初始化任务上下文并配置PID控制器 */
     memset(&chassis_task_context, 0, sizeof(chassis_task_context));
     ret = chassis_task_init_pids(&chassis_task_context);
     if (ret != OM_OK)
@@ -857,6 +978,7 @@ OmRet chassis_task_start(void)
         return ret;
     }
 
+    /* 创建底盘任务线程 */
     status = osal_thread_create(
         &chassis_task_thread,
         &chassis_task_attr,
