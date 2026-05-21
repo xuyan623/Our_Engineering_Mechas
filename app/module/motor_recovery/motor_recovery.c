@@ -83,6 +83,50 @@ typedef struct
 
 static MotorRecoveryContext g_motor_recovery = {0};
 
+static MotorRecoveryEntry* motor_recovery_find_entry_by_driver(
+    MotorVendor vendor,
+    const void* driver)
+{
+    uint32_t index = 0u;
+
+    if (driver == OM_NULL)
+    {
+        return OM_NULL;
+    }
+
+    for (index = 0u; index < g_motor_recovery.entry_count; index++)
+    {
+        MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
+        if (entry->vendor == vendor && entry->driver == driver)
+        {
+            return entry;
+        }
+    }
+
+    return OM_NULL;
+}
+
+static const MotorRecoveryEntry* motor_recovery_find_entry_by_motor(const Motor* motor)
+{
+    uint32_t index = 0u;
+
+    if (motor == OM_NULL)
+    {
+        return OM_NULL;
+    }
+
+    for (index = 0u; index < g_motor_recovery.entry_count; index++)
+    {
+        const MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
+        if (entry->motor == motor)
+        {
+            return entry;
+        }
+    }
+
+    return OM_NULL;
+}
+
 /* P1010B 恢复统一走 query-mode。
  * 这样运行期在线判据不依赖主动上报链，而是和现有正式通信逻辑保持一致。
  */
@@ -595,7 +639,7 @@ void motor_recovery_notify_damiao_enabled(Motor* motor)
 
 void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver)
 {
-    uint32_t index = 0u;
+    MotorRecoveryEntry* entry = OM_NULL;
     OsalTimeMs now_ms = 0u;
 
     if (motor_recovery_enabled() != OM_TRUE || driver == OM_NULL)
@@ -604,42 +648,100 @@ void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver)
     }
 
     now_ms = osal_time_now_monotonic();
-    for (index = 0u; index < g_motor_recovery.entry_count; index++)
+    entry = motor_recovery_find_entry_by_driver(MOTOR_VENDOR_P1010B, driver);
+    if (entry == OM_NULL)
     {
-        MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
-        if (entry->vendor != MOTOR_VENDOR_P1010B || entry->driver != driver)
-        {
-            continue;
-        }
-
-        entry->p1010b_enable_settle_until_ms = now_ms + MOTOR_RECOVERY_P1010B_ENABLE_SETTLE_MS;
-        entry->state = MOTOR_RECOVERY_STATE_RECOVERING;
-        entry->degraded_flag = OM_FALSE;
-        entry->offline_since_ms = 0u;
-        break;
+        return;
     }
+
+    entry->p1010b_enable_settle_until_ms = now_ms + MOTOR_RECOVERY_P1010B_ENABLE_SETTLE_MS;
+    entry->state = MOTOR_RECOVERY_STATE_RECOVERING;
+    entry->degraded_flag = OM_FALSE;
+    entry->offline_since_ms = 0u;
 }
 
 void motor_recovery_notify_p1010b_query_ok(P1010BDriver* driver, OsalTimeMs timestamp_ms)
 {
-    uint32_t index = 0u;
+    MotorRecoveryEntry* entry = OM_NULL;
 
     if (motor_recovery_enabled() != OM_TRUE || driver == OM_NULL || timestamp_ms == 0u)
     {
         return;
     }
 
-    for (index = 0u; index < g_motor_recovery.entry_count; index++)
+    entry = motor_recovery_find_entry_by_driver(MOTOR_VENDOR_P1010B, driver);
+    if (entry == OM_NULL)
     {
-        MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
-        if (entry->vendor != MOTOR_VENDOR_P1010B || entry->driver != driver)
-        {
-            continue;
-        }
-
-        entry->p1010b_last_query_ok_ms = timestamp_ms;
-        break;
+        return;
     }
+
+    entry->p1010b_last_query_ok_ms = timestamp_ms;
+}
+
+OmBool motor_recovery_should_defer_p1010b_query(const P1010BDriver* driver)
+{
+    const MotorRecoveryEntry* entry = OM_NULL;
+    OsalTimeMs now_ms = 0u;
+
+    if (motor_recovery_enabled() != OM_TRUE || driver == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    entry = motor_recovery_find_entry_by_driver(MOTOR_VENDOR_P1010B, driver);
+    if (entry == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    now_ms = osal_time_now_monotonic();
+    if (motor_recovery_is_p1010b_in_enable_settle_window(entry, now_ms) == OM_TRUE)
+    {
+        return OM_TRUE;
+    }
+
+    if (entry->state != MOTOR_RECOVERY_STATE_HEALTHY &&
+        entry->vendor_substate != MOTOR_RECOVERY_VENDOR_SUBSTATE_P1010B_DISABLE)
+    {
+        return OM_TRUE;
+    }
+
+    return OM_FALSE;
+}
+
+OmBool motor_recovery_should_block_damiao_regular_target(const Motor* motor)
+{
+    const MotorRecoveryEntry* entry = OM_NULL;
+    OsalTimeMs now_ms = 0u;
+
+    if (motor_recovery_enabled() != OM_TRUE || motor == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    entry = motor_recovery_find_entry_by_motor(motor);
+    if (entry == OM_NULL || entry->vendor != MOTOR_VENDOR_DAMIAO)
+    {
+        return OM_FALSE;
+    }
+
+    now_ms = osal_time_now_monotonic();
+    if (entry->state == MOTOR_RECOVERY_STATE_HEALTHY)
+    {
+        return OM_FALSE;
+    }
+
+    if (entry->vendor_substate == MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_OBSERVE)
+    {
+        return OM_TRUE;
+    }
+
+    if (osal_time_before(now_ms, entry->observe_gate_until_ms) == OM_TRUE)
+    {
+        return OM_TRUE;
+    }
+
+    return OM_FALSE;
 }
 
 /* 启动期宽限：避免刚注册好就立刻进入第一次重试。 */

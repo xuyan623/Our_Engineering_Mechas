@@ -81,6 +81,16 @@ void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver);
  */
 void motor_recovery_notify_p1010b_query_ok(P1010BDriver* driver, OsalTimeMs timestamp_ms);
 
+/* P1010B 刚完成 enable 或仍处于多步恢复中时，
+ * 正式 query 不应马上插进去打断 bring-up。
+ */
+OmBool motor_recovery_should_defer_p1010b_query(const P1010BDriver* driver);
+
+/* 达妙正在跑恢复步骤时，常规 MIT 目标应短暂让位给恢复帧。
+ * 这里只回答“当前这台电机是否该阻断常规目标”，不扩散成公共 Motor 状态。
+ */
+OmBool motor_recovery_should_block_damiao_regular_target(const Motor* motor);
+
 /* 给所有已注册条目打一层“初始恢复宽限期”。
  * 用于避免任务刚启动时立刻把首轮离线判成 fault。
  */

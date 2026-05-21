@@ -113,6 +113,23 @@ void sh_report_fatal(SHErrorCode code, char* msg);
 /* 切换到 RUNNING 状态，显示绿灯常亮。 */
 void sh_set_running(void);
 
+/* 在 RUNNING 常亮绿灯上插入一次短闪。
+ * 用于模式进入/退出这类非故障提示，不改变 system_health 的高层状态。
+ */
+void sh_request_running_green_flash(void);
+
+/* 自定义控制器校准指示：
+ * - pending：绿灯灭，表示已进入校准流程、正在等待自动对齐
+ * - success/clear：恢复 RUNNING 常亮绿灯
+ * - failed：红灯亮，表示本次自动校准失败，已退化到强制接管
+ *
+ * 这些接口只改变 RUNNING 态下的灯覆盖层，不改变 system_health 的高层状态机。
+ */
+void sh_set_custom_controller_calibration_pending(void);
+void sh_set_custom_controller_calibration_success(void);
+void sh_set_custom_controller_calibration_failed(void);
+void sh_clear_custom_controller_calibration_indicator(void);
+
 /* 系统健康总裁轮询入口。
  * 这应该由 start_task 周期调用，作为唯一的健康监督执行者。
  */
