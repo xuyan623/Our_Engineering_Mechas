@@ -1,5 +1,8 @@
 #include "task/motor_communications_task/mct_internal.h"
 
+#include "drivers/peripheral/can/pal_can_dev.h"
+#include "module/system_health/system_health.h"
+#include "task/input_task/input_task.h"
 #include <string.h>
 
 /* mct_diag.c 承接两类职责：
@@ -39,6 +42,7 @@ void mct_query_one_p1010b(MctRuntime* runtime)
     OsalTimeMs now_ms = 0u;
     OsalTimeMs query_ok_ms = 0u;
     uint32_t index = 0u;
+    uint32_t attempt = 0u;
     OmRet query_ret = OM_ERROR_EMPTY;
 
     if (runtime == OM_NULL)
@@ -56,11 +60,29 @@ void mct_query_one_p1010b(MctRuntime* runtime)
         return;
     }
 
-    index = runtime->next_p1010b_query_index;
-    runtime->next_p1010b_query_index =
-        (runtime->next_p1010b_query_index + 1u) % MCT_P1010B_COUNT;
     runtime->last_p1010b_query_ms = now_ms;
-    driver = &runtime->p1010b_drivers[index];
+
+    for (attempt = 0u; attempt < MCT_P1010B_COUNT; attempt++)
+    {
+        index = runtime->next_p1010b_query_index;
+        runtime->next_p1010b_query_index =
+            (runtime->next_p1010b_query_index + 1u) % MCT_P1010B_COUNT;
+        driver = &runtime->p1010b_drivers[index];
+
+        if (motor_recovery_should_defer_p1010b_query(driver) == OM_TRUE)
+        {
+            runtime->p1010b_last_query_ret[index] = OM_ERROR_BUSY;
+            driver = OM_NULL;
+            continue;
+        }
+
+        break;
+    }
+
+    if (driver == OM_NULL)
+    {
+        return;
+    }
 
     query_ret = p1010b_active_query_slots(
         driver,
@@ -152,6 +174,12 @@ OmRet mct_copy_p1010b_diag_snapshots(
 OmRet mct_copy_damiao_diag(
     MctDamiaoDiagSnapshot* snapshot)
 {
+    CanErrCounter can_status = {0};
+    const Go8010Feedback* go8010_feedback = OM_NULL;
+    MotorRecoveryP1010BPredicateSnapshot p1010b_predicates[MCT_P1010B_COUNT] = {0};
+    MctP1010BDiagSnapshot p1010b_diags[MCT_P1010B_COUNT] = {0};
+    uint32_t p1010b_predicate_count = 0u;
+    uint32_t p1010b_diag_count = 0u;
     uint32_t index = 0u;
 
     if (snapshot == OM_NULL)
@@ -164,11 +192,81 @@ OmRet mct_copy_damiao_diag(
         damiao_motor_bus_get_raw_rx_count(&g_mct_runtime.damiao_bus);
     snapshot->last_raw_stdid =
         damiao_motor_bus_get_last_raw_stdid(&g_mct_runtime.damiao_bus);
+    snapshot->recovery_runtime_fault_active =
+        (motor_recovery_is_runtime_fault_active() == OM_TRUE) ? 1u : 0u;
+    snapshot->can_restart_count = motor_recovery_get_damiao_can_restart_count();
+    go8010_feedback = go8010_get_feedback(&g_mct_runtime.go8010_pitch2_driver);
+
+    if (g_mct_runtime.damiao_bus.canDev != OM_NULL &&
+        device_ctrl(g_mct_runtime.damiao_bus.canDev, CAN_CMD_GET_STATUS, &can_status) == OM_OK)
+    {
+        snapshot->can2_tx_err_count = (uint32_t)can_status.txErrCnt;
+        snapshot->can2_rx_err_count = (uint32_t)can_status.rxErrCnt;
+    }
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
+        snapshot->raw_rx_by_stdid[index] =
+            damiao_motor_bus_get_raw_rx_by_stdid(&g_mct_runtime.damiao_bus, index);
+        snapshot->feedback_timestamp_ms[index] =
+            damiao_motor_get_feedback_timestamp_ms(&g_mct_runtime.damiao_drivers[index]);
         snapshot->feedback_sequence[index] =
             damiao_motor_get_feedback_sequence(&g_mct_runtime.damiao_drivers[index]);
+        snapshot->damiao_status[index] =
+            (uint32_t)damiao_motor_get_status(&g_mct_runtime.damiao_drivers[index]);
+    }
+
+    if (go8010_feedback != OM_NULL)
+    {
+        snapshot->go8010_feedback_timestamp_ms = go8010_feedback->timestampMs;
+        snapshot->go8010_feedback_sequence = go8010_feedback->sequence;
+    }
+
+    for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
+    {
+        snapshot->dji_feedback_timestamp_ms[index] =
+            dji_motor_get_feedback_timestamp_ms(&g_mct_runtime.dji_chassis_drivers[index]);
+        snapshot->dji_error_code[index] =
+            (uint32_t)dji_motor_get_error_code(&g_mct_runtime.dji_chassis_drivers[index]);
+    }
+
+    snapshot->go8010_bus_rx_frame_count = g_mct_runtime.go8010_bus.rxFrameCount;
+    snapshot->go8010_bus_last_rx_timestamp_ms = g_mct_runtime.go8010_bus.lastRxTimestampMs;
+    snapshot->input_frame_count = g_input_task_runtime.frame_count;
+    snapshot->input_invalid_frame_count = g_input_task_runtime.invalid_frame_count;
+    snapshot->system_health_state = sh_get_state_value();
+    snapshot->system_health_active_display_code = sh_get_active_display_code_value();
+
+    (void)mct_copy_p1010b_predicate_snapshots(
+        p1010b_predicates,
+        MCT_P1010B_COUNT,
+        &p1010b_predicate_count);
+    (void)mct_copy_p1010b_diag_snapshots(
+        p1010b_diags,
+        MCT_P1010B_COUNT,
+        &p1010b_diag_count);
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        if (index < p1010b_predicate_count)
+        {
+            snapshot->p1010b_online[index] =
+                (p1010b_predicates[index].online == OM_TRUE) ? 1u : 0u;
+            snapshot->p1010b_state_enabled[index] =
+                (p1010b_predicates[index].state_enabled == OM_TRUE) ? 1u : 0u;
+            snapshot->p1010b_fault_clear[index] =
+                (p1010b_predicates[index].fault_clear == OM_TRUE) ? 1u : 0u;
+            snapshot->p1010b_healthy[index] =
+                (p1010b_predicates[index].healthy == OM_TRUE) ? 1u : 0u;
+        }
+
+        if (index < p1010b_diag_count)
+        {
+            snapshot->p1010b_query_ok_age_ms[index] =
+                p1010b_diags[index].query_ok_age_ms;
+            snapshot->p1010b_last_query_ret[index] =
+                p1010b_diags[index].last_query_ret;
+        }
     }
 
     return OM_OK;

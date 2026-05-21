@@ -81,6 +81,10 @@ void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver);
  */
 void motor_recovery_notify_p1010b_query_ok(P1010BDriver* driver, OsalTimeMs timestamp_ms);
 
+/* P1010B 正在运行 recovery bring-up 或 enable settle 时，
+ * owner 侧应暂缓 active_query，避免 query-mode 打断恢复序列。 */
+OmBool motor_recovery_should_defer_p1010b_query(const P1010BDriver* driver);
+
 /* 给所有已注册条目打一层“初始恢复宽限期”。
  * 用于避免任务刚启动时立刻把首轮离线判成 fault。
  */
@@ -88,6 +92,15 @@ void motor_recovery_arm_initial_grace(void);
 
 /* 推进一次恢复状态机并根据当前条目状态更新 runtime fault。 */
 void motor_recovery_tick(void);
+
+/* 返回当前电机是否已经恢复到可以安全交给上层控制的 ready 状态。 */
+OmBool motor_recovery_is_motor_ready(const Motor* motor);
+
+/* 对外暴露 recovery 聚合 runtime fault 是否已经激活。 */
+OmBool motor_recovery_is_runtime_fault_active(void);
+
+/* 达妙 CAN 总线应用层重启尝试计数，用于 VOFA 观察。 */
+uint32_t motor_recovery_get_damiao_can_restart_count(void);
 
 /* 拷贝当前恢复快照。
  * 该接口保证只输出稳定的最小诊断信息，不暴露内部 entry 存储布局。
