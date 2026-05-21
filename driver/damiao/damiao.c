@@ -196,6 +196,9 @@ static void damiao_rx_callback(Device* dev, void* param, CanFilterHandle filter_
             {
                 bus->rawRxByStdId[raw_rx_diag_slot]++;
             }
+            if (master_id < DAMIAO_MASTER_ID_MIN || master_id > DAMIAO_MASTER_ID_MAX)
+                continue;
+
             DamiaoMotorDrv* motor = bus->rxMap[master_id - DAMIAO_MASTER_ID_MIN];
             if (motor == OM_NULL)
                 continue;
