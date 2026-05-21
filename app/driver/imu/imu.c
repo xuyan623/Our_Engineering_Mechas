@@ -57,6 +57,9 @@ static int8_t yaw_init_offset = 0;
 static mpu_data_t* mpu_data_p = 0;
 static uint32_t g_imu_last_sample_seq = 0u;
 static OmBool g_imu_has_new_sample = OM_FALSE;
+#ifdef USE_MAGNETOMETER
+static OmBool g_imu_magnetometer_ready = OM_FALSE;
+#endif
 
 imu_data_t* get_imu_data(void)
 {
@@ -83,6 +86,7 @@ uint8_t mpu_device_init(float gravity)
     FirstOrderLPF_Init(&euler_rate_lpf_data, 10.0f, 100.0f);
 #ifdef USE_MAGNETOMETER
     FirstOrderLPF_Init(&mag_lpf_data, 25.0f, 100.0f);
+    g_imu_magnetometer_ready = OM_FALSE;
 #endif
 
     if (bsp_spi5_init() != OM_OK)
@@ -98,9 +102,9 @@ uint8_t mpu_device_init(float gravity)
 
 #ifdef USE_MAGNETOMETER
     ret = ist8310_init();
-    if (ret != 0U)
+    if (ret == 0U)
     {
-        return 3U;
+        g_imu_magnetometer_ready = OM_TRUE;
     }
 #endif
 
@@ -122,7 +126,7 @@ uint8_t mpu_device_init(float gravity)
 
     if (imu_bsp_init() != OM_OK)
     {
-        return 5U;
+        return 6U;
     }
 
     return 0U;
@@ -172,9 +176,19 @@ void mpu_get_data(void)
     imu.temp = 21.0f + mpu_data_p->temp / 333.87f;
 
 #ifdef USE_MAGNETOMETER
-    mpu_data_p->mx = (int16_t)((raw_payload[15] << 8) | raw_payload[14]);
-    mpu_data_p->my = (int16_t)((raw_payload[17] << 8) | raw_payload[16]);
-    mpu_data_p->mz = (int16_t)((raw_payload[19] << 8) | raw_payload[18]);
+    if (g_imu_magnetometer_ready == OM_TRUE)
+    {
+        mpu_data_p->mx = (int16_t)((raw_payload[15] << 8) | raw_payload[14]);
+        mpu_data_p->my = (int16_t)((raw_payload[17] << 8) | raw_payload[16]);
+        mpu_data_p->mz = (int16_t)((raw_payload[19] << 8) | raw_payload[18]);
+    }
+    else
+    {
+        mpu_data_p->mx = 0;
+        mpu_data_p->my = 0;
+        mpu_data_p->mz = 0;
+    }
+
     imu.mx = mpu_data_p->mx;
     imu.my = mpu_data_p->my;
     imu.mz = mpu_data_p->mz;

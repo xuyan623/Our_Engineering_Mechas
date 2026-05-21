@@ -6,6 +6,7 @@
 #include "driver/motor/motor.h"
 #include "module/data_pool/data_pool.h"
 #include "module/event_bus/event_bus.h"
+#include "module/motor_recovery/motor_recovery.h"
 #include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
@@ -18,6 +19,7 @@
 #define ARM_TASK_STACK_BYTES         (1024u * OSAL_STACK_WORD_BYTES)
 #define ARM_TASK_PRIORITY            (4u)
 #define ARM_TASK_POSE_MACHINE_COUNT  (7u)
+#define ARM_TASK_PITCH2_ENABLE_SETTLE_MS (250u)
 
 /* 机构角姿态表的索引顺序。
  * 保持与旧工程的 Machine_angle 轴顺序一致，便于直接迁移姿态表。
@@ -84,9 +86,12 @@ typedef struct
     ArmTaskSnapshot last_snapshot;
     ArmTaskMotorTargets smoothed_targets;
     OsalTimeMs command_since_ms;
+    OsalTimeMs pitch2_enable_settle_until_ms;
     OmBool motors_bound_flag;
     OmBool snapshot_initialized;
     OmBool smoothed_targets_initialized;
+    OmBool pitch2_post_release_hold_active;
+    float pitch2_enable_hold_rad;
 } ArmTaskContext;
 
 static const char* g_arm_task_big_yaw_name = "big_yaw";
@@ -267,7 +272,7 @@ static OmBool arm_task_feedback_online(const MotorFeedback* feedback)
 
 static OmBool arm_task_motor_online(const Motor* motor)
 {
-    return arm_task_feedback_online(motor_get_feedback(motor));
+    return (motor_recovery_is_motor_ready(motor) == OM_TRUE) ? OM_TRUE : OM_FALSE;
 }
 
 static OmBool arm_task_all_motors_online(const ArmTaskContext* context)
@@ -433,6 +438,45 @@ static OmBool arm_task_get_pitch2_zero_angle_rad(
     return go8010_get_initial_position_zero(
         context->pitch2_motor->binding.go8010.driver,
         pitch2_zero_angle_rad);
+}
+
+static void arm_task_start_pitch2_enable_settle(ArmTaskContext* context, OsalTimeMs now_ms)
+{
+    const MotorFeedback* feedback = OM_NULL;
+    float hold_angle_rad = 0.0f;
+
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    feedback = motor_get_feedback(context->pitch2_motor);
+    if (feedback != OM_NULL)
+    {
+        hold_angle_rad = feedback->angle;
+    }
+    else if (arm_task_get_pitch2_zero_angle_rad(context, &hold_angle_rad) != OM_TRUE)
+    {
+        hold_angle_rad = 0.0f;
+    }
+
+    context->pitch2_enable_hold_rad = hold_angle_rad;
+    context->pitch2_enable_settle_until_ms = now_ms + ARM_TASK_PITCH2_ENABLE_SETTLE_MS;
+}
+
+static OmBool arm_task_should_hold_pitch2_after_release(const ArmTaskSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    return (snapshot->chassis_mode == MODE_CHASSIS_NORMAL &&
+            snapshot->clamp_action == MODE_CLAMP_UN_CMD &&
+            snapshot->exchange_action == MODE_EXCHANGE_UN_CMD &&
+            snapshot->primary_turn_ore_flag == 0u)
+               ? OM_TRUE
+               : OM_FALSE;
 }
 
 static void arm_task_refresh_smoothed_targets_from_feedback(ArmTaskContext* context)
@@ -1170,18 +1214,41 @@ static void arm_task_apply_release_output(ArmTaskContext* context)
 }
 
 /* 带时间窗的动作从“共享控制事实发生变化”那一刻重新计时。 */
-static void arm_task_update_command_timer(ArmTaskContext* context, const ArmTaskSnapshot* snapshot)
+static void arm_task_update_command_timer(ArmTaskContext* context, const ArmTaskSnapshot* snapshot, OsalTimeMs now_ms)
 {
+    OmBool snapshot_changed = OM_FALSE;
+
     if (context == OM_NULL || snapshot == OM_NULL)
     {
         return;
     }
 
-    if (context->snapshot_initialized != OM_TRUE ||
-        arm_task_snapshot_changed(&context->last_snapshot, snapshot) == OM_TRUE)
+    snapshot_changed =
+        (context->snapshot_initialized != OM_TRUE || arm_task_snapshot_changed(&context->last_snapshot, snapshot) == OM_TRUE) ?
+            OM_TRUE :
+            OM_FALSE;
+
+    if (snapshot_changed == OM_TRUE)
     {
+        if (((context->snapshot_initialized == OM_TRUE && context->last_snapshot.chassis_mode == MODE_CHASSIS_RELEASE) ||
+             context->snapshot_initialized != OM_TRUE) &&
+            snapshot->chassis_mode != MODE_CHASSIS_RELEASE)
+        {
+            arm_task_start_pitch2_enable_settle(context, now_ms);
+            context->pitch2_post_release_hold_active = arm_task_should_hold_pitch2_after_release(snapshot);
+        }
+        else if (snapshot->chassis_mode == MODE_CHASSIS_RELEASE)
+        {
+            context->pitch2_enable_settle_until_ms = 0u;
+            context->pitch2_post_release_hold_active = OM_FALSE;
+        }
+        else if (arm_task_should_hold_pitch2_after_release(snapshot) != OM_TRUE)
+        {
+            context->pitch2_post_release_hold_active = OM_FALSE;
+        }
+
         context->last_snapshot = *snapshot;
-        context->command_since_ms = osal_time_now_monotonic();
+        context->command_since_ms = now_ms;
         context->snapshot_initialized = OM_TRUE;
     }
 }
@@ -1216,12 +1283,23 @@ static void arm_task_run_once(ArmTaskContext* context)
     }
 
     arm_task_load_snapshot(&snapshot);
-    arm_task_update_command_timer(context, &snapshot);
+    arm_task_update_command_timer(context, &snapshot, now_ms);
     if (arm_task_all_motors_online(context) != OM_TRUE)
     {
         context->snapshot_initialized = OM_FALSE;
         context->smoothed_targets_initialized = OM_FALSE;
-        arm_task_apply_offline_guard_output(context, current_tick_s);
+        if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
+        {
+            /* 晚供电 bring-up 期间若还处于 RELEASE，就保持零增益静置。
+             * 这样更接近启动期“先恢复电机、后进入正常控制”的语义，
+             * 避免部分轴先在线时被 offline_guard 提前拉住而出现抽动/异常灯态。
+             */
+            arm_task_apply_release_output(context);
+        }
+        else
+        {
+            arm_task_apply_offline_guard_output(context, current_tick_s);
+        }
     }
     else if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
@@ -1239,6 +1317,12 @@ static void arm_task_run_once(ArmTaskContext* context)
             &pitch2_torque_ff,
             &roll2_torque_ff,
             &pitch3_torque_ff);
+
+        if (now_ms < context->pitch2_enable_settle_until_ms || context->pitch2_post_release_hold_active == OM_TRUE)
+        {
+            context->smoothed_targets.pitch2_rad = context->pitch2_enable_hold_rad;
+            pitch2_torque_ff = 0.0f;
+        }
 
         arm_task_apply_angle_target(
             context->big_yaw_motor,

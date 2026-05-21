@@ -119,11 +119,7 @@ OmRet bsp_spi5_init(void)
 {
     GPIO_InitTypeDef gpio_init = {0};
 
-    if (g_spi5_ready == OM_TRUE)
-    {
-        return OM_OK;
-    }
-
+    /* IMU 冷启动重试时希望拿到一次真正的 SPI5 复位，而不是空返回。 */
     __HAL_RCC_GPIOF_CLK_ENABLE();
     __HAL_RCC_SPI5_CLK_ENABLE();
     __HAL_RCC_SPI5_FORCE_RESET();
