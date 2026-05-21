@@ -17,4 +17,9 @@
  */
 OmRet arm_task_start(void);
 
+/* 当前自定义控制器接管是否已经完成对齐并进入可接管态。
+ * 这是只读调试接口，供 VOFA 等观测路径使用。
+ */
+uint8_t arm_task_get_custom_controller_alignment_done(void);
+
 #endif
