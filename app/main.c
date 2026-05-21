@@ -20,7 +20,15 @@ DataPool g_data_pool = {0};
 volatile const char* g_rtos_fault_task_name = OM_NULL;
 volatile uint32_t g_rtos_fault_type = 0u;
 
+#define START_TASK_MOTOR_COMM_WATCHDOG_MS (150u)
+#define START_TASK_CHASSIS_WATCHDOG_MS    (100u)
+#define START_TASK_ARM_WATCHDOG_MS        (100u)
+#define START_TASK_IMU_POWER_SETTLE_DELAY_MS (100u)
+#define START_TASK_IMU_INIT_RETRY_COUNT   (5u)
+#define START_TASK_IMU_INIT_RETRY_DELAY_MS (50u)
+
 static void start_task(void* arg);
+static SHErrorCode start_task_map_imu_init_error(uint8_t imu_init_ret);
 
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char* pcTaskName)
 {
@@ -80,6 +88,7 @@ static void start_task(void* arg)
     OmRet motor_communications_task_ret = OM_OK;
     OmRet vofa_task_ret = OM_OK;
     uint8_t imu_init_ret = 0U;
+    uint32_t imu_init_attempt = 0u;
     OsalStatus event_bus_status = OSAL_INVALID;
     const BspDeviceRegistry* devices = OM_NULL;
 
@@ -102,10 +111,22 @@ static void start_task(void* arg)
         goto supervisor_loop;
     }
 
-    imu_init_ret = mpu_device_init(9.8f);
+    (void)osal_sleep_ms(START_TASK_IMU_POWER_SETTLE_DELAY_MS);
+
+    for (imu_init_attempt = 0u; imu_init_attempt < START_TASK_IMU_INIT_RETRY_COUNT; imu_init_attempt++)
+    {
+        imu_init_ret = mpu_device_init(9.8f);
+        if (imu_init_ret == 0U)
+        {
+            break;
+        }
+
+        (void)osal_sleep_ms(START_TASK_IMU_INIT_RETRY_DELAY_MS);
+    }
+
     if (imu_init_ret != 0U)
     {
-        sh_report_fatal(SH_ERR_MPU_DEVICE_INIT_FAIL, "mpu_device_init failed");
+        sh_report_fatal(start_task_map_imu_init_error(imu_init_ret), "mpu_device_init failed");
         goto supervisor_loop;
     }
 
@@ -141,7 +162,7 @@ static void start_task(void* arg)
 
     if (sh_register(
             SH_TASK_MOTOR_COMMUNICATIONS,
-            50u,
+            START_TASK_MOTOR_COMM_WATCHDOG_MS,
             SH_ERR_MOTOR_COMMUNICATIONS_TIMEOUT) != OM_OK)
     {
         sh_report_fatal(
@@ -161,7 +182,7 @@ static void start_task(void* arg)
 
     if (sh_register(
             SH_TASK_CHASSIS,
-            50u,
+            START_TASK_CHASSIS_WATCHDOG_MS,
             SH_ERR_CHASSIS_TASK_TIMEOUT) != OM_OK)
     {
         sh_report_fatal(
@@ -181,7 +202,7 @@ static void start_task(void* arg)
 
     if (sh_register(
             SH_TASK_ARM,
-            50u,
+            START_TASK_ARM_WATCHDOG_MS,
             SH_ERR_ARM_TASK_TIMEOUT) != OM_OK)
     {
         sh_report_fatal(
@@ -204,5 +225,26 @@ supervisor_loop:
     {
         sh_poll();
         osal_sleep_ms(20U);
+    }
+}
+
+static SHErrorCode start_task_map_imu_init_error(uint8_t imu_init_ret)
+{
+    switch (imu_init_ret)
+    {
+    case 2u:
+        return SH_ERR_MPU6500_INIT_FAIL;
+    case 3u:
+        return SH_ERR_IST8310_INIT_FAIL;
+    case 4u:
+        return SH_ERR_MPU_OFFSET_CAL_FAIL;
+    case 5u:
+        return SH_ERR_SPI5_INIT_FAIL;
+    case 6u:
+        return SH_ERR_IMU_BSP_INIT_FAIL;
+    case 0u:
+    case 1u:
+    default:
+        return SH_ERR_MPU_DEVICE_INIT_FAIL;
     }
 }

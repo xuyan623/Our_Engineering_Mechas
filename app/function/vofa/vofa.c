@@ -1,7 +1,8 @@
 #include "function/vofa/vofa.h"
 
 static const uint8_t g_vofa_tail[4] = {0x00u, 0x00u, 0x80u, 0x7Fu};
-#define VOFA_JUSTFLOAT_MAX_FLOATS (32u)
+/* 当前调试模式下会输出更多诊断通道，保留足够余量避免再次因上限截断而静默无输出。 */
+#define VOFA_JUSTFLOAT_MAX_FLOATS (96u)
 #define VOFA_JUSTFLOAT_MAX_BYTES  (VOFA_JUSTFLOAT_MAX_FLOATS * 4u + sizeof(g_vofa_tail))
 static uint8_t g_vofa_send_frame[VOFA_JUSTFLOAT_MAX_BYTES] = {0u};
 

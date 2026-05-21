@@ -55,6 +55,11 @@ typedef enum
     SH_ERR_EVENT_BUS_INIT_FAIL = SH_CODE(1u, 1u, 3u),
     SH_ERR_MPU_DEVICE_INIT_FAIL = SH_CODE(1u, 2u, 1u),
     SH_ERR_IMU_TASK_START_FAIL = SH_CODE(1u, 2u, 2u),
+    SH_ERR_MPU6500_INIT_FAIL = SH_CODE(1u, 2u, 3u),
+    SH_ERR_IST8310_INIT_FAIL = SH_CODE(1u, 2u, 4u),
+    SH_ERR_MPU_OFFSET_CAL_FAIL = SH_CODE(1u, 2u, 5u),
+    SH_ERR_IMU_BSP_INIT_FAIL = SH_CODE(1u, 2u, 6u),
+    SH_ERR_SPI5_INIT_FAIL = SH_CODE(1u, 2u, 7u),
     SH_ERR_INPUT_TASK_START_FAIL = SH_CODE(1u, 3u, 1u),
     SH_ERR_MODE_TASK_START_FAIL = SH_CODE(1u, 4u, 1u),
     SH_ERR_CHASSIS_TASK_START_FAIL = SH_CODE(1u, 5u, 2u),
@@ -117,6 +122,10 @@ void sh_set_running(void);
  * 这应该由 start_task 周期调用，作为唯一的健康监督执行者。
  */
 void sh_poll(void);
+
+/* 只读诊断接口。 */
+uint32_t sh_get_state_value(void);
+uint32_t sh_get_active_display_code_value(void);
 
 #define SH_REPORT_FATAL(code, msg) sh_report_fatal(code, msg)
 

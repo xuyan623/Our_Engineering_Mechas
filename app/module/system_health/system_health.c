@@ -83,6 +83,7 @@ typedef struct
     SHEntry entries[SH_TASK_COUNT];
     OmBool runtime_fault_active[SH_ERR_RUNTIME_FAULT_MAX + 1u];
     SHErrorCode active_display_code;
+    SHErrorCode pending_display_code;
     SHFatalLatch fatal;
     SHBlinkPattern active_pattern;
     SHDisplayPhase display_phase;
@@ -210,6 +211,7 @@ static void sh_apply_led(SHState state)
 static void sh_start_error_display(SHErrorCode code, OsalTimeMs now_ms)
 {
     g_system_health.active_display_code = code;
+    g_system_health.pending_display_code = SH_ERR_NONE;
     g_system_health.active_pattern = sh_decode_pattern(code);
     g_system_health.display_phase = SH_DISPLAY_PHASE_PREAMBLE_ON;
     g_system_health.current_digit_index = 0u;
@@ -281,6 +283,16 @@ static void sh_update_error_display(OsalTimeMs now_ms)
         g_system_health.next_transition_ms = (OsalTimeMs)(now_ms + SH_DIGIT_ON_MS);
         break;
     case SH_DISPLAY_PHASE_CYCLE_GAP:
+        if (g_system_health.pending_display_code != SH_ERR_NONE &&
+            g_system_health.pending_display_code != g_system_health.active_display_code)
+        {
+            g_system_health.active_display_code = g_system_health.pending_display_code;
+            g_system_health.active_pattern =
+                sh_decode_pattern(g_system_health.active_display_code);
+            g_system_health.fatal_completed_display_rounds = 0u;
+        }
+
+        g_system_health.pending_display_code = SH_ERR_NONE;
         g_system_health.current_digit_index = 0u;
         sh_show_preamble();
         g_system_health.display_phase = SH_DISPLAY_PHASE_PREAMBLE_ON;
@@ -300,6 +312,7 @@ OmRet sh_init(void)
     (void)board_led_init();
     g_system_health.state = SH_STATE_BOOTING;
     g_system_health.active_display_code = SH_ERR_NONE;
+    g_system_health.pending_display_code = SH_ERR_NONE;
     g_system_health.display_phase = SH_DISPLAY_PHASE_IDLE;
     sh_apply_led(g_system_health.state);
     return OM_OK;
@@ -388,6 +401,7 @@ void sh_set_running(void)
     /* 切回 RUNNING 时，错误显示上下文一并清掉。 */
     g_system_health.state = SH_STATE_RUNNING;
     g_system_health.active_display_code = SH_ERR_NONE;
+    g_system_health.pending_display_code = SH_ERR_NONE;
     g_system_health.display_phase = SH_DISPLAY_PHASE_IDLE;
     g_system_health.current_digit_index = 0u;
     g_system_health.fatal_completed_display_rounds = 0u;
@@ -458,11 +472,25 @@ void sh_poll(void)
     }
 
     /* 错误显示只允许存在一个“当前显示中的错误码”。 */
-    if (g_system_health.state != SH_STATE_ERROR || g_system_health.active_display_code != next_fault_code)
+    if (g_system_health.state != SH_STATE_ERROR)
     {
         g_system_health.state = SH_STATE_ERROR;
         sh_start_error_display(next_fault_code, now_ms);
     }
+    else if (g_system_health.active_display_code != next_fault_code)
+    {
+        g_system_health.pending_display_code = next_fault_code;
+    }
 
     sh_update_error_display(now_ms);
+}
+
+uint32_t sh_get_state_value(void)
+{
+    return (uint32_t)g_system_health.state;
+}
+
+uint32_t sh_get_active_display_code_value(void)
+{
+    return (uint32_t)g_system_health.active_display_code;
 }
