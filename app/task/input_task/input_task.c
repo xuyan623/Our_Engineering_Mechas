@@ -21,9 +21,10 @@
 #define INPUT_TASK_USART1_BAUDRATE   (100000u)
 #define INPUT_TASK_USART1_TX_BUFSIZE (128u)
 #define INPUT_TASK_USART1_RX_BUFSIZE (1024u)
+#define INPUT_TASK_STREAM_BUF_SIZE   (128u)
 
-/* 这份结构只服务于 input_task 内部：
- * - 用于承接一帧 DBUS 原始数据的解析结果
+/* 这份结构只服务于 input_task 内部�?
+ * - 用于承接一�?DBUS 原始数据的解析结�?
  * - 不向外暴露，真正跨任务共享的数据仍然只进 DataPool.rc
  */
 typedef struct
@@ -98,6 +99,23 @@ static int16_t input_task_apply_deadband(int16_t value)
     return value;
 }
 
+static void input_task_consume_stream(uint8_t* stream_buf, size_t* stream_len, size_t consume_len)
+{
+    if (stream_buf == OM_NULL || stream_len == OM_NULL || consume_len == 0u || *stream_len == 0u)
+    {
+        return;
+    }
+
+    if (consume_len >= *stream_len)
+    {
+        *stream_len = 0u;
+        return;
+    }
+
+    memmove(stream_buf, stream_buf + consume_len, *stream_len - consume_len);
+    *stream_len -= consume_len;
+}
+
 static OmBool input_task_decode_frame(const uint8_t raw_frame[DBUS_FRAME_LEN], InputTaskRcFrame* frame)
 {
     if (raw_frame == OM_NULL || frame == OM_NULL)
@@ -107,8 +125,8 @@ static OmBool input_task_decode_frame(const uint8_t raw_frame[DBUS_FRAME_LEN], I
 
     memset(frame, 0, sizeof(*frame));
 
-    /* DBUS 的 4 个摇杆通道都是 11 bit 压缩编码，
-     * 这里完全按旧工程位布局展开，不引入新的协议解释。
+    /* DBUS �?4 个摇杆通道都是 11 bit 压缩编码�?
+     * 这里完全按旧工程位布局展开，不引入新的协议解释�?
      */
     frame->ch1 = (int16_t)(((raw_frame[0] | (raw_frame[1] << 8)) & DBUS_11BIT_MASK) - DBUS_CHANNEL_CENTER);
     frame->ch2 = (int16_t)((((raw_frame[1] >> 3) | (raw_frame[2] << 5)) & DBUS_11BIT_MASK) - DBUS_CHANNEL_CENTER);
@@ -132,8 +150,8 @@ static OmBool input_task_decode_frame(const uint8_t raw_frame[DBUS_FRAME_LEN], I
     frame->mouse.r = raw_frame[13];
     frame->keyboard_bits = (uint16_t)(raw_frame[14] | (raw_frame[15] << 8));
 
-    /* 摇杆绝对值超出旧工程经验范围时，认为当前帧已错位或损坏。
-     * 这里直接清零该帧，保持下游控制逻辑看到的是“安全输入”。
+    /* 摇杆绝对值超出旧工程经验范围时，认为当前帧已错位或损坏�?
+     * 这里直接清零该帧，保持下游控制逻辑看到的是“安全输入”�?
      */
     if ((abs(frame->ch1) > DBUS_CHANNEL_MAX_ABS) || (abs(frame->ch2) > DBUS_CHANNEL_MAX_ABS) ||
         (abs(frame->ch3) > DBUS_CHANNEL_MAX_ABS) || (abs(frame->ch4) > DBUS_CHANNEL_MAX_ABS))
@@ -152,8 +170,8 @@ static void input_task_store_to_data_pool(const InputTaskRcFrame* frame)
         return;
     }
 
-    /* input_task 只负责把“原始输入事实”写入共享池，
-     * 不在这里做边沿历史、模式判断、动作推进。
+    /* input_task 只负责把“原始输入事实”写入共享池�?
+     * 不在这里做边沿历史、模式判断、动作推进�?
      */
     DP_STORE_INT16(&g_data_pool.rc.ch1, frame->ch1);
     DP_STORE_INT16(&g_data_pool.rc.ch2, frame->ch2);
@@ -173,49 +191,80 @@ static void input_task_store_to_data_pool(const InputTaskRcFrame* frame)
     DP_STORE_UINT16(&g_data_pool.rc.keyboard_bits, frame->keyboard_bits);
 }
 
+static OmBool input_task_try_parse_stream(uint8_t* stream_buf, size_t* stream_len, InputTaskRcFrame* parsed_frame)
+{
+    if (stream_buf == OM_NULL || stream_len == OM_NULL || parsed_frame == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    while (*stream_len >= DBUS_FRAME_LEN)
+    {
+        if (input_task_decode_frame(stream_buf, parsed_frame) == OM_TRUE)
+        {
+            input_task_consume_stream(stream_buf, stream_len, DBUS_FRAME_LEN);
+            return OM_TRUE;
+        }
+
+        g_input_task_runtime.invalid_frame_count++;
+        g_input_task_runtime.resync_drop_count++;
+        input_task_consume_stream(stream_buf, stream_len, 1u);
+    }
+
+    return OM_FALSE;
+}
+
 static void input_task_entry(void* arg)
 {
     const BspDeviceRegistry* devices = (const BspDeviceRegistry*)arg;
     OsalTimeMs deadline_cursor_ms = 0u;
-    uint8_t raw_frame[DBUS_FRAME_LEN] = {0};
+    uint8_t stream_buf[INPUT_TASK_STREAM_BUF_SIZE] = {0};
     InputTaskRcFrame parsed_frame = {0};
     size_t read_len = 0u;
+    size_t request_len = 0u;
+    size_t stream_len = 0u;
     OmBool has_valid_frame = OM_FALSE;
 
     while (1)
     {
         has_valid_frame = OM_FALSE;
 
-        if (g_input_task_runtime.rx_available_hint >= DBUS_FRAME_LEN)
+        if (g_input_task_runtime.rx_available_hint > 0u)
         {
-            do
+            request_len = (size_t)g_input_task_runtime.rx_available_hint;
+            if (request_len > (INPUT_TASK_STREAM_BUF_SIZE - stream_len))
             {
-                /* 当前串口 PAL 的非阻塞读语义要求：
-                 * 缓冲区中至少有 len 个字节时，这次读取才会成功返回。
-                 * 因此这里按 18 字节整帧读取，和旧工程的 DBUS 边界保持一致。
-                 */
-                read_len = device_read(devices->usart1, 0, raw_frame, DBUS_FRAME_LEN);
-                if (read_len == DBUS_FRAME_LEN)
-                {
-                    if (input_task_decode_frame(raw_frame, &parsed_frame) == OM_FALSE)
-                    {
-                        g_input_task_runtime.invalid_frame_count++;
-                    }
+                request_len = INPUT_TASK_STREAM_BUF_SIZE - stream_len;
+            }
 
-                    input_task_store_to_data_pool(&parsed_frame);
-                    g_input_task_runtime.frame_count++;
-                    has_valid_frame = OM_TRUE;
+            if (request_len > 0u)
+            {
+                read_len = device_read(devices->usart1, 0, stream_buf + stream_len, request_len);
+                if (read_len > 0u)
+                {
+                    stream_len += read_len;
                 }
-            } while (read_len == DBUS_FRAME_LEN);
+            }
 
             g_input_task_runtime.rx_available_hint = 0u;
         }
 
+        while (input_task_try_parse_stream(stream_buf, &stream_len, &parsed_frame) == OM_TRUE)
+        {
+            input_task_store_to_data_pool(&parsed_frame);
+            g_input_task_runtime.frame_count++;
+            has_valid_frame = OM_TRUE;
+        }
+
+        if (stream_len == INPUT_TASK_STREAM_BUF_SIZE)
+        {
+            /* һֱû����ɹ�ʱ������ 1 �ֽڣ����������������ÿ��ڴ�����λ�� */
+            g_input_task_runtime.resync_drop_count++;
+            input_task_consume_stream(stream_buf, &stream_len, 1u);
+        }
+
         if (has_valid_frame == OM_TRUE)
         {
-            /* 只有至少成功解析到一帧完整输入时才发布事件，
-             * 下游任务据此知道 rc 共享池已经更新。
-             */
             if (event_bus_publish(&g_event_bus, EVT_RC_DATA_READY) != OSAL_OK)
             {
                 sh_report_fatal(SH_ERR_EVT_RC_DATA_READY_PUBLISH_FAIL, "event_bus_publish EVT_RC_DATA_READY failed");
@@ -229,7 +278,6 @@ static void input_task_entry(void* arg)
         (void)osal_delay_until(&deadline_cursor_ms, INPUT_TASK_PERIOD_MS, OM_NULL);
     }
 }
-
 OmRet input_task_start(const BspDeviceRegistry* devices)
 {
     static OsalThread* input_task_thread = OM_NULL;
@@ -248,8 +296,8 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
 
     memset((void*)&g_input_task_runtime, 0, sizeof(g_input_task_runtime));
 
-    /* USART1 的读回调只用于“唤醒提示”，不在回调里直接读帧。
-     * 这里由 input_task 自己拥有并初始化串口，而不是依赖 BSP 预开设备。
+    /* USART1 的读回调只用于“唤醒提示”，不在回调里直接读帧�?
+     * 这里�?input_task 自己拥有并初始化串口，而不是依�?BSP 预开设备�?
      */
     if (input_task_prepare_usart1(devices->usart1) != OM_OK)
     {
