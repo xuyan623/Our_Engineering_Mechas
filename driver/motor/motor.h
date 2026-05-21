@@ -109,6 +109,7 @@ struct Motor
     MotorConfig config;
     MotorVendorBinding binding;
     OmBool registered_flag;
+    OmBool regular_target_blocked;
     float target_current;
     float target_speed;
     float target_angle;

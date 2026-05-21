@@ -208,6 +208,11 @@ static OmRet motor_prepare_damiao_target(Motor* motor)
         return OM_ERROR_PARAM;
     }
 
+    if (motor->regular_target_blocked == OM_TRUE)
+    {
+        return OM_OK;
+    }
+
     position = motor->feedback.angle;
 
     switch (motor->config.control_mode)
