@@ -150,7 +150,7 @@
 /* 机械臂控制参数                                                             */
 /* -------------------------------------------------------------------------- */
 
-#define APP_ARM_BIG_YAW_KP (30.0f)
+#define APP_ARM_BIG_YAW_KP (25.0f)
 #define APP_ARM_BIG_YAW_KD (0.01f)
 #define APP_ARM_BIG_YAW_MAX_RATE_RAD_PER_S (2.0f)
 
@@ -170,6 +170,11 @@
 #define APP_ARM_PITCH2_KD (0.06f)
 #define APP_ARM_PITCH2_MAX_RATE_RAD_PER_S (3.0f)
 
+/* 自定义控制器进入后，机械臂允许自动回 normal 并尝试自动抓零。
+ * 若在该时间窗内仍未完成对齐，则判定自动校准失败，由上层决定是否走强制接管。
+ */
+#define APP_ARM_CUSTOM_CONTROLLER_ALIGNMENT_TIMEOUT_MS (3000u)
+
 #define APP_ARM_ROLL2_KP (7.0f)
 #define APP_ARM_ROLL2_KD (0.01f)
 #define APP_ARM_ROLL2_MAX_RATE_RAD_PER_S (2.0f)
@@ -187,9 +192,9 @@
 #define APP_ARM_PITCH2_GRAVITY_FF_MIN (-1.42f)
 #define APP_ARM_PITCH2_GRAVITY_FF_MAX (1.43f)
 
-#define APP_ARM_ROLL3_ANGLE_PID_KP (2.0f)
+#define APP_ARM_ROLL3_ANGLE_PID_KP (3.0f)
 #define APP_ARM_ROLL3_ANGLE_PID_KI (0.0f)
-#define APP_ARM_ROLL3_ANGLE_PID_KD (0.0f)
+#define APP_ARM_ROLL3_ANGLE_PID_KD (0.1f)
 #define APP_ARM_ROLL3_ANGLE_PID_OUT_LIMIT (100.0f)
 #define APP_ARM_ROLL3_ANGLE_PID_INTEGRAL_LIMIT (10.0f)
 #define APP_ARM_ROLL3_MAX_RATE_RAD_PER_S (4.0f)

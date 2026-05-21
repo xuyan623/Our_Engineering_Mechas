@@ -77,7 +77,15 @@ typedef struct
         DpUint8 clamp_action;
         DpUint8 exchange_action;
         DpUint8 primary_turn_ore_flag;
+        DpUint8 custom_controller_force_takeover_flag;
     } action;
+
+    struct
+    {
+        DpUint8 online;
+        DpUint8 work_mode;
+        DpFloat angle_deg[6];
+    } custom_controller;
 } DataPool;
 
 static inline uint32_t dp_float_to_bits(float value)

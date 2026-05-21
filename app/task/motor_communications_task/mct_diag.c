@@ -38,6 +38,7 @@ void mct_query_one_p1010b(MctRuntime* runtime)
     P1010BResponse response = {0};
     OsalTimeMs now_ms = 0u;
     OsalTimeMs query_ok_ms = 0u;
+    uint32_t attempt = 0u;
     uint32_t index = 0u;
     OmRet query_ret = OM_ERROR_EMPTY;
 
@@ -56,11 +57,29 @@ void mct_query_one_p1010b(MctRuntime* runtime)
         return;
     }
 
-    index = runtime->next_p1010b_query_index;
-    runtime->next_p1010b_query_index =
-        (runtime->next_p1010b_query_index + 1u) % MCT_P1010B_COUNT;
     runtime->last_p1010b_query_ms = now_ms;
-    driver = &runtime->p1010b_drivers[index];
+
+    for (attempt = 0u; attempt < MCT_P1010B_COUNT; attempt++)
+    {
+        index = runtime->next_p1010b_query_index;
+        runtime->next_p1010b_query_index =
+            (runtime->next_p1010b_query_index + 1u) % MCT_P1010B_COUNT;
+        driver = &runtime->p1010b_drivers[index];
+
+        if (motor_recovery_should_defer_p1010b_query(driver) == OM_TRUE)
+        {
+            runtime->p1010b_last_query_ret[index] = OM_ERROR_BUSY;
+            driver = OM_NULL;
+            continue;
+        }
+
+        break;
+    }
+
+    if (driver == OM_NULL)
+    {
+        return;
+    }
 
     query_ret = p1010b_active_query_slots(
         driver,

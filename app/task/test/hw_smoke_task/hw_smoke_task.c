@@ -16,7 +16,7 @@
 #define HW_SMOKE_USART3_BAUDRATE      (115200u)
 #define HW_SMOKE_USART6_BAUDRATE      (4000000u)
 #define HW_SMOKE_UART7_BAUDRATE       (115200u)
-#define HW_SMOKE_UART8_BAUDRATE       (921600u)
+#define HW_SMOKE_UART8_BAUDRATE       (9600u)
 
 typedef struct
 {

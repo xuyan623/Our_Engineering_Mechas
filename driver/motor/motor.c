@@ -1,5 +1,6 @@
 #include "driver/motor/motor.h"
 
+#include "module/motor_recovery/motor_recovery.h"
 #include "osal/osal_time.h"
 #include <string.h>
 
@@ -206,6 +207,11 @@ static OmRet motor_prepare_damiao_target(Motor* motor)
     if (motor == OM_NULL || motor->binding.damiao.driver == OM_NULL)
     {
         return OM_ERROR_PARAM;
+    }
+
+    if (motor_recovery_should_block_damiao_regular_target(motor) == OM_TRUE)
+    {
+        return OM_OK;
     }
 
     position = motor->feedback.angle;

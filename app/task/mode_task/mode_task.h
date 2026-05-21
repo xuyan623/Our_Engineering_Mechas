@@ -37,6 +37,7 @@ typedef enum
     MODE_CHASSIS_STOP,
     MODE_CHASSIS_DEFEND,
     MODE_CHASSIS_CHECK,
+    MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL,
 } ChassisMode;
 
 /* 机械臂夹取动作推进状态。 */

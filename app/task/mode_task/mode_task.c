@@ -43,6 +43,7 @@ typedef struct
     ClampAction clamp_action;
     ExchangeAction exchange_action;
     uint8_t primary_turn_ore_flag;
+    uint8_t custom_controller_force_takeover_flag;
 } ModeTaskSharedState;
 
 /* mode_task 的本地上下文：
@@ -89,6 +90,11 @@ static const State g_mode_chassis_states[] = {
     {.id = (StateId)MODE_CHASSIS_GET_ENERGY_UNIT2, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "get_energy2"},
     {.id = (StateId)MODE_CHASSIS_SECONDARY_ORE, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "secondary_ore"},
     {.id = (StateId)MODE_CHASSIS_CHECK, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "check"},
+    {.id = (StateId)MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL,
+     .on_enter = OM_NULL,
+     .on_execute = OM_NULL,
+     .on_exit = OM_NULL,
+     .name = "custom_controller_normal"},
 };
 
 /* 当前模式与控制操作对照整理：
@@ -101,7 +107,9 @@ static const State g_mode_chassis_states[] = {
  *    - sw1=UP  且 iw 上边沿 -> PITCH3_TORQUE_COLLECTION
  *    - sw1=MI  且 iw 上边沿 -> SECONDARY_ORE
  *    - sw1=DN  且 iw 上边沿 -> CHECK
- *    - 当特殊模式收到 iw 下边沿时回到 NORMAL
+ *    - sw1=MI  且 iw 下边沿 -> 从 NORMAL/SECONDARY_ORE 进入 CUSTOM_CONTROLLER_NORMAL
+ *    - CUSTOM_CONTROLLER_NORMAL 下再次收到 iw 下边沿 -> 回到 NORMAL
+ *    - 其余几个保持型特殊模式收到 iw 下边沿时回到 NORMAL
  *    - 不处于保持型特殊模式时，默认底盘模式为 NORMAL
  *
  * 3. 工程模式（ENGINEER_CTRL）下的底盘模式：
@@ -153,6 +161,9 @@ static void mode_task_store_shared_state(const ModeTaskSharedState* state)
     DP_STORE_UINT8(&g_data_pool.action.clamp_action, (uint8_t)state->clamp_action);
     DP_STORE_UINT8(&g_data_pool.action.exchange_action, (uint8_t)state->exchange_action);
     DP_STORE_UINT8(&g_data_pool.action.primary_turn_ore_flag, state->primary_turn_ore_flag);
+    DP_STORE_UINT8(
+        &g_data_pool.action.custom_controller_force_takeover_flag,
+        state->custom_controller_force_takeover_flag);
 }
 
 static OmBool mode_task_shared_state_changed(const ModeTaskSharedState* lhs, const ModeTaskSharedState* rhs)
@@ -163,7 +174,8 @@ static OmBool mode_task_shared_state_changed(const ModeTaskSharedState* lhs, con
     }
 
     return (lhs->global_mode != rhs->global_mode || lhs->chassis_mode != rhs->chassis_mode || lhs->clamp_action != rhs->clamp_action ||
-            lhs->exchange_action != rhs->exchange_action || lhs->primary_turn_ore_flag != rhs->primary_turn_ore_flag)
+            lhs->exchange_action != rhs->exchange_action || lhs->primary_turn_ore_flag != rhs->primary_turn_ore_flag ||
+            lhs->custom_controller_force_takeover_flag != rhs->custom_controller_force_takeover_flag)
                ? OM_TRUE
                : OM_FALSE;
 }
@@ -190,8 +202,26 @@ static OmBool mode_task_is_sw1_to_up_edge(const ModeTaskContext* context, const 
     return (context->last_sw1 == RC_SWITCH_MI && snapshot->sw1 == RC_SWITCH_UP) ? OM_TRUE : OM_FALSE;
 }
 
-static GlobalMode mode_task_resolve_global_mode(const ModeTaskRcSnapshot* snapshot)
+static GlobalMode mode_task_resolve_global_mode(
+    const ModeTaskContext* context,
+    const ModeTaskRcSnapshot* snapshot)
 {
+    if (context == OM_NULL || snapshot == OM_NULL)
+    {
+        return MODE_GLOBAL_RELEASE_CTRL;
+    }
+
+    /* 自定义控制器模式一旦进入，就锁在手动域内：
+     * - 除非 sw2 明确打到 DN 进入 RELEASE
+     * - 否则不允许 sw2 把全局模式切去 ENGINEER，避免其它遥控动作重新生效
+     */
+    if (context->shared_state.chassis_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
+    {
+        return (snapshot->sw2 == RC_SWITCH_DN) ?
+                   MODE_GLOBAL_RELEASE_CTRL :
+                   MODE_GLOBAL_MANUAL_CTRL;
+    }
+
     /* 旧工程里 sw2 直接决定全局模式，这里保持同样的主开关语义。 */
     switch (snapshot->sw2)
     {
@@ -209,6 +239,22 @@ static ChassisMode mode_task_resolve_manual_chassis_mode(const ModeTaskContext* 
 {
     ChassisMode current_mode = context->shared_state.chassis_mode;
 
+    /* 自定义控制器模式是手动模式里的一个“独占子模式”：
+     * - 进入后，普通遥控动作入口一律失效
+     * - 只有专用退出手势（sw2=UP, sw1=MI, iw 下边沿）能退回 NORMAL
+     */
+    if (current_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
+    {
+        if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
+            snapshot->sw2 == RC_SWITCH_UP &&
+            snapshot->sw1 == RC_SWITCH_MI)
+        {
+            return MODE_CHASSIS_NORMAL;
+        }
+
+        return current_mode;
+    }
+
     /* 手动模式下依赖“当前 sw1 + iw 边沿”做模式切换。 */
     if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE && snapshot->sw1 == RC_SWITCH_UP)
     {
@@ -218,9 +264,20 @@ static ChassisMode mode_task_resolve_manual_chassis_mode(const ModeTaskContext* 
     {
         return MODE_CHASSIS_CHECK;
     }
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE && snapshot->sw2 == RC_SWITCH_UP && snapshot->sw1 == RC_SWITCH_MI)
+    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
+        snapshot->sw2 == RC_SWITCH_UP &&
+        snapshot->sw1 == RC_SWITCH_MI &&
+        current_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
     {
         return MODE_CHASSIS_SECONDARY_ORE;
+    }
+    if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
+        snapshot->sw2 == RC_SWITCH_UP &&
+        snapshot->sw1 == RC_SWITCH_MI &&
+        (current_mode == MODE_CHASSIS_NORMAL ||
+         current_mode == MODE_CHASSIS_SECONDARY_ORE))
+    {
+        return MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL;
     }
 
     if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
@@ -232,7 +289,8 @@ static ChassisMode mode_task_resolve_manual_chassis_mode(const ModeTaskContext* 
 
     /* 不在几个保持型特殊模式里时，回落到普通底盘模式。 */
     if (current_mode != MODE_CHASSIS_PITCH3_TORQUE_COLLECTION && current_mode != MODE_CHASSIS_SECONDARY_ORE &&
-        current_mode != MODE_CHASSIS_URGENT_MEASURE)
+        current_mode != MODE_CHASSIS_URGENT_MEASURE &&
+        current_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
     {
         return MODE_CHASSIS_NORMAL;
     }
@@ -389,6 +447,50 @@ static void mode_task_update_primary_flag(ModeTaskContext* context, const ModeTa
     }
 }
 
+static void mode_task_update_custom_controller_force_takeover(
+    ModeTaskContext* context,
+    const ModeTaskRcSnapshot* snapshot,
+    ModeTaskSharedState* state)
+{
+    if (context == OM_NULL || snapshot == OM_NULL || state == OM_NULL)
+    {
+        return;
+    }
+
+    if (state->chassis_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
+    {
+        state->custom_controller_force_takeover_flag = 0u;
+        return;
+    }
+
+    if (snapshot->sw1 == RC_SWITCH_MI)
+    {
+        state->custom_controller_force_takeover_flag = 0u;
+    }
+
+    if (mode_task_is_sw1_to_dn_edge(context, snapshot) == OM_TRUE)
+    {
+        state->custom_controller_force_takeover_flag = 1u;
+    }
+}
+
+static void mode_task_notify_custom_controller_transition(
+    ChassisMode previous_mode,
+    ChassisMode next_mode)
+{
+    OmBool previous_custom = (previous_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL) ? OM_TRUE : OM_FALSE;
+    OmBool next_custom = (next_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL) ? OM_TRUE : OM_FALSE;
+
+    if (previous_custom != OM_TRUE && next_custom == OM_TRUE)
+    {
+        sh_set_custom_controller_calibration_pending();
+    }
+    else if (previous_custom == OM_TRUE && next_custom != OM_TRUE)
+    {
+        sh_clear_custom_controller_calibration_indicator();
+    }
+}
+
 static void mode_task_sync_context_history(ModeTaskContext* context, const ModeTaskRcSnapshot* snapshot)
 {
     if (context == OM_NULL || snapshot == OM_NULL)
@@ -418,6 +520,7 @@ static void mode_task_run_once(ModeTaskContext* context)
     ModeTaskRcSnapshot rc_snapshot = {0};
     ModeTaskSharedState next_state = {0};
     OmBool state_changed = OM_FALSE;
+    ChassisMode previous_chassis_mode = MODE_CHASSIS_RELEASE;
 
     /* 每轮先锁定一份输入快照，再用它推导整轮共享控制结果。 */
     mode_task_load_rc_snapshot(&rc_snapshot);
@@ -433,7 +536,8 @@ static void mode_task_run_once(ModeTaskContext* context)
 
     /* 先从上一轮共享结果出发，只覆盖本轮真正变化的字段。 */
     next_state = context->shared_state;
-    next_state.global_mode = mode_task_resolve_global_mode(&rc_snapshot);
+    previous_chassis_mode = context->shared_state.chassis_mode;
+    next_state.global_mode = mode_task_resolve_global_mode(context, &rc_snapshot);
     next_state.chassis_mode = mode_task_resolve_chassis_mode(context, &rc_snapshot, next_state.global_mode);
 
     /* 当前实现里状态机主要承担“状态记录器”职责，
@@ -451,11 +555,13 @@ static void mode_task_run_once(ModeTaskContext* context)
     mode_task_update_clamp_action(context, &rc_snapshot, &next_state);
     mode_task_update_exchange_action(context, &rc_snapshot, &next_state);
     mode_task_update_primary_flag(context, &rc_snapshot, &next_state);
+    mode_task_update_custom_controller_force_takeover(context, &rc_snapshot, &next_state);
 
     /* 只有真正发生共享结果变化时才发 EVT_MODE_CHANGED，
      * 避免下游任务被无意义重复唤醒。
      */
     state_changed = mode_task_shared_state_changed(&context->shared_state, &next_state);
+    mode_task_notify_custom_controller_transition(previous_chassis_mode, next_state.chassis_mode);
     context->shared_state = next_state;
     mode_task_store_shared_state(&context->shared_state);
     mode_task_sync_context_history(context, &rc_snapshot);
@@ -510,6 +616,7 @@ OmRet mode_task_start(void)
     mode_task_context.shared_state.clamp_action = MODE_CLAMP_UN_CMD;
     mode_task_context.shared_state.exchange_action = MODE_EXCHANGE_UN_CMD;
     mode_task_context.shared_state.primary_turn_ore_flag = 0u;
+    mode_task_context.shared_state.custom_controller_force_takeover_flag = 0u;
     mode_task_context.last_global_mode = MODE_GLOBAL_RELEASE_CTRL;
     mode_task_context.last_chassis_mode = MODE_CHASSIS_RELEASE;
 
