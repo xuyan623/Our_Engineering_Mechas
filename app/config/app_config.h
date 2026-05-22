@@ -87,6 +87,15 @@
 /* 底盘绕自身旋转角速度上限，单位 deg/s。 */
 #define APP_CHASSIS_MAX_VW_DEG_PER_S (480.0f)
 
+/* 底盘线速度合成上限，单位 mm/s。
+ * 限制 sqrt(vx² + vy²) 的最大值，保持运动方向等比例缩放。
+ * 设为 0 则不启用总速度限制。
+ */
+#define APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S (500.0f)
+
+/* 总速度限制编译期开关（预处理器不支持浮点比较，用整数宏控制）。 */
+#define APP_CHASSIS_TOTAL_SPEED_LIMIT_ENABLE (1u)
+
 /* 遥控摇杆满量程分辨率。 */
 #define APP_RC_RESOLUTION (660.0f)
 

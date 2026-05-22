@@ -44,6 +44,11 @@ static void kinematics_clamp_chassis_velocity(
     float* vy_mm_per_s,
     float* vw_deg_per_s)
 {
+    float linear_speed = 0.0f;
+    float vw_linear_mm_per_s = 0.0f;
+    float total_speed = 0.0f;
+    float scale = 1.0f;
+
     if (vx_mm_per_s == OM_NULL || vy_mm_per_s == OM_NULL || vw_deg_per_s == OM_NULL)
     {
         return;
@@ -52,6 +57,24 @@ static void kinematics_clamp_chassis_velocity(
     *vx_mm_per_s = kinematics_clamp_float(*vx_mm_per_s, -APP_CHASSIS_MAX_VX_MM_PER_S, APP_CHASSIS_MAX_VX_MM_PER_S);
     *vy_mm_per_s = kinematics_clamp_float(*vy_mm_per_s, -APP_CHASSIS_MAX_VY_MM_PER_S, APP_CHASSIS_MAX_VY_MM_PER_S);
     *vw_deg_per_s = kinematics_clamp_float(*vw_deg_per_s, -APP_CHASSIS_MAX_VW_DEG_PER_S, APP_CHASSIS_MAX_VW_DEG_PER_S);
+
+#if (APP_CHASSIS_TOTAL_SPEED_LIMIT_ENABLE == 1u)
+    {
+        const float equivalent_radius_mm = (APP_CHASSIS_WHEEL_TRACK_MM + APP_CHASSIS_WHEEL_BASE_MM) / 2.0f;
+
+        linear_speed = sqrtf((*vx_mm_per_s) * (*vx_mm_per_s) + (*vy_mm_per_s) * (*vy_mm_per_s));
+        vw_linear_mm_per_s = (*vw_deg_per_s / APP_RADIAN_COEF) * equivalent_radius_mm;
+        total_speed = sqrtf(linear_speed * linear_speed + vw_linear_mm_per_s * vw_linear_mm_per_s);
+
+        if (total_speed > APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S)
+        {
+            scale = APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S / total_speed;
+            *vx_mm_per_s *= scale;
+            *vy_mm_per_s *= scale;
+            *vw_deg_per_s *= scale;
+        }
+    }
+#endif
 }
 
 static void kinematics_compute_mecanum_wheel_rpm_float(
