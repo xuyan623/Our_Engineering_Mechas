@@ -19,8 +19,6 @@
 #define MCT_DJI_ROLL3_ID                   (5u)
 #define MCT_GO8010_PITCH2_ID               (1u)
 #define MCT_P1010B_QUERY_PERIOD_MS         (10u)
-#define MCT_DAMIAO_CTRL_MODE_RID           (10u)
-#define MCT_DAMIAO_CTRL_MODE_MIT           (1u)
 #define MCT_DAMIAO_MODE_SETTLE_MS          (10u)
 
 /* 下列配置表只描述“正式电机命名 -> vendor 内部 id”的静态事实，
@@ -94,12 +92,30 @@ extern MctRuntime g_mct_runtime;
  * - init vendor bus
  * - register motors
  * - start physical bus
- * - 做启动期 vendor prepare
+ * - 进入正式可控态
  * - 订阅 EVT_MOTOR_TX_REQUEST
  */
 OmRet mct_runtime_init(
     MctRuntime* runtime,
     const BspDeviceRegistry* devices);
+
+/* 保留 owner 接线与电机注册不变，只把运行时重新推进到“正式可控态”：
+ * - 清 owner loop 状态
+ * - 重新做启动期 vendor bring-up
+ * - 重新 arm recovery 宽限期
+ *
+ * 这是后续“遥控器触发的软件重置”要复用的核心入口。
+ */
+OmRet mct_runtime_enter_operational_state(MctRuntime* runtime);
+
+/* 保留 wiring 和注册表不变，只把正式通信 owner 退回到“安全退出”状态：
+ * - 清 loop/query/dispatch 运行态
+ * - 下发安全零目标或 vendor disable
+ * - 清当前 recovery runtime fault
+ *
+ * 当前设计面向“立即重进”的软件 bring-up 复用，不是长期 disabled 模式机。
+ */
+OmRet mct_runtime_leave_operational_state(MctRuntime* runtime);
 
 /* GO8010 零位捕获：
  * 首个有效反馈到来后，在 owner 侧锁存初始零位，供 arm_task 只读消费。

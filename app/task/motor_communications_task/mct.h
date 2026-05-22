@@ -40,6 +40,16 @@ typedef struct
  */
 OmRet mct_start(const BspDeviceRegistry* devices);
 
+/* 请求 owner 线程重新进入“正式可控态”。
+ * 调用方只提交请求；真正的 bring-up 只在 mct 线程里执行。
+ */
+OmRet mct_request_enter_operational_state(void);
+
+/* 请求 owner 线程执行一次 leave -> enter 的软件重置。
+ * 调用方只提交请求；真正的 reset 只在 mct 线程里执行。
+ */
+OmRet mct_request_reset_operational_state(void);
+
 /* 拷贝当前运行期恢复快照。
  * 该接口只暴露最小诊断信息，不改变现有 VOFA 通道布局。
  */

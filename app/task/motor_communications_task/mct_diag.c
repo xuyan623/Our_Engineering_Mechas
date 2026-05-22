@@ -34,6 +34,7 @@ static void mct_write_p1010b_query_feedback(
 
 void mct_query_one_p1010b(MctRuntime* runtime)
 {
+    Motor* motor = OM_NULL;
     P1010BDriver* driver = OM_NULL;
     P1010BResponse response = {0};
     OsalTimeMs now_ms = 0u;
@@ -64,20 +65,27 @@ void mct_query_one_p1010b(MctRuntime* runtime)
         index = runtime->next_p1010b_query_index;
         runtime->next_p1010b_query_index =
             (runtime->next_p1010b_query_index + 1u) % MCT_P1010B_COUNT;
-        driver = &runtime->p1010b_drivers[index];
+        motor = &runtime->p1010b_motors[index];
 
-        if (motor_recovery_should_defer_p1010b_query(driver) == OM_TRUE)
+        if (motor_recovery_should_defer_p1010b_query(motor) == OM_TRUE)
         {
             runtime->p1010b_last_query_ret[index] = OM_ERROR_BUSY;
-            driver = OM_NULL;
+            motor = OM_NULL;
             continue;
         }
 
         break;
     }
 
+    if (motor == OM_NULL)
+    {
+        return;
+    }
+
+    driver = motor->binding.p1010b.driver;
     if (driver == OM_NULL)
     {
+        runtime->p1010b_last_query_ret[index] = OM_ERROR_PARAM;
         return;
     }
 
@@ -95,8 +103,9 @@ void mct_query_one_p1010b(MctRuntime* runtime)
         query_ok_ms = osal_time_now_monotonic();
         runtime->p1010b_last_query_ok_ms[index] = query_ok_ms;
         /* query 成功时间戳同时作为 recovery 的在线依据。 */
-        motor_recovery_notify_p1010b_query_ok(driver, query_ok_ms);
+        motor_recovery_notify_p1010b_query_ok(motor, query_ok_ms);
         mct_write_p1010b_query_feedback(driver, &response);
+        (void)motor_refresh_feedback(motor);
     }
 }
 

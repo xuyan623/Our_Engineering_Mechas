@@ -32,10 +32,7 @@ static OmRet mct_register_dji(MctRuntime* runtime)
         }
 
         ret = motor_recovery_register_entry(
-            g_mct_dji_chassis_configs[index].name,
-            MOTOR_VENDOR_DJI,
-            &runtime->dji_chassis_motors[index],
-            &runtime->dji_chassis_drivers[index]);
+            &runtime->dji_chassis_motors[index]);
         if (ret != OM_OK)
         {
             return ret;
@@ -57,10 +54,7 @@ static OmRet mct_register_dji(MctRuntime* runtime)
     }
 
     return motor_recovery_register_entry(
-        "roll3",
-        MOTOR_VENDOR_DJI,
-        &runtime->dji_roll3_motor,
-        &runtime->dji_roll3_driver);
+        &runtime->dji_roll3_motor);
 }
 
 /* P1010B 注册阶段只完成：
@@ -99,10 +93,7 @@ static OmRet mct_register_p1010b(MctRuntime* runtime)
         motor_recovery_configure_p1010b_driver(&runtime->p1010b_drivers[index]);
 
         ret = motor_recovery_register_entry(
-            g_mct_p1010b_configs[index].name,
-            MOTOR_VENDOR_P1010B,
-            &runtime->p1010b_motors[index],
-            &runtime->p1010b_drivers[index]);
+            &runtime->p1010b_motors[index]);
         if (ret != OM_OK)
         {
             return ret;
@@ -149,10 +140,7 @@ static OmRet mct_register_damiao(MctRuntime* runtime)
         }
 
         ret = motor_recovery_register_entry(
-            g_mct_damiao_configs[index].name,
-            MOTOR_VENDOR_DAMIAO,
-            &runtime->damiao_motors[index],
-            &runtime->damiao_drivers[index]);
+            &runtime->damiao_motors[index]);
         if (ret != OM_OK)
         {
             return ret;
@@ -185,25 +173,24 @@ static OmRet mct_register_go8010(MctRuntime* runtime)
     }
 
     return motor_recovery_register_entry(
-        "pitch2",
-        MOTOR_VENDOR_GO8010,
-        &runtime->go8010_pitch2_motor,
-        &runtime->go8010_pitch2_driver);
+        &runtime->go8010_pitch2_motor);
 }
 
 /* P1010B 启动期固定四步：
  * disable -> set_mode -> set_active_report -> enable
  */
-static OmRet mct_prepare_p1010b_driver(P1010BDriver* driver)
+static OmRet mct_prepare_p1010b_motor(Motor* motor)
 {
+    P1010BDriver* driver = OM_NULL;
     P1010BResponse response = {0};
     OmRet ret = OM_OK;
 
-    if (driver == OM_NULL)
+    if (motor == OM_NULL || motor->binding.p1010b.driver == OM_NULL)
     {
         return OM_ERROR_NULL;
     }
 
+    driver = motor->binding.p1010b.driver;
     motor_recovery_configure_p1010b_driver(driver);
 
     ret = p1010b_disable(driver, 0u, &response);
@@ -231,7 +218,7 @@ static OmRet mct_prepare_p1010b_driver(P1010BDriver* driver)
     ret = p1010b_enable(driver, 0u, &response);
     if (ret == OM_OK)
     {
-        motor_recovery_notify_p1010b_enabled(driver);
+        motor_recovery_notify_p1010b_enabled(motor);
     }
 
     return ret;
@@ -252,7 +239,7 @@ static OmRet mct_prepare_p1010b(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
-        OmRet ret = mct_prepare_p1010b_driver(&runtime->p1010b_drivers[index]);
+        OmRet ret = mct_prepare_p1010b_motor(&runtime->p1010b_motors[index]);
         if (ret != OM_OK)
         {
             last_error = ret;
@@ -270,6 +257,7 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
     uint32_t index = 0u;
     OmRet last_error = OM_OK;
     OmRet ret = OM_OK;
+    Motor* sync_motor = OM_NULL;
 
     if (runtime == OM_NULL)
     {
@@ -283,14 +271,14 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
             continue;
         }
 
-        ret = damiao_motor_write_register_u32(
-            runtime->damiao_bus.canDev,
-            g_mct_damiao_configs[index].can_id,
-            MCT_DAMIAO_CTRL_MODE_RID,
-            MCT_DAMIAO_CTRL_MODE_MIT);
+        ret = motor_owner_prepare_working_state(&runtime->damiao_motors[index]);
         if (ret != OM_OK)
         {
             last_error = ret;
+        }
+        else if (sync_motor == OM_NULL)
+        {
+            sync_motor = &runtime->damiao_motors[index];
         }
     }
 
@@ -303,11 +291,19 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
             continue;
         }
 
-        damiao_motor_enable(&runtime->damiao_drivers[index]);
+        ret = motor_owner_enable(&runtime->damiao_motors[index]);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+            continue;
+        }
         motor_recovery_notify_damiao_enabled(&runtime->damiao_motors[index]);
     }
 
-    damiao_motor_bus_sync(&runtime->damiao_bus);
+    if (sync_motor != OM_NULL && motor_owner_sync_bus(sync_motor) != OM_OK)
+    {
+        last_error = OM_ERROR;
+    }
     return last_error;
 }
 

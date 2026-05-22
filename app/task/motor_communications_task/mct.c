@@ -9,8 +9,60 @@
  * owner bring-up、vendor 启动期逻辑、query 与诊断导出都已经拆去其他文件。
  */
 
+static OmAtomicUint g_mct_enter_operational_request_pending = 0u;
+static OmAtomicUint g_mct_reset_operational_request_pending = 0u;
+
+static OmRet mct_wake_owner_thread(void)
+{
+    return (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) == OSAL_OK) ?
+               OM_OK :
+               OM_ERROR;
+}
+
+static OmBool mct_take_pending_request(OmAtomicUint* pending_flag)
+{
+    if (pending_flag == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    return (OM_SWAP_ACQ(pending_flag, 0u) != 0u) ? OM_TRUE : OM_FALSE;
+}
+
+static OmBool mct_process_owner_requests(MctRuntime* runtime)
+{
+    OmRet ret = OM_OK;
+
+    if (runtime == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (mct_take_pending_request(&g_mct_reset_operational_request_pending) == OM_TRUE)
+    {
+        (void)mct_take_pending_request(&g_mct_enter_operational_request_pending);
+
+        ret = mct_runtime_leave_operational_state(runtime);
+        if (ret == OM_OK)
+        {
+            ret = mct_runtime_enter_operational_state(runtime);
+        }
+
+        return OM_TRUE;
+    }
+
+    if (mct_take_pending_request(&g_mct_enter_operational_request_pending) == OM_TRUE)
+    {
+        (void)mct_runtime_enter_operational_state(runtime);
+        return OM_TRUE;
+    }
+
+    return OM_FALSE;
+}
+
 /* 主循环职责非常固定：
  * 1. 等待事件或周期超时
+ * 2. 优先处理 owner request（软件重进正式可控态）
  * 2. 先打一拍心跳，避免后面同步调用过长时直接触发 timeout
  * 3. 轮询一台 P1010B 的 active_query
  * 4. 统一发送所有 vendor
@@ -51,6 +103,13 @@ static void mct_entry(void* arg)
         overflowed = motor_tx_dispatch_take_overflow_flag();
         runtime->last_tx_request_sources_mask = sources_mask;
         runtime->last_tx_request_overflowed = overflowed;
+
+        if (mct_process_owner_requests(runtime) == OM_TRUE)
+        {
+            (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
+            continue;
+        }
+
         (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
         mct_query_one_p1010b(runtime);
         (void)motor_transmit_all();
@@ -109,4 +168,16 @@ OmRet mct_start(const BspDeviceRegistry* devices)
     }
 
     return OM_OK;
+}
+
+OmRet mct_request_enter_operational_state(void)
+{
+    OM_STORE_REL(&g_mct_enter_operational_request_pending, 1u);
+    return mct_wake_owner_thread();
+}
+
+OmRet mct_request_reset_operational_state(void)
+{
+    OM_STORE_REL(&g_mct_reset_operational_request_pending, 1u);
+    return mct_wake_owner_thread();
 }

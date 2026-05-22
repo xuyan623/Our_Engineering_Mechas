@@ -1,6 +1,7 @@
 #include "task/motor_communications_task/mct_internal.h"
 
 #include "module/motor_tx_dispatch/motor_tx_dispatch.h"
+#include "module/system_health/system_health.h"
 #include "drivers/peripheral/can/pal_can_dev.h"
 #include <string.h>
 
@@ -89,24 +90,67 @@ static OmRet mct_start_can(Device* can_device)
     return device_ctrl(can_device, CAN_CMD_START, OM_NULL);
 }
 
-OmRet mct_runtime_init(
+static void mct_runtime_reset_loop_state(MctRuntime* runtime)
+{
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    runtime->last_p1010b_query_ms = 0u;
+    runtime->next_p1010b_query_index = 0u;
+    runtime->p1010b_last_query_ret[0] = OM_ERROR_EMPTY;
+    runtime->p1010b_last_query_ret[1] = OM_ERROR_EMPTY;
+    runtime->p1010b_last_query_ok_ms[0] = 0u;
+    runtime->p1010b_last_query_ok_ms[1] = 0u;
+    runtime->last_tx_request_sources_mask = 0u;
+    runtime->last_tx_request_overflowed = OM_FALSE;
+}
+
+static void mct_runtime_clear_tx_dispatch_state(void)
+{
+    (void)motor_tx_dispatch_drain_sources_mask();
+    (void)motor_tx_dispatch_take_overflow_flag();
+}
+
+static void mct_runtime_set_all_motors_control_mode(
     MctRuntime* runtime,
-    const BspDeviceRegistry* devices)
+    MotorControlMode control_mode)
+{
+    uint32_t index = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->dji_chassis_motors[index], control_mode);
+    }
+    (void)motor_set_control_mode(&runtime->dji_roll3_motor, control_mode);
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->p1010b_motors[index], control_mode);
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        (void)motor_set_control_mode(&runtime->damiao_motors[index], control_mode);
+    }
+
+    (void)motor_set_control_mode(&runtime->go8010_pitch2_motor, control_mode);
+}
+
+static OmRet mct_runtime_prepare_owner_devices(const BspDeviceRegistry* devices)
 {
     OmRet ret = OM_OK;
 
-    if (runtime == OM_NULL || devices == OM_NULL || devices->can1 == OM_NULL || devices->can2 == OM_NULL ||
-        devices->usart6 == OM_NULL)
+    if (devices == OM_NULL || devices->can1 == OM_NULL || devices->can2 == OM_NULL)
     {
         return OM_ERROR_NULL;
     }
-
-    /* 运行时状态每次启动都从干净上下文开始。 */
-    memset(runtime, 0, sizeof(*runtime));
-    runtime->p1010b_last_query_ret[0] = OM_ERROR_EMPTY;
-    runtime->p1010b_last_query_ret[1] = OM_ERROR_EMPTY;
-    motor_recovery_reset();
-    motor_tx_dispatch_init();
 
     ret = mct_prepare_can(devices->can1);
     if (ret != OM_OK)
@@ -114,13 +158,21 @@ OmRet mct_runtime_init(
         return ret;
     }
 
-    ret = mct_prepare_can(devices->can2);
-    if (ret != OM_OK)
+    return mct_prepare_can(devices->can2);
+}
+
+static OmRet mct_runtime_init_vendor_buses(
+    MctRuntime* runtime,
+    const BspDeviceRegistry* devices)
+{
+    OmRet ret = OM_OK;
+
+    if (runtime == OM_NULL || devices == OM_NULL || devices->can1 == OM_NULL ||
+        devices->can2 == OM_NULL || devices->usart6 == OM_NULL)
     {
-        return ret;
+        return OM_ERROR_NULL;
     }
 
-    /* 先 init vendor bus，再统一 register motors。 */
     ret = dji_motor_bus_init(&runtime->dji_bus, devices->can1);
     if (ret != OM_OK)
     {
@@ -139,7 +191,129 @@ OmRet mct_runtime_init(
         return ret;
     }
 
-    ret = go8010_init(&runtime->go8010_bus, devices->usart6);
+    return go8010_init(&runtime->go8010_bus, devices->usart6);
+}
+
+static OmRet mct_runtime_start_owner_devices(const BspDeviceRegistry* devices)
+{
+    OmRet ret = OM_OK;
+
+    if (devices == OM_NULL || devices->can1 == OM_NULL || devices->can2 == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    ret = mct_start_can(devices->can1);
+    if (ret != OM_OK)
+    {
+        return ret;
+    }
+
+    return mct_start_can(devices->can2);
+}
+
+OmRet mct_runtime_enter_operational_state(MctRuntime* runtime)
+{
+    if (runtime == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    mct_runtime_reset_loop_state(runtime);
+    motor_tx_dispatch_init();
+    mct_runtime_clear_tx_dispatch_state();
+    motor_recovery_rearm_registered_entries();
+    (void)mct_prepare_startup_motors(runtime);
+    motor_recovery_arm_initial_grace();
+    return OM_OK;
+}
+
+OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
+{
+    uint32_t index = 0u;
+    OmRet ret = OM_OK;
+    OmRet last_error = OM_OK;
+    Motor* damiao_sync_motor = OM_NULL;
+
+    if (runtime == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    mct_runtime_reset_loop_state(runtime);
+    mct_runtime_clear_tx_dispatch_state();
+    mct_runtime_set_all_motors_control_mode(runtime, MOTOR_CONTROL_MODE_DISABLED);
+
+    ret = motor_transmit_all();
+    if (ret != OM_OK)
+    {
+        last_error = ret;
+    }
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        ret = motor_owner_disable(&runtime->p1010b_motors[index]);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        if (g_mct_damiao_configs[index].installed != OM_TRUE)
+        {
+            continue;
+        }
+
+        ret = motor_owner_disable(&runtime->damiao_motors[index]);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+        else if (damiao_sync_motor == OM_NULL)
+        {
+            damiao_sync_motor = &runtime->damiao_motors[index];
+        }
+    }
+
+    if (damiao_sync_motor != OM_NULL)
+    {
+        ret = motor_owner_sync_bus(damiao_sync_motor);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+    }
+
+    (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
+    return last_error;
+}
+
+OmRet mct_runtime_init(
+    MctRuntime* runtime,
+    const BspDeviceRegistry* devices)
+{
+    OmRet ret = OM_OK;
+
+    if (runtime == OM_NULL || devices == OM_NULL || devices->can1 == OM_NULL || devices->can2 == OM_NULL ||
+        devices->usart6 == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    /* 冷启动时先清整个 runtime 与 recovery 注册表。 */
+    memset(runtime, 0, sizeof(*runtime));
+    motor_recovery_reset();
+
+    ret = mct_runtime_prepare_owner_devices(devices);
+    if (ret != OM_OK)
+    {
+        return ret;
+    }
+
+    /* 先 init vendor bus，再统一 register motors。 */
+    ret = mct_runtime_init_vendor_buses(runtime, devices);
     if (ret != OM_OK)
     {
         return ret;
@@ -151,23 +325,16 @@ OmRet mct_runtime_init(
         return ret;
     }
 
-    ret = mct_start_can(devices->can1);
+    ret = mct_runtime_start_owner_devices(devices);
     if (ret != OM_OK)
     {
         return ret;
     }
 
-    ret = mct_start_can(devices->can2);
-    if (ret != OM_OK)
-    {
-        return ret;
-    }
-
-    /* 启动期 bring-up 失败不阻塞 owner 任务启动；
+    /* 进入正式可控态失败不阻塞 owner 任务启动；
      * 缺失电机会在后续反馈/恢复链里体现为 offline。
      */
-    (void)mct_prepare_startup_motors(runtime);
-    motor_recovery_arm_initial_grace();
+    (void)mct_runtime_enter_operational_state(runtime);
 
     if (event_bus_subscribe(&g_event_bus, EVT_MOTOR_TX_REQUEST, &runtime->tx_request_subscription) != OSAL_OK)
     {
@@ -185,5 +352,5 @@ void mct_capture_go8010_zero(MctRuntime* runtime)
     }
 
     /* GO8010 的零位属于设备初始化事实，只应在 owner 侧锁存一次。 */
-    go8010_capture_initial_position_zero(&runtime->go8010_pitch2_driver);
+    (void)motor_capture_initial_zero(&runtime->go8010_pitch2_motor);
 }
