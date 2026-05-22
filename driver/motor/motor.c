@@ -13,8 +13,32 @@
 #define MOTOR_P1010B_ONLINE_TIMEOUT_MS    (100u)
 #define MOTOR_DAMIAO_ONLINE_TIMEOUT_MS    (100u)
 #define MOTOR_GO8010_ONLINE_TIMEOUT_MS    (100u)
+#define MOTOR_OWNER_DAMIAO_CTRL_MODE_RID  (10u)
+#define MOTOR_OWNER_DAMIAO_CTRL_MODE_MIT  (1u)
 
 static Motor* g_motor_registry[MOTOR_REGISTRY_CAPACITY] = {0};
+
+static void motor_write_p1010b_query_feedback(
+    P1010BDriver* driver,
+    const P1010BResponse* response)
+{
+    if (driver == OM_NULL || response == OM_NULL)
+    {
+        return;
+    }
+
+    driver->telemetry.feedback.absolutePosition =
+        (uint16_t)response->data.activeQueryValues[0];
+    driver->telemetry.feedback.speedRpm =
+        ((float)response->data.activeQueryValues[1]) / 10.0f;
+    driver->telemetry.feedback.iqAmpere =
+        ((float)response->data.activeQueryValues[2]) / 100.0f;
+    driver->telemetry.feedback.busVoltage =
+        ((float)response->data.activeQueryValues[3]) / 10.0f;
+    driver->telemetry.feedback.timestampMs = response->timestampMs;
+    driver->telemetry.lastSuccessRxTimestampMs = response->timestampMs;
+    driver->telemetry.online = true;
+}
 
 static OmBool motor_is_registered_instance(const Motor* motor)
 {
@@ -822,6 +846,289 @@ const MotorFeedback* motor_get_feedback(const Motor* motor)
     }
 
     return &motor->feedback;
+}
+
+uint32_t motor_get_feedback_timestamp_ms(const Motor* motor)
+{
+    const MotorFeedback* feedback = motor_get_feedback(motor);
+
+    return (feedback != OM_NULL) ? feedback->timestamp_ms : 0u;
+}
+
+OmBool motor_is_feedback_recent(const Motor* motor, uint32_t timeout_ms)
+{
+    const MotorFeedback* feedback = motor_get_feedback(motor);
+
+    if (feedback == OM_NULL || feedback->online != OM_TRUE || feedback->timestamp_ms == 0u)
+    {
+        return OM_FALSE;
+    }
+
+    return ((uint32_t)(osal_time_now_monotonic() - feedback->timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
+}
+
+OmBool motor_get_single_turn_angle_rad(const Motor* motor, float* angle_rad)
+{
+    const MotorFeedback* feedback = OM_NULL;
+
+    if (motor == OM_NULL || angle_rad == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_FALSE;
+    }
+
+    if (motor->config.vendor == MOTOR_VENDOR_DJI && motor->binding.dji.driver != OM_NULL)
+    {
+        *angle_rad = dji_motor_get_singgle_angle(motor->binding.dji.driver) * MOTOR_DEG_TO_RAD;
+        return OM_TRUE;
+    }
+
+    feedback = motor_get_feedback(motor);
+    if (feedback == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    *angle_rad = feedback->angle;
+    return OM_TRUE;
+}
+
+OmBool motor_get_initial_zero_angle_rad(const Motor* motor, float* zero_angle_rad)
+{
+    if (motor == OM_NULL || zero_angle_rad == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_FALSE;
+    }
+
+    if (motor->config.vendor != MOTOR_VENDOR_GO8010 || motor->binding.go8010.driver == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    return go8010_get_initial_position_zero(motor->binding.go8010.driver, zero_angle_rad);
+}
+
+OmRet motor_capture_initial_zero(Motor* motor)
+{
+    if (motor == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    if (motor->config.vendor != MOTOR_VENDOR_GO8010 || motor->binding.go8010.driver == OM_NULL)
+    {
+        return OM_ERROR_NOT_SUPPORT;
+    }
+
+    go8010_capture_initial_position_zero(motor->binding.go8010.driver);
+    return OM_OK;
+}
+
+OmRet motor_owner_prepare_working_state(Motor* motor)
+{
+    P1010BDriver* p1010b_driver = OM_NULL;
+    P1010BResponse p1010b_response = {0};
+    DamiaoMotorDrv* damiao_driver = OM_NULL;
+    DamiaoMotorBus* damiao_bus = OM_NULL;
+
+    if (motor == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    switch (motor->config.vendor)
+    {
+    case MOTOR_VENDOR_P1010B:
+        p1010b_driver = motor->binding.p1010b.driver;
+        if (p1010b_driver == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        if (p1010b_set_mode(
+                p1010b_driver,
+                p1010b_driver->config.defaultMode,
+                0u,
+                &p1010b_response) != OM_OK)
+        {
+            return OM_ERROR;
+        }
+
+        return p1010b_set_active_report(
+            p1010b_driver,
+            &p1010b_driver->runtime.activeReport,
+            0u,
+            &p1010b_response);
+
+    case MOTOR_VENDOR_DAMIAO:
+        damiao_driver = motor->binding.damiao.driver;
+        damiao_bus = motor->binding.damiao.bus;
+        if (damiao_driver == OM_NULL || damiao_bus == OM_NULL || damiao_bus->canDev == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        return damiao_motor_write_register_u32(
+            damiao_bus->canDev,
+            damiao_driver->link.txId,
+            MOTOR_OWNER_DAMIAO_CTRL_MODE_RID,
+            MOTOR_OWNER_DAMIAO_CTRL_MODE_MIT);
+
+    default:
+        return OM_ERROR_NOT_SUPPORT;
+    }
+}
+
+OmRet motor_owner_enable(Motor* motor)
+{
+    P1010BDriver* p1010b_driver = OM_NULL;
+    P1010BResponse p1010b_response = {0};
+    DamiaoMotorDrv* damiao_driver = OM_NULL;
+
+    if (motor == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    switch (motor->config.vendor)
+    {
+    case MOTOR_VENDOR_P1010B:
+        p1010b_driver = motor->binding.p1010b.driver;
+        if (p1010b_driver == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        return p1010b_enable(p1010b_driver, 0u, &p1010b_response);
+
+    case MOTOR_VENDOR_DAMIAO:
+        damiao_driver = motor->binding.damiao.driver;
+        if (damiao_driver == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        damiao_motor_enable(damiao_driver);
+        return OM_OK;
+
+    default:
+        return OM_ERROR_NOT_SUPPORT;
+    }
+}
+
+OmRet motor_owner_disable(Motor* motor)
+{
+    P1010BDriver* p1010b_driver = OM_NULL;
+    P1010BResponse p1010b_response = {0};
+    DamiaoMotorDrv* damiao_driver = OM_NULL;
+
+    if (motor == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    switch (motor->config.vendor)
+    {
+    case MOTOR_VENDOR_P1010B:
+        p1010b_driver = motor->binding.p1010b.driver;
+        if (p1010b_driver == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        return p1010b_disable(p1010b_driver, 0u, &p1010b_response);
+
+    case MOTOR_VENDOR_DAMIAO:
+        damiao_driver = motor->binding.damiao.driver;
+        if (damiao_driver == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        damiao_motor_disable(damiao_driver);
+        return OM_OK;
+
+    default:
+        return OM_ERROR_NOT_SUPPORT;
+    }
+}
+
+OmRet motor_owner_query_feedback(Motor* motor)
+{
+    P1010BDriver* p1010b_driver = OM_NULL;
+    P1010BResponse response = {0};
+    OmRet ret = OM_OK;
+
+    if (motor == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    if (motor->config.vendor != MOTOR_VENDOR_P1010B || motor->binding.p1010b.driver == OM_NULL)
+    {
+        return OM_ERROR_NOT_SUPPORT;
+    }
+
+    p1010b_driver = motor->binding.p1010b.driver;
+    ret = p1010b_active_query_slots(
+        p1010b_driver,
+        P1010B_REPORT_DATA_ABSOLUTE_POSITION,
+        P1010B_REPORT_DATA_SPEED_RPM,
+        P1010B_REPORT_DATA_IQ_AMPERE,
+        P1010B_REPORT_DATA_BUS_VOLTAGE,
+        0u,
+        &response);
+    if (ret != OM_OK)
+    {
+        return ret;
+    }
+
+    motor_write_p1010b_query_feedback(p1010b_driver, &response);
+    (void)motor_refresh_feedback(motor);
+    return OM_OK;
+}
+
+OmRet motor_owner_sync_bus(Motor* motor)
+{
+    if (motor == OM_NULL || motor->registered_flag != OM_TRUE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    switch (motor->config.vendor)
+    {
+    case MOTOR_VENDOR_DJI:
+        if (motor->binding.dji.bus == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        dji_motor_bus_sync(motor->binding.dji.bus);
+        return OM_OK;
+
+    case MOTOR_VENDOR_DAMIAO:
+        if (motor->binding.damiao.bus == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        damiao_motor_bus_sync(motor->binding.damiao.bus);
+        return OM_OK;
+
+    case MOTOR_VENDOR_GO8010:
+        if (motor->binding.go8010.bus == OM_NULL)
+        {
+            return OM_ERROR_PARAM;
+        }
+
+        go8010_bus_sync(motor->binding.go8010.bus);
+        return OM_OK;
+
+    case MOTOR_VENDOR_P1010B:
+        return OM_OK;
+
+    default:
+        return OM_ERROR_NOT_SUPPORT;
+    }
 }
 
 Motor* motor_find_by_name(const char* name)
