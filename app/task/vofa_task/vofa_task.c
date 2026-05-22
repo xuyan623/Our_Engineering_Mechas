@@ -44,13 +44,13 @@ static float vofa_task_resolve_pitch2_zero_angle_rad(void)
     float pitch2_zero_angle_rad = 0.0f;
 
     pitch2_motor = motor_find_by_name("pitch2");
-    if (pitch2_motor == OM_NULL || pitch2_motor->binding.go8010.driver == OM_NULL)
+    if (pitch2_motor == OM_NULL)
     {
         return 0.0f;
     }
 
-    if (go8010_get_initial_position_zero(
-            pitch2_motor->binding.go8010.driver,
+    if (motor_get_initial_zero_angle_rad(
+            pitch2_motor,
             &pitch2_zero_angle_rad) != OM_TRUE)
     {
         return 0.0f;
@@ -62,15 +62,20 @@ static float vofa_task_resolve_pitch2_zero_angle_rad(void)
 static float vofa_task_resolve_roll3_single_turn_rad(void)
 {
     Motor* roll3_motor = OM_NULL;
+    float roll3_angle_rad = 0.0f;
 
     roll3_motor = motor_find_by_name("roll3");
-    if (roll3_motor == OM_NULL || roll3_motor->binding.dji.driver == OM_NULL)
+    if (roll3_motor == OM_NULL)
     {
         return 0.0f;
     }
 
-    return dji_motor_get_singgle_angle(roll3_motor->binding.dji.driver) *
-           (APP_PI / 180.0f);
+    if (motor_get_single_turn_angle_rad(roll3_motor, &roll3_angle_rad) != OM_TRUE)
+    {
+        return 0.0f;
+    }
+
+    return roll3_angle_rad;
 }
 
 static float vofa_task_convert_feedback_angle_to_action_unit(const MotorFeedbackSnapshot* snapshot)

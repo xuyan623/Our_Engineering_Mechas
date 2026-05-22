@@ -123,34 +123,14 @@ static float chassis_task_normalize_deg(float angle_deg)
     return angle_deg;
 }
 
-static OmBool chassis_task_feedback_recent(const MotorFeedback* feedback, uint32_t timeout_ms)
-{
-    if (feedback == OM_NULL || feedback->online != OM_TRUE || feedback->timestamp_ms == 0u)
-    {
-        return OM_FALSE;
-    }
-
-    return ((uint32_t)(osal_time_now_monotonic() - feedback->timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
-}
-
 static OmBool chassis_task_motor_feedback_recent(const Motor* motor, uint32_t timeout_ms)
 {
-    const MotorFeedback* feedback = OM_NULL;
-    uint32_t timestamp_ms = 0u;
-
     if (motor == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    if (motor->config.vendor == MOTOR_VENDOR_DJI && motor->binding.dji.driver != OM_NULL)
-    {
-        timestamp_ms = dji_motor_get_feedback_timestamp_ms(motor->binding.dji.driver);
-        return (timestamp_ms != 0u && (uint32_t)(osal_time_now_monotonic() - timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
-    }
-
-    feedback = motor_get_feedback(motor);
-    return chassis_task_feedback_recent(feedback, timeout_ms);
+    return motor_is_feedback_recent(motor, timeout_ms);
 }
 
 static OmBool chassis_task_key_is_down(uint16_t keyboard_bits, uint16_t mask)

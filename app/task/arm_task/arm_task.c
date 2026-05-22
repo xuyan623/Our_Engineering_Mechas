@@ -442,28 +442,12 @@ static OmBool arm_task_get_roll3_feedback_angle_rad(
     const ArmTaskContext* context,
     float* angle_rad)
 {
-    const MotorFeedback* feedback = OM_NULL;
-
     if (context == OM_NULL || angle_rad == OM_NULL || context->roll3_motor == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    if (context->roll3_motor->binding.dji.driver != OM_NULL)
-    {
-        *angle_rad = arm_task_deg_to_rad(
-            dji_motor_get_singgle_angle(context->roll3_motor->binding.dji.driver));
-        return OM_TRUE;
-    }
-
-    feedback = motor_get_feedback(context->roll3_motor);
-    if (feedback == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-
-    *angle_rad = feedback->angle;
-    return OM_TRUE;
+    return motor_get_single_turn_angle_rad(context->roll3_motor, angle_rad);
 }
 
 /* roll3 双环 PID 的通用初始化 helper。 */
@@ -574,15 +558,12 @@ static OmBool arm_task_get_pitch2_zero_angle_rad(
     float* pitch2_zero_angle_rad)
 {
     if (context == OM_NULL || pitch2_zero_angle_rad == OM_NULL ||
-        context->pitch2_motor == OM_NULL ||
-        context->pitch2_motor->binding.go8010.driver == OM_NULL)
+        context->pitch2_motor == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    return go8010_get_initial_position_zero(
-        context->pitch2_motor->binding.go8010.driver,
-        pitch2_zero_angle_rad);
+    return motor_get_initial_zero_angle_rad(context->pitch2_motor, pitch2_zero_angle_rad);
 }
 
 static OmBool arm_task_get_pitch2_joint_feedback_rad(
@@ -1762,6 +1743,15 @@ static void arm_task_run_once(ArmTaskContext* context)
     }
     else if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
+        /* RELEASE 会让机械臂失力。重新回到可控模式时，必须从当前反馈重新建目标：
+         * - 清掉动作计时，避免时间窗继续沿用上一次动作
+         * - 清掉平滑目标，避免 first tick 先冲向旧目标再回 normal
+         * - 清掉自定义控制器接管状态，避免 release 前后的参考残留
+         */
+        context->snapshot_initialized = OM_FALSE;
+        context->smoothed_targets_initialized = OM_FALSE;
+        arm_task_reset_custom_controller_state(context);
+
         /* 底盘释放模式下，应用释放输出 */
         arm_task_apply_release_output(context);
     }
