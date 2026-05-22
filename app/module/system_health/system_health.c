@@ -17,6 +17,8 @@
 #define SH_CYCLE_GAP_MS         (700u)
 #define SH_FATAL_DISPLAY_ROUNDS (3u)
 #define SH_RUNNING_GREEN_FLASH_MS (120u)
+#define SH_CAL_FAILED_RED_FLASH_MS (120u)
+#define SH_CAL_PENDING_BLINK_PERIOD_MS (500u)
 
 /* system_health 的高层状态。
  * - BOOTING：启动期，板载灯关闭
@@ -96,6 +98,7 @@ typedef struct
     SHDisplayPhase display_phase;
     OsalTimeMs next_transition_ms;
     OsalTimeMs running_green_flash_until_ms;
+    OsalTimeMs cal_failed_red_flash_until_ms;
     SHCustomControllerCalibrationState custom_controller_calibration_state;
     uint8_t current_digit_index;
     uint32_t fatal_completed_display_rounds;
@@ -210,13 +213,25 @@ static void sh_apply_led(SHState state)
             SH_CUSTOM_CONTROLLER_CAL_PENDING)
         {
             board_led_set_red(OM_FALSE);
-            board_led_set_green(OM_FALSE);
+            board_led_set_green(
+                ((now_ms / SH_CAL_PENDING_BLINK_PERIOD_MS) % 2u == 0u) ? OM_TRUE : OM_FALSE);
         }
         else if (g_system_health.custom_controller_calibration_state ==
                  SH_CUSTOM_CONTROLLER_CAL_FAILED)
         {
-            board_led_set_red(OM_TRUE);
-            board_led_set_green(OM_FALSE);
+            if (g_system_health.cal_failed_red_flash_until_ms != 0u &&
+                osal_time_before(now_ms, g_system_health.cal_failed_red_flash_until_ms))
+            {
+                board_led_set_red(OM_TRUE);
+                board_led_set_green(OM_FALSE);
+            }
+            else
+            {
+                g_system_health.cal_failed_red_flash_until_ms = 0u;
+                g_system_health.custom_controller_calibration_state =
+                    SH_CUSTOM_CONTROLLER_CAL_IDLE;
+                board_led_set_running();
+            }
         }
         else if (g_system_health.running_green_flash_until_ms != 0u &&
             osal_time_before(now_ms, g_system_health.running_green_flash_until_ms))
@@ -468,6 +483,8 @@ void sh_set_custom_controller_calibration_success(void)
 
 void sh_set_custom_controller_calibration_failed(void)
 {
+    OsalTimeMs now_ms = osal_time_now_monotonic();
+
     if (g_system_health.state != SH_STATE_RUNNING)
     {
         return;
@@ -475,6 +492,8 @@ void sh_set_custom_controller_calibration_failed(void)
 
     g_system_health.custom_controller_calibration_state =
         SH_CUSTOM_CONTROLLER_CAL_FAILED;
+    g_system_health.cal_failed_red_flash_until_ms =
+        (OsalTimeMs)(now_ms + SH_CAL_FAILED_RED_FLASH_MS);
     sh_apply_led(g_system_health.state);
 }
 
