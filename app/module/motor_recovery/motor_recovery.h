@@ -61,10 +61,7 @@ void motor_recovery_configure_p1010b_driver(P1010BDriver* driver);
  * 注意：这里只注册“要参与自动恢复”的电机；预留但未安装的电机不应注册进来。
  */
 OmRet motor_recovery_register_entry(
-    const char* name,
-    MotorVendor vendor,
-    Motor* motor,
-    void* driver);
+    Motor* motor);
 
 /* 达妙在 enable 成功后需要短暂静置窗口，避免刚使能就被 observation 帧打断。
  * 正式通信任务在启动期和运行期 re-enable 后都应调用它。
@@ -74,17 +71,17 @@ void motor_recovery_notify_damiao_enabled(Motor* motor);
 /* P1010B 在 enable 成功后需要一个短暂稳定窗口，
  * 这段时间只允许 query 建立在线时间戳，不应立刻再进恢复或报码。
  */
-void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver);
+void motor_recovery_notify_p1010b_enabled(Motor* motor);
 
 /* P1010B 正式链采用 query-mode，因此在线判据应绑定到
  * “本轮 active_query 已经成功”这一事实，而不是依赖底层硬件时间戳。
  */
-void motor_recovery_notify_p1010b_query_ok(P1010BDriver* driver, OsalTimeMs timestamp_ms);
+void motor_recovery_notify_p1010b_query_ok(Motor* motor, OsalTimeMs timestamp_ms);
 
 /* P1010B 刚完成 enable 或仍处于多步恢复中时，
  * 正式 query 不应马上插进去打断 bring-up。
  */
-OmBool motor_recovery_should_defer_p1010b_query(const P1010BDriver* driver);
+OmBool motor_recovery_should_defer_p1010b_query(const Motor* motor);
 
 /* 达妙正在跑恢复步骤时，常规 MIT 目标应短暂让位给恢复帧。
  * 这里只回答“当前这台电机是否该阻断常规目标”，不扩散成公共 Motor 状态。
@@ -95,6 +92,11 @@ OmBool motor_recovery_should_block_damiao_regular_target(const Motor* motor);
  * 用于避免任务刚启动时立刻把首轮离线判成 fault。
  */
 void motor_recovery_arm_initial_grace(void);
+
+/* 保留已注册条目，只把运行期状态重置成“刚完成 bring-up”的干净状态。
+ * 这一步是后续软件侧重进正式可控态的基础，不需要重新注册电机。
+ */
+void motor_recovery_rearm_registered_entries(void);
 
 /* 推进一次恢复状态机并根据当前条目状态更新 runtime fault。 */
 void motor_recovery_tick(void);

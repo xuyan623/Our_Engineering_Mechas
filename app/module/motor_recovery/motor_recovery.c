@@ -19,8 +19,6 @@
 #define MOTOR_RECOVERY_P1010B_SYNC_TIMEOUT_MS (5u)
 #define MOTOR_RECOVERY_P1010B_MAX_RETRY_COUNT (0u)
 #define MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS (1u)
-#define MOTOR_RECOVERY_DAMIAO_CTRL_MODE_RID (10u)
-#define MOTOR_RECOVERY_DAMIAO_CTRL_MODE_MIT (1u)
 
 /* 恢复子状态机只在模块内部使用：
  * - P1010B 需要多步同步恢复
@@ -53,10 +51,7 @@ typedef struct
  */
 typedef struct
 {
-    const char* name;
-    MotorVendor vendor;
     Motor* motor;
-    void* driver;
     MotorRecoveryPolicy policy;
     MotorRecoveryState state;
     MotorRecoveryVendorSubstate vendor_substate;
@@ -83,30 +78,14 @@ typedef struct
 
 static MotorRecoveryContext g_motor_recovery = {0};
 
-static MotorRecoveryEntry* motor_recovery_find_entry_by_driver(
-    MotorVendor vendor,
-    const void* driver)
+static MotorVendor motor_recovery_entry_vendor(const MotorRecoveryEntry* entry)
 {
-    uint32_t index = 0u;
-
-    if (driver == OM_NULL)
-    {
-        return OM_NULL;
-    }
-
-    for (index = 0u; index < g_motor_recovery.entry_count; index++)
-    {
-        MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
-        if (entry->vendor == vendor && entry->driver == driver)
-        {
-            return entry;
-        }
-    }
-
-    return OM_NULL;
+    return (entry != OM_NULL && entry->motor != OM_NULL) ?
+               entry->motor->config.vendor :
+               MOTOR_VENDOR_DJI;
 }
 
-static const MotorRecoveryEntry* motor_recovery_find_entry_by_motor(const Motor* motor)
+static MotorRecoveryEntry* motor_recovery_find_entry_by_motor_mutable(Motor* motor)
 {
     uint32_t index = 0u;
 
@@ -117,7 +96,7 @@ static const MotorRecoveryEntry* motor_recovery_find_entry_by_motor(const Motor*
 
     for (index = 0u; index < g_motor_recovery.entry_count; index++)
     {
-        const MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
+        MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
         if (entry->motor == motor)
         {
             return entry;
@@ -125,6 +104,44 @@ static const MotorRecoveryEntry* motor_recovery_find_entry_by_motor(const Motor*
     }
 
     return OM_NULL;
+}
+
+static const MotorRecoveryEntry* motor_recovery_find_entry_by_motor(const Motor* motor)
+{
+    return motor_recovery_find_entry_by_motor_mutable((Motor*)motor);
+}
+
+static P1010BDriver* motor_recovery_entry_p1010b_driver(const MotorRecoveryEntry* entry)
+{
+    if (entry == OM_NULL || entry->motor == OM_NULL ||
+        entry->motor->config.vendor != MOTOR_VENDOR_P1010B)
+    {
+        return OM_NULL;
+    }
+
+    return entry->motor->binding.p1010b.driver;
+}
+
+static DamiaoMotorDrv* motor_recovery_entry_damiao_driver(const MotorRecoveryEntry* entry)
+{
+    if (entry == OM_NULL || entry->motor == OM_NULL ||
+        entry->motor->config.vendor != MOTOR_VENDOR_DAMIAO)
+    {
+        return OM_NULL;
+    }
+
+    return entry->motor->binding.damiao.driver;
+}
+
+static DamiaoMotorBus* motor_recovery_entry_damiao_bus(const MotorRecoveryEntry* entry)
+{
+    if (entry == OM_NULL || entry->motor == OM_NULL ||
+        entry->motor->config.vendor != MOTOR_VENDOR_DAMIAO)
+    {
+        return OM_NULL;
+    }
+
+    return entry->motor->binding.damiao.bus;
 }
 
 /* P1010B 恢复统一走 query-mode。
@@ -179,40 +196,23 @@ static OmBool motor_recovery_enabled(void)
  */
 static OmBool motor_recovery_is_entry_online(const MotorRecoveryEntry* entry)
 {
-    uint32_t now_ms = 0u;
-    uint32_t timeout_ms = 0u;
-
-    if (entry == OM_NULL || entry->motor == OM_NULL || entry->driver == OM_NULL)
+    if (entry == OM_NULL || entry->motor == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    now_ms = osal_time_now_monotonic();
-    timeout_ms = entry->policy.online_timeout_ms;
-
-    switch (entry->vendor)
+    switch (motor_recovery_entry_vendor(entry))
     {
     case MOTOR_VENDOR_DJI:
-        return (dji_motor_get_feedback_timestamp_ms((DJIMotorDrv*)entry->driver) != 0u &&
-                (uint32_t)(now_ms - dji_motor_get_feedback_timestamp_ms((DJIMotorDrv*)entry->driver)) <= timeout_ms) ?
-                   OM_TRUE :
-                   OM_FALSE;
-
     case MOTOR_VENDOR_DAMIAO:
-        return (damiao_motor_get_feedback_sequence((DamiaoMotorDrv*)entry->driver) != 0u &&
-                damiao_motor_get_feedback_timestamp_ms((DamiaoMotorDrv*)entry->driver) != 0u &&
-                (uint32_t)(now_ms - damiao_motor_get_feedback_timestamp_ms((DamiaoMotorDrv*)entry->driver)) <= timeout_ms) ?
-                   OM_TRUE :
-                   OM_FALSE;
+    case MOTOR_VENDOR_GO8010:
+        return motor_is_feedback_recent(entry->motor, entry->policy.online_timeout_ms);
 
     case MOTOR_VENDOR_P1010B:
         return (entry->p1010b_last_query_ok_ms != 0u &&
-                (uint32_t)(now_ms - entry->p1010b_last_query_ok_ms) <= timeout_ms) ?
+                (uint32_t)(osal_time_now_monotonic() - entry->p1010b_last_query_ok_ms) <= entry->policy.online_timeout_ms) ?
                    OM_TRUE :
                    OM_FALSE;
-
-    case MOTOR_VENDOR_GO8010:
-        return go8010_is_online((Go8010MotorDrv*)entry->driver, timeout_ms);
 
     default:
         return OM_FALSE;
@@ -224,12 +224,17 @@ static OmBool motor_recovery_is_p1010b_healthy(const MotorRecoveryEntry* entry)
 {
     P1010BDriver* driver = OM_NULL;
 
-    if (entry == OM_NULL || entry->driver == OM_NULL)
+    if (entry == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    driver = (P1010BDriver*)entry->driver;
+    driver = motor_recovery_entry_p1010b_driver(entry);
+    if (driver == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
     if (driver->runtime.state != P1010B_STATE_ENABLED)
     {
         return OM_FALSE;
@@ -251,7 +256,7 @@ static OmBool motor_recovery_is_entry_healthy(const MotorRecoveryEntry* entry)
         return OM_FALSE;
     }
 
-    switch (entry->vendor)
+    switch (motor_recovery_entry_vendor(entry))
     {
     case MOTOR_VENDOR_P1010B:
         return motor_recovery_is_p1010b_healthy(entry);
@@ -289,14 +294,15 @@ static void motor_recovery_mark_healthy(MotorRecoveryEntry* entry)
     entry->degraded_flag = OM_FALSE;
     entry->offline_since_ms = 0u;
     entry->p1010b_enable_settle_until_ms = 0u;
-    entry->vendor_substate = motor_recovery_get_default_vendor_substate(entry->vendor);
+    entry->vendor_substate = motor_recovery_get_default_vendor_substate(
+        motor_recovery_entry_vendor(entry));
 }
 
 static OmBool motor_recovery_is_p1010b_in_enable_settle_window(
     const MotorRecoveryEntry* entry,
     OsalTimeMs now_ms)
 {
-    if (entry == OM_NULL || entry->vendor != MOTOR_VENDOR_P1010B)
+    if (entry == OM_NULL || motor_recovery_entry_vendor(entry) != MOTOR_VENDOR_P1010B)
     {
         return OM_FALSE;
     }
@@ -342,8 +348,8 @@ static void motor_recovery_update_state(MotorRecoveryEntry* entry, OsalTimeMs no
     }
 }
 
-/* P1010B 恢复是固定四步同步状态机：
- * disable -> set_mode -> set_active_report -> enable
+/* P1010B 恢复是固定三步同步状态机：
+ * disable -> prepare_working_state -> enable
  */
 static OmRet motor_recovery_recover_p1010b(MotorRecoveryEntry* entry, OsalTimeMs now_ms)
 {
@@ -351,12 +357,17 @@ static OmRet motor_recovery_recover_p1010b(MotorRecoveryEntry* entry, OsalTimeMs
     P1010BResponse response = {0};
     OmRet ret = OM_OK;
 
-    if (entry == OM_NULL || entry->driver == OM_NULL)
+    if (entry == OM_NULL || entry->motor == OM_NULL)
     {
         return OM_ERROR_PARAM;
     }
 
-    driver = (P1010BDriver*)entry->driver;
+    driver = motor_recovery_entry_p1010b_driver(entry);
+    if (driver == OM_NULL)
+    {
+        return OM_ERROR_PARAM;
+    }
+
     switch (entry->vendor_substate)
     {
     case MOTOR_RECOVERY_VENDOR_SUBSTATE_P1010B_DISABLE:
@@ -404,19 +415,17 @@ static OmRet motor_recovery_recover_p1010b(MotorRecoveryEntry* entry, OsalTimeMs
  */
 static OmRet motor_recovery_recover_damiao(MotorRecoveryEntry* entry, OsalTimeMs now_ms)
 {
-    DamiaoMotorDrv* driver = OM_NULL;
     Motor* motor = OM_NULL;
     DamiaoMotorBus* bus = OM_NULL;
     OmRet ret = OM_OK;
 
-    if (entry == OM_NULL || entry->driver == OM_NULL || entry->motor == OM_NULL)
+    if (entry == OM_NULL || entry->motor == OM_NULL)
     {
         return OM_ERROR_PARAM;
     }
 
-    driver = (DamiaoMotorDrv*)entry->driver;
     motor = entry->motor;
-    bus = motor->binding.damiao.bus;
+    bus = motor_recovery_entry_damiao_bus(entry);
 
     switch (entry->vendor_substate)
     {
@@ -427,11 +436,7 @@ static OmRet motor_recovery_recover_damiao(MotorRecoveryEntry* entry, OsalTimeMs
             break;
         }
 
-        ret = damiao_motor_write_register_u32(
-            bus->canDev,
-            driver->link.txId,
-            MOTOR_RECOVERY_DAMIAO_CTRL_MODE_RID,
-            MOTOR_RECOVERY_DAMIAO_CTRL_MODE_MIT);
+        ret = motor_owner_prepare_working_state(motor);
         if (ret == OM_OK)
         {
             entry->vendor_substate = MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_OBSERVE;
@@ -439,14 +444,13 @@ static OmRet motor_recovery_recover_damiao(MotorRecoveryEntry* entry, OsalTimeMs
         break;
 
     case MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_OBSERVE:
-        damiao_motor_enable(driver);
-        if (bus != OM_NULL)
+        ret = motor_owner_enable(motor);
+        if (ret == OM_OK && bus != OM_NULL)
         {
-            damiao_motor_bus_sync(bus);
+            ret = motor_owner_sync_bus(motor);
         }
         motor_recovery_notify_damiao_enabled(motor);
         entry->vendor_substate = MOTOR_RECOVERY_VENDOR_SUBSTATE_DAMIAO_ENABLE_PENDING;
-        ret = OM_OK;
         break;
 
     default:
@@ -506,7 +510,7 @@ static void motor_recovery_tick_entry(MotorRecoveryEntry* entry, OsalTimeMs now_
         return;
     }
 
-    switch (entry->vendor)
+    switch (motor_recovery_entry_vendor(entry))
     {
     case MOTOR_VENDOR_P1010B:
         (void)motor_recovery_recover_p1010b(entry, now_ms);
@@ -574,10 +578,7 @@ void motor_recovery_configure_p1010b_driver(P1010BDriver* driver)
  * 若宏关闭，则该函数静默返回 OM_OK，让正式通信任务无需分叉处理。
  */
 OmRet motor_recovery_register_entry(
-    const char* name,
-    MotorVendor vendor,
-    Motor* motor,
-    void* driver)
+    Motor* motor)
 {
     MotorRecoveryEntry* entry = OM_NULL;
 
@@ -586,7 +587,7 @@ OmRet motor_recovery_register_entry(
         return OM_OK;
     }
 
-    if (name == OM_NULL || motor == OM_NULL || driver == OM_NULL)
+    if (motor == OM_NULL)
     {
         return OM_ERROR_PARAM;
     }
@@ -598,16 +599,13 @@ OmRet motor_recovery_register_entry(
 
     entry = &g_motor_recovery.entries[g_motor_recovery.entry_count++];
     memset(entry, 0, sizeof(*entry));
-    entry->name = name;
-    entry->vendor = vendor;
     entry->motor = motor;
-    entry->driver = driver;
     entry->policy = motor_recovery_make_default_policy();
     entry->state = MOTOR_RECOVERY_STATE_RECOVERING;
-    entry->vendor_substate = motor_recovery_get_default_vendor_substate(vendor);
+    entry->vendor_substate = motor_recovery_get_default_vendor_substate(motor->config.vendor);
     entry->last_recover_ret = OM_OK;
 
-    if (vendor == MOTOR_VENDOR_DAMIAO)
+    if (motor->config.vendor == MOTOR_VENDOR_DAMIAO)
     {
         /* 达妙 observation 静置窗口存放在 entry 私有字段里，
          * motor 只拿到一个 vendor_context 指针，不直接感知恢复模块状态。
@@ -637,18 +635,18 @@ void motor_recovery_notify_damiao_enabled(Motor* motor)
     *gate_until_ptr = osal_time_now_monotonic() + MOTOR_RECOVERY_DAMIAO_ENABLE_SETTLE_MS;
 }
 
-void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver)
+void motor_recovery_notify_p1010b_enabled(Motor* motor)
 {
     MotorRecoveryEntry* entry = OM_NULL;
     OsalTimeMs now_ms = 0u;
 
-    if (motor_recovery_enabled() != OM_TRUE || driver == OM_NULL)
+    if (motor_recovery_enabled() != OM_TRUE || motor == OM_NULL)
     {
         return;
     }
 
     now_ms = osal_time_now_monotonic();
-    entry = motor_recovery_find_entry_by_driver(MOTOR_VENDOR_P1010B, driver);
+    entry = motor_recovery_find_entry_by_motor_mutable(motor);
     if (entry == OM_NULL)
     {
         return;
@@ -660,16 +658,16 @@ void motor_recovery_notify_p1010b_enabled(P1010BDriver* driver)
     entry->offline_since_ms = 0u;
 }
 
-void motor_recovery_notify_p1010b_query_ok(P1010BDriver* driver, OsalTimeMs timestamp_ms)
+void motor_recovery_notify_p1010b_query_ok(Motor* motor, OsalTimeMs timestamp_ms)
 {
     MotorRecoveryEntry* entry = OM_NULL;
 
-    if (motor_recovery_enabled() != OM_TRUE || driver == OM_NULL || timestamp_ms == 0u)
+    if (motor_recovery_enabled() != OM_TRUE || motor == OM_NULL || timestamp_ms == 0u)
     {
         return;
     }
 
-    entry = motor_recovery_find_entry_by_driver(MOTOR_VENDOR_P1010B, driver);
+    entry = motor_recovery_find_entry_by_motor_mutable(motor);
     if (entry == OM_NULL)
     {
         return;
@@ -678,17 +676,17 @@ void motor_recovery_notify_p1010b_query_ok(P1010BDriver* driver, OsalTimeMs time
     entry->p1010b_last_query_ok_ms = timestamp_ms;
 }
 
-OmBool motor_recovery_should_defer_p1010b_query(const P1010BDriver* driver)
+OmBool motor_recovery_should_defer_p1010b_query(const Motor* motor)
 {
     const MotorRecoveryEntry* entry = OM_NULL;
     OsalTimeMs now_ms = 0u;
 
-    if (motor_recovery_enabled() != OM_TRUE || driver == OM_NULL)
+    if (motor_recovery_enabled() != OM_TRUE || motor == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    entry = motor_recovery_find_entry_by_driver(MOTOR_VENDOR_P1010B, driver);
+    entry = motor_recovery_find_entry_by_motor(motor);
     if (entry == OM_NULL)
     {
         return OM_FALSE;
@@ -720,7 +718,7 @@ OmBool motor_recovery_should_block_damiao_regular_target(const Motor* motor)
     }
 
     entry = motor_recovery_find_entry_by_motor(motor);
-    if (entry == OM_NULL || entry->vendor != MOTOR_VENDOR_DAMIAO)
+    if (entry == OM_NULL || motor_recovery_entry_vendor(entry) != MOTOR_VENDOR_DAMIAO)
     {
         return OM_FALSE;
     }
@@ -759,6 +757,41 @@ void motor_recovery_arm_initial_grace(void)
     for (index = 0u; index < g_motor_recovery.entry_count; index++)
     {
         g_motor_recovery.entries[index].last_recover_ms = now_ms;
+    }
+}
+
+void motor_recovery_rearm_registered_entries(void)
+{
+    OsalTimeMs now_ms = 0u;
+    uint32_t index = 0u;
+
+    if (motor_recovery_enabled() != OM_TRUE)
+    {
+        return;
+    }
+
+    now_ms = osal_time_now_monotonic();
+    for (index = 0u; index < g_motor_recovery.entry_count; index++)
+    {
+        MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
+
+        entry->state = MOTOR_RECOVERY_STATE_RECOVERING;
+        entry->vendor_substate =
+            motor_recovery_get_default_vendor_substate(motor_recovery_entry_vendor(entry));
+        entry->degraded_flag = OM_FALSE;
+        entry->last_recover_ret = OM_OK;
+        entry->last_recover_ms = now_ms;
+        entry->offline_since_ms = 0u;
+        entry->observe_gate_until_ms = 0u;
+        entry->p1010b_enable_settle_until_ms = 0u;
+        entry->p1010b_last_query_ok_ms = 0u;
+        entry->recover_count = 0u;
+    }
+
+    if (g_motor_recovery.runtime_fault_active == OM_TRUE)
+    {
+        (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
+        g_motor_recovery.runtime_fault_active = OM_FALSE;
     }
 }
 
@@ -817,8 +850,8 @@ OmRet motor_recovery_copy_snapshots(
             break;
         }
 
-        snapshots[*snapshot_count].name = entry->name;
-        snapshots[*snapshot_count].vendor = (uint8_t)entry->vendor;
+        snapshots[*snapshot_count].name = entry->motor->config.name;
+        snapshots[*snapshot_count].vendor = (uint8_t)entry->motor->config.vendor;
         snapshots[*snapshot_count].online = motor_recovery_is_entry_online(entry);
         snapshots[*snapshot_count].state = entry->state;
         snapshots[*snapshot_count].degraded_flag = entry->degraded_flag;
@@ -854,7 +887,7 @@ OmRet motor_recovery_copy_p1010b_predicate_snapshots(
         const MotorRecoveryEntry* entry = &g_motor_recovery.entries[index];
         P1010BDriver* driver = OM_NULL;
 
-        if (entry->vendor != MOTOR_VENDOR_P1010B)
+        if (motor_recovery_entry_vendor(entry) != MOTOR_VENDOR_P1010B)
         {
             continue;
         }
@@ -864,8 +897,8 @@ OmRet motor_recovery_copy_p1010b_predicate_snapshots(
             break;
         }
 
-        driver = (P1010BDriver*)entry->driver;
-        snapshots[*snapshot_count].name = entry->name;
+        driver = motor_recovery_entry_p1010b_driver(entry);
+        snapshots[*snapshot_count].name = entry->motor->config.name;
         snapshots[*snapshot_count].online = motor_recovery_is_entry_online(entry);
         snapshots[*snapshot_count].state_enabled =
             (driver != OM_NULL && driver->runtime.state == P1010B_STATE_ENABLED) ? OM_TRUE : OM_FALSE;
