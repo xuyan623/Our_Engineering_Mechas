@@ -2,7 +2,7 @@
 #define NEW_ROBOT_MCT_INTERNAL_H
 
 #include "driver/motor/motor.h"
-#include "module/event_bus/event_bus.h"
+#include "module/task_channel/task_channel.h"
 #include "task/motor_communications_task/mct.h"
 #include <stdint.h>
 
@@ -11,15 +11,18 @@
  * 供 runtime/vendor/diag 三个实现文件共享。
  */
 #define MCT_LOOP_PERIOD_MS                 (5u)
-#define MCT_STACK_WORDS                    (1024u)
-#define MCT_PRIORITY                       (4u)
-#define MCT_DJI_CHASSIS_COUNT              (4u)
-#define MCT_P1010B_COUNT                   (2u)
-#define MCT_DAMIAO_COUNT                   (6u)
-#define MCT_DJI_ROLL3_ID                   (5u)
-#define MCT_GO8010_PITCH2_ID               (1u)
-#define MCT_P1010B_QUERY_PERIOD_MS         (10u)
-#define MCT_DAMIAO_MODE_SETTLE_MS          (10u)
+#define MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS    (10u)
+#define MCT_OPERATIONAL_OBSERVATION_PERIOD_MS       (50u)
+#define MCT_NON_OPERATIONAL_PERIOD_MS               (50u)
+#define MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS (50u)
+#define MCT_STACK_WORDS                             (1024u)
+#define MCT_PRIORITY                                (4u)
+#define MCT_DJI_CHASSIS_COUNT                       (4u)
+#define MCT_P1010B_COUNT                            (2u)
+#define MCT_DAMIAO_COUNT                            (6u)
+#define MCT_DJI_ROLL3_ID                            (5u)
+#define MCT_GO8010_PITCH2_ID                        (1u)
+#define MCT_DAMIAO_MODE_SETTLE_MS                   (10u)
 
 /* 下列配置表只描述“正式电机命名 -> vendor 内部 id”的静态事实，
  * 不承载运行时状态。
@@ -45,11 +48,19 @@ typedef struct
     OmBool installed;
 } MctDamiaoConfig;
 
+/* 只允许在 mct owner 线程里执行的低频生命周期命令。 */
+typedef enum
+{
+    MCT_OWNER_COMMAND_NONE = 0u,
+    MCT_OWNER_COMMAND_ENTER_OPERATIONAL = 1u,
+    MCT_OWNER_COMMAND_LEAVE_OPERATIONAL = 2u,
+    MCT_OWNER_COMMAND_RESET_OPERATIONAL = 3u,
+} MctOwnerCommand;
+
 /* mct 的运行时上下文。
  * 职责边界固定为：
  * - 持有各 vendor bus / driver / motor 实例
- * - 持有事件订阅句柄
- * - 持有 P1010B query-mode 的调度与最小诊断状态
+ * - 持有 owner lifecycle / vendor runtime 状态
  *
  * 上层控制目标不放在这里，仍由 chassis_task / arm_task 写入 motor 抽象层。
  */
@@ -73,11 +84,17 @@ typedef struct
     Go8010MotorDrv go8010_pitch2_driver;
     Motor go8010_pitch2_motor;
 
-    EventSubscription tx_request_subscription;
-    OsalTimeMs last_p1010b_query_ms;
-    uint32_t next_p1010b_query_index;
-    int32_t p1010b_last_query_ret[MCT_P1010B_COUNT];
-    OsalTimeMs p1010b_last_query_ok_ms[MCT_P1010B_COUNT];
+    TaskCommandMailbox owner_command_mailbox;
+    OmAtomicUint operational_active;
+    OsalTimeMs last_operational_formal_transmit_ms;
+    OsalTimeMs last_operational_observation_ms;
+    OsalTimeMs last_non_operational_cycle_ms;
+    OsalTimeMs last_non_operational_p1010b_observation_ms;
+    OmBool operational_formal_transmit_pending;
+    OmBool p1010b_non_operational_disable_confirmed[MCT_P1010B_COUNT];
+    uint8_t next_non_operational_p1010b_observation_index;
+    OmBool damiao_non_operational_disable_confirmed[MCT_DAMIAO_COUNT];
+    uint32_t damiao_non_operational_disable_sequence_base[MCT_DAMIAO_COUNT];
     uint32_t last_tx_request_sources_mask;
     OmBool last_tx_request_overflowed;
 } MctRuntime;
@@ -92,8 +109,7 @@ extern MctRuntime g_mct_runtime;
  * - init vendor bus
  * - register motors
  * - start physical bus
- * - 进入正式可控态
- * - 订阅 EVT_MOTOR_TX_REQUEST
+ * - 保持 non-operational，等待 owner request
  */
 OmRet mct_runtime_init(
     MctRuntime* runtime,
@@ -117,6 +133,12 @@ OmRet mct_runtime_enter_operational_state(MctRuntime* runtime);
  */
 OmRet mct_runtime_leave_operational_state(MctRuntime* runtime);
 
+/* non-operational owner 路径：
+ * - 持续把正式电机保持在 disabled / safe output
+ * - 不推进正常 query / receive / recovery
+ */
+OmRet mct_runtime_run_non_operational_cycle(MctRuntime* runtime);
+
 /* GO8010 零位捕获：
  * 首个有效反馈到来后，在 owner 侧锁存初始零位，供 arm_task 只读消费。
  */
@@ -133,8 +155,5 @@ OmRet mct_register_vendors(MctRuntime* runtime);
  * - Damiao：写 MIT 模式后 enable
  */
 OmRet mct_prepare_startup_motors(MctRuntime* runtime);
-
-/* 正式链里的 P1010B query-mode 轮询入口。 */
-void mct_query_one_p1010b(MctRuntime* runtime);
 
 #endif

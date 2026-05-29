@@ -1,36 +1,115 @@
 #include "task/motor_communications_task/mct_internal.h"
 #include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "module/system_health/system_health.h"
+#include "task/mode_task/mode_task.h"
 
 /* mct.c 只保留 façade：
  * - 任务主循环
  * - 线程创建入口
  *
- * owner bring-up、vendor 启动期逻辑、query 与诊断导出都已经拆去其他文件。
+ * owner bring-up、vendor 启动期逻辑与诊断导出都已经拆去其他文件。
  */
 
-static OmAtomicUint g_mct_enter_operational_request_pending = 0u;
-static OmAtomicUint g_mct_reset_operational_request_pending = 0u;
-
-static OmRet mct_wake_owner_thread(void)
+static OmBool mct_owner_operational_active(const MctRuntime* runtime)
 {
-    return (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) == OSAL_OK) ?
-               OM_OK :
-               OM_ERROR;
-}
-
-static OmBool mct_take_pending_request(OmAtomicUint* pending_flag)
-{
-    if (pending_flag == OM_NULL)
+    if (runtime == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    return (OM_SWAP_ACQ(pending_flag, 0u) != 0u) ? OM_TRUE : OM_FALSE;
+    return (OM_LOAD_ACQ(&runtime->operational_active) != 0u) ? OM_TRUE : OM_FALSE;
+}
+
+static OmBool mct_sources_include_formal_transmit(uint32_t sources_mask)
+{
+    const uint32_t formal_sources_mask =
+        (1u << (uint32_t)MOTOR_TX_SOURCE_ARM) |
+        (1u << (uint32_t)MOTOR_TX_SOURCE_CHASSIS);
+
+    return ((sources_mask & formal_sources_mask) != 0u) ? OM_TRUE : OM_FALSE;
+}
+
+static void mct_run_operational_observation_only_transmit(MctRuntime* runtime)
+{
+    const OsalTimeMs now_ms = osal_time_now_monotonic();
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    if (runtime->last_operational_observation_ms != 0u &&
+        (uint32_t)(now_ms - runtime->last_operational_observation_ms) < MCT_OPERATIONAL_OBSERVATION_PERIOD_MS)
+    {
+        return;
+    }
+
+    runtime->last_operational_observation_ms = now_ms;
+    (void)motor_transmit_observation_only();
+}
+
+static void mct_run_operational_formal_transmit(
+    MctRuntime* runtime,
+    uint32_t sources_mask)
+{
+    const OsalTimeMs now_ms = osal_time_now_monotonic();
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    if (mct_sources_include_formal_transmit(sources_mask) == OM_TRUE)
+    {
+        runtime->operational_formal_transmit_pending = OM_TRUE;
+    }
+
+    if (runtime->operational_formal_transmit_pending != OM_TRUE)
+    {
+        return;
+    }
+
+    if (runtime->last_operational_formal_transmit_ms != 0u &&
+        (uint32_t)(now_ms - runtime->last_operational_formal_transmit_ms) <
+            MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS)
+    {
+        return;
+    }
+
+    runtime->last_operational_formal_transmit_ms = now_ms;
+    runtime->operational_formal_transmit_pending = OM_FALSE;
+    (void)motor_transmit_all();
+}
+
+static OmRet mct_submit_owner_command(
+    MctRuntime* runtime,
+    MctOwnerCommand command,
+    OmBool replace_pending)
+{
+    OmRet ret = OM_OK;
+
+    if (runtime == OM_NULL || command == MCT_OWNER_COMMAND_NONE)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    if (replace_pending == OM_TRUE)
+    {
+        ret = task_command_mailbox_reset(&runtime->owner_command_mailbox);
+        if (ret != OM_OK)
+        {
+            return ret;
+        }
+    }
+
+    return task_command_mailbox_submit_nonblocking(
+        &runtime->owner_command_mailbox,
+        &command);
 }
 
 static OmBool mct_process_owner_requests(MctRuntime* runtime)
 {
+    MctOwnerCommand command = MCT_OWNER_COMMAND_NONE;
     OmRet ret = OM_OK;
 
     if (runtime == OM_NULL)
@@ -38,43 +117,72 @@ static OmBool mct_process_owner_requests(MctRuntime* runtime)
         return OM_FALSE;
     }
 
-    if (mct_take_pending_request(&g_mct_reset_operational_request_pending) == OM_TRUE)
+    ret = task_command_mailbox_receive(
+        &runtime->owner_command_mailbox,
+        &command,
+        0u);
+    if (ret == OM_ERROR_WOULD_BLOCK || ret == OM_ERROR_TIMEOUT)
     {
-        (void)mct_take_pending_request(&g_mct_enter_operational_request_pending);
+        return OM_FALSE;
+    }
 
+    if (ret != OM_OK)
+    {
+        return OM_FALSE;
+    }
+
+    if (command == MCT_OWNER_COMMAND_RESET_OPERATIONAL)
+    {
+        OM_STORE_REL(&runtime->operational_active, 0u);
         ret = mct_runtime_leave_operational_state(runtime);
         if (ret == OM_OK)
         {
             ret = mct_runtime_enter_operational_state(runtime);
+            if (ret == OM_OK)
+            {
+                OM_STORE_REL(&runtime->operational_active, 1u);
+            }
         }
 
         return OM_TRUE;
     }
 
-    if (mct_take_pending_request(&g_mct_enter_operational_request_pending) == OM_TRUE)
+    if (command == MCT_OWNER_COMMAND_ENTER_OPERATIONAL)
     {
-        (void)mct_runtime_enter_operational_state(runtime);
+        if (mct_runtime_enter_operational_state(runtime) == OM_OK)
+        {
+            OM_STORE_REL(&runtime->operational_active, 1u);
+        }
         return OM_TRUE;
     }
 
-    return OM_FALSE;
+    if (command == MCT_OWNER_COMMAND_LEAVE_OPERATIONAL)
+    {
+        OM_STORE_REL(&runtime->operational_active, 0u);
+        if (mct_runtime_leave_operational_state(runtime) == OM_OK)
+        {
+            return OM_TRUE;
+        }
+        return OM_TRUE;
+    }
+
+    return OM_TRUE;
 }
 
 /* 主循环职责非常固定：
  * 1. 等待事件或周期超时
  * 2. 优先处理 owner request（软件重进正式可控态）
  * 2. 先打一拍心跳，避免后面同步调用过长时直接触发 timeout
- * 3. 轮询一台 P1010B 的 active_query
- * 4. 统一发送所有 vendor
- * 5. 统一刷新所有 vendor 反馈
- * 6. 若收到新反馈，发布 EVT_MOTOR_FEEDBACK_READY
- * 7. 基于最新反馈推进恢复模块与 runtime fault
- * 8. 再打一拍心跳，表示本轮物理通信已完整走完
+ * 3. 统一发送所有 vendor
+ * 4. 统一刷新所有 vendor 反馈
+ * 5. 若收到新反馈，发布 EVT_MOTOR_FEEDBACK_READY
+ * 6. 基于最新反馈推进恢复模块与 runtime fault
+ * 7. 再打一拍心跳，表示本轮物理通信已完整走完
  */
 static void mct_entry(void* arg)
 {
     MctRuntime* runtime = (MctRuntime*)arg;
-    OsalStatus wait_status = OSAL_INVALID;
+    OsalTimeMs deadline_cursor_ms = 0u;
     uint32_t sources_mask = 0u;
     OmBool overflowed = OM_FALSE;
 
@@ -88,17 +196,6 @@ static void mct_entry(void* arg)
 
     while (1)
     {
-        /* 有发送请求就尽快苏醒；没有请求也按固定周期轮询，
-         * 保证接收刷新、P1010B query 与 recovery 都持续推进。
-         */
-        wait_status = osal_event_flags_wait(
-            runtime->tx_request_subscription.flags,
-            runtime->tx_request_subscription.waitMask,
-            OM_NULL,
-            MCT_LOOP_PERIOD_MS,
-            0u);
-
-        (void)wait_status;
         sources_mask = motor_tx_dispatch_drain_sources_mask();
         overflowed = motor_tx_dispatch_take_overflow_flag();
         runtime->last_tx_request_sources_mask = sources_mask;
@@ -110,18 +207,35 @@ static void mct_entry(void* arg)
             continue;
         }
 
+        if (mct_owner_operational_active(runtime) != OM_TRUE)
+        {
+            (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
+            (void)mct_runtime_run_non_operational_cycle(runtime);
+            (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
+            continue;
+        }
+
         (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
-        mct_query_one_p1010b(runtime);
-        (void)motor_transmit_all();
+        /* 临时调试：当前正式发送只在明确收到 control task 请求时执行。
+         * 没有正式发送请求时，仍只走低频 observation-only 刷反馈。 */
+        if (mct_sources_include_formal_transmit(sources_mask) == OM_TRUE ||
+            runtime->operational_formal_transmit_pending == OM_TRUE)
+        {
+            mct_run_operational_formal_transmit(runtime, sources_mask);
+        }
+        else
+        {
+            mct_run_operational_observation_only_transmit(runtime);
+        }
 
         if (motor_receive_all() == OM_OK)
         {
             mct_capture_go8010_zero(runtime);
-            (void)event_bus_publish(&g_event_bus, EVT_MOTOR_FEEDBACK_READY);
         }
         motor_recovery_tick();
 
         (void)sh_beat(SH_TASK_MOTOR_COMMUNICATIONS);
+        (void)osal_delay_until(&deadline_cursor_ms, MCT_LOOP_PERIOD_MS, OM_NULL);
     }
 }
 
@@ -163,8 +277,25 @@ OmRet mct_start(const BspDeviceRegistry* devices)
         &g_mct_runtime);
     if (status != OSAL_OK)
     {
+        task_command_mailbox_deinit(&g_mct_runtime.owner_command_mailbox);
         mct_thread = OM_NULL;
         return OM_ERROR;
+    }
+
+    {
+        const ModeTaskInitProgressMessage can_ready = {
+            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_CAN_READY,
+            .value = 1u};
+        const ModeTaskInitProgressMessage chassis_motor_ready = {
+            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_CHASSIS_MOTOR_READY,
+            .value = 1u};
+        const ModeTaskInitProgressMessage arm_motor_ready = {
+            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_ARM_MOTOR_READY,
+            .value = 1u};
+
+        (void)mode_task_submit_init_progress(&can_ready);
+        (void)mode_task_submit_init_progress(&chassis_motor_ready);
+        (void)mode_task_submit_init_progress(&arm_motor_ready);
     }
 
     return OM_OK;
@@ -172,12 +303,69 @@ OmRet mct_start(const BspDeviceRegistry* devices)
 
 OmRet mct_request_enter_operational_state(void)
 {
-    OM_STORE_REL(&g_mct_enter_operational_request_pending, 1u);
-    return mct_wake_owner_thread();
+    OmRet ret = OM_OK;
+
+    ret = mct_submit_owner_command(
+        &g_mct_runtime,
+        MCT_OWNER_COMMAND_ENTER_OPERATIONAL,
+        OM_TRUE);
+    if (ret != OM_OK)
+    {
+        return ret;
+    }
+
+    return OM_OK;
+}
+
+OmRet mct_request_leave_operational_state(void)
+{
+    OmRet ret = OM_OK;
+
+    ret = mct_submit_owner_command(
+        &g_mct_runtime,
+        MCT_OWNER_COMMAND_LEAVE_OPERATIONAL,
+        OM_TRUE);
+    if (ret != OM_OK)
+    {
+        return ret;
+    }
+
+    return OM_OK;
 }
 
 OmRet mct_request_reset_operational_state(void)
 {
-    OM_STORE_REL(&g_mct_reset_operational_request_pending, 1u);
-    return mct_wake_owner_thread();
+    OmRet ret = OM_OK;
+
+    ret = mct_submit_owner_command(
+        &g_mct_runtime,
+        MCT_OWNER_COMMAND_RESET_OPERATIONAL,
+        OM_TRUE);
+    if (ret != OM_OK)
+    {
+        return ret;
+    }
+
+    return OM_OK;
+}
+
+OmBool mct_is_operational_active(void)
+{
+    return mct_owner_operational_active(&g_mct_runtime);
+}
+
+OmRet mct_copy_runtime_debug_snapshot(
+    MctRuntimeDebugSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    snapshot->operational_active =
+        (uint8_t)((mct_owner_operational_active(&g_mct_runtime) == OM_TRUE) ? 1u : 0u);
+    snapshot->last_tx_request_sources_mask = g_mct_runtime.last_tx_request_sources_mask;
+    snapshot->last_tx_request_overflowed =
+        (uint8_t)((g_mct_runtime.last_tx_request_overflowed == OM_TRUE) ? 1u : 0u);
+    return OM_OK;
 }

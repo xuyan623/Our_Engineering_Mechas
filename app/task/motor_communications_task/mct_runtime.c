@@ -92,19 +92,32 @@ static OmRet mct_start_can(Device* can_device)
 
 static void mct_runtime_reset_loop_state(MctRuntime* runtime)
 {
+    uint32_t index = 0u;
+
     if (runtime == OM_NULL)
     {
         return;
     }
 
-    runtime->last_p1010b_query_ms = 0u;
-    runtime->next_p1010b_query_index = 0u;
-    runtime->p1010b_last_query_ret[0] = OM_ERROR_EMPTY;
-    runtime->p1010b_last_query_ret[1] = OM_ERROR_EMPTY;
-    runtime->p1010b_last_query_ok_ms[0] = 0u;
-    runtime->p1010b_last_query_ok_ms[1] = 0u;
+    runtime->last_operational_observation_ms = 0u;
+    runtime->last_operational_formal_transmit_ms = 0u;
+    runtime->last_non_operational_cycle_ms = 0u;
+    runtime->last_non_operational_p1010b_observation_ms = 0u;
+    runtime->next_non_operational_p1010b_observation_index = 0u;
+    runtime->operational_formal_transmit_pending = OM_FALSE;
     runtime->last_tx_request_sources_mask = 0u;
     runtime->last_tx_request_overflowed = OM_FALSE;
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        runtime->p1010b_non_operational_disable_confirmed[index] = OM_FALSE;
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        runtime->damiao_non_operational_disable_confirmed[index] = OM_FALSE;
+        runtime->damiao_non_operational_disable_sequence_base[index] = 0u;
+    }
 }
 
 static void mct_runtime_clear_tx_dispatch_state(void)
@@ -212,50 +225,170 @@ static OmRet mct_runtime_start_owner_devices(const BspDeviceRegistry* devices)
     return mct_start_can(devices->can2);
 }
 
-OmRet mct_runtime_enter_operational_state(MctRuntime* runtime)
+static void mct_runtime_update_non_operational_disable_confirmation(MctRuntime* runtime)
 {
+    uint32_t index = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    for (index = 0u; index < MCT_P1010B_COUNT; index++)
+    {
+        if (runtime->p1010b_non_operational_disable_confirmed[index] == OM_TRUE)
+        {
+            continue;
+        }
+
+        if (runtime->p1010b_drivers[index].runtime.state == P1010B_STATE_DISABLED)
+        {
+            runtime->p1010b_non_operational_disable_confirmed[index] = OM_TRUE;
+        }
+    }
+
+    for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
+    {
+        if (g_mct_damiao_configs[index].installed != OM_TRUE ||
+            runtime->damiao_non_operational_disable_confirmed[index] == OM_TRUE)
+        {
+            continue;
+        }
+
+        if (damiao_motor_get_feedback_sequence(&runtime->damiao_drivers[index]) >
+                runtime->damiao_non_operational_disable_sequence_base[index] &&
+            damiao_motor_get_status(&runtime->damiao_drivers[index]) == 0u)
+        {
+            runtime->damiao_non_operational_disable_confirmed[index] = OM_TRUE;
+        }
+    }
+}
+
+static OmRet mct_runtime_observe_non_operational_p1010b(MctRuntime* runtime)
+{
+    OsalTimeMs now_ms = 0u;
+    uint32_t attempt_index = 0u;
+
     if (runtime == OM_NULL)
     {
         return OM_ERROR_NULL;
     }
 
-    mct_runtime_reset_loop_state(runtime);
-    motor_tx_dispatch_init();
-    mct_runtime_clear_tx_dispatch_state();
-    motor_recovery_rearm_registered_entries();
-    (void)mct_prepare_startup_motors(runtime);
-    motor_recovery_arm_initial_grace();
+    now_ms = osal_time_now_monotonic();
+    if (runtime->last_non_operational_p1010b_observation_ms != 0u &&
+        (uint32_t)(now_ms - runtime->last_non_operational_p1010b_observation_ms) <
+            MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS)
+    {
+        return OM_OK;
+    }
+
+    for (attempt_index = 0u; attempt_index < MCT_P1010B_COUNT; attempt_index++)
+    {
+        uint32_t index =
+            (uint32_t)((runtime->next_non_operational_p1010b_observation_index + attempt_index) % MCT_P1010B_COUNT);
+
+        if (runtime->p1010b_non_operational_disable_confirmed[index] != OM_TRUE)
+        {
+            continue;
+        }
+
+        runtime->last_non_operational_p1010b_observation_ms = now_ms;
+        runtime->next_non_operational_p1010b_observation_index =
+            (uint8_t)((index + 1u) % MCT_P1010B_COUNT);
+        return motor_owner_query_feedback(&runtime->p1010b_motors[index]);
+    }
+
     return OM_OK;
 }
 
-OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
+static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
 {
     uint32_t index = 0u;
     OmRet ret = OM_OK;
     OmRet last_error = OM_OK;
     Motor* damiao_sync_motor = OM_NULL;
+    Motor* dji_sync_motor = OM_NULL;
+    Motor* go8010_sync_motor = OM_NULL;
 
     if (runtime == OM_NULL)
     {
         return OM_ERROR_NULL;
     }
 
-    mct_runtime_reset_loop_state(runtime);
-    mct_runtime_clear_tx_dispatch_state();
+    runtime->last_non_operational_cycle_ms = osal_time_now_monotonic();
     mct_runtime_set_all_motors_control_mode(runtime, MOTOR_CONTROL_MODE_DISABLED);
+    mct_runtime_update_non_operational_disable_confirmation(runtime);
 
-    ret = motor_transmit_all();
+    for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
+    {
+        ret = motor_control_compute(&runtime->dji_chassis_motors[index]);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+        else if (dji_sync_motor == OM_NULL)
+        {
+            dji_sync_motor = &runtime->dji_chassis_motors[index];
+        }
+    }
+
+    ret = motor_control_compute(&runtime->dji_roll3_motor);
     if (ret != OM_OK)
     {
         last_error = ret;
     }
+    else if (dji_sync_motor == OM_NULL)
+    {
+        dji_sync_motor = &runtime->dji_roll3_motor;
+    }
+
+    if (dji_sync_motor != OM_NULL)
+    {
+        ret = motor_owner_sync_bus(dji_sync_motor);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+    }
+
+    ret = motor_control_compute(&runtime->go8010_pitch2_motor);
+    if (ret != OM_OK)
+    {
+        last_error = ret;
+    }
+    else
+    {
+        go8010_sync_motor = &runtime->go8010_pitch2_motor;
+    }
+
+    if (go8010_sync_motor != OM_NULL)
+    {
+        ret = motor_owner_sync_bus(go8010_sync_motor);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+    }
+
+    go8010_rx_service(&runtime->go8010_bus);
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
+        if (runtime->p1010b_non_operational_disable_confirmed[index] == OM_TRUE)
+        {
+            continue;
+        }
+
         ret = motor_owner_disable(&runtime->p1010b_motors[index]);
         if (ret != OM_OK)
         {
             last_error = ret;
+            continue;
+        }
+
+        if (runtime->p1010b_drivers[index].runtime.state == P1010B_STATE_DISABLED)
+        {
+            runtime->p1010b_non_operational_disable_confirmed[index] = OM_TRUE;
         }
     }
 
@@ -266,6 +399,8 @@ OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
             continue;
         }
 
+        runtime->damiao_non_operational_disable_sequence_base[index] =
+            damiao_motor_get_feedback_sequence(&runtime->damiao_drivers[index]);
         ret = motor_owner_disable(&runtime->damiao_motors[index]);
         if (ret != OM_OK)
         {
@@ -286,8 +421,68 @@ OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
         }
     }
 
+    ret = mct_runtime_observe_non_operational_p1010b(runtime);
+    if (ret != OM_OK)
+    {
+        last_error = ret;
+    }
+
+    if (motor_receive_all() != OM_OK)
+    {
+        last_error = OM_ERROR;
+    }
+
+    mct_runtime_update_non_operational_disable_confirmation(runtime);
+
     (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
     return last_error;
+}
+
+OmRet mct_runtime_enter_operational_state(MctRuntime* runtime)
+{
+    if (runtime == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    mct_runtime_reset_loop_state(runtime);
+    motor_tx_dispatch_init();
+    mct_runtime_clear_tx_dispatch_state();
+    motor_recovery_rearm_registered_entries();
+    (void)mct_prepare_startup_motors(runtime);
+    motor_recovery_arm_initial_grace();
+    return OM_OK;
+}
+
+OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
+{
+    if (runtime == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    mct_runtime_reset_loop_state(runtime);
+    mct_runtime_clear_tx_dispatch_state();
+    return mct_runtime_apply_non_operational_outputs(runtime);
+}
+
+OmRet mct_runtime_run_non_operational_cycle(MctRuntime* runtime)
+{
+    OsalTimeMs now_ms = 0u;
+
+    if (runtime == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    now_ms = osal_time_now_monotonic();
+    if (runtime->last_non_operational_cycle_ms != 0u &&
+        (uint32_t)(now_ms - runtime->last_non_operational_cycle_ms) < MCT_NON_OPERATIONAL_PERIOD_MS)
+    {
+        return OM_OK;
+    }
+
+    return mct_runtime_apply_non_operational_outputs(runtime);
 }
 
 OmRet mct_runtime_init(
@@ -331,15 +526,15 @@ OmRet mct_runtime_init(
         return ret;
     }
 
-    /* 进入正式可控态失败不阻塞 owner 任务启动；
-     * 缺失电机会在后续反馈/恢复链里体现为 offline。
-     */
-    (void)mct_runtime_enter_operational_state(runtime);
-
-    if (event_bus_subscribe(&g_event_bus, EVT_MOTOR_TX_REQUEST, &runtime->tx_request_subscription) != OSAL_OK)
+    ret = task_command_mailbox_init(
+        &runtime->owner_command_mailbox,
+        sizeof(MctOwnerCommand));
+    if (ret != OM_OK)
     {
-        return OM_ERROR;
+        return ret;
     }
+
+    OM_STORE_REL(&runtime->operational_active, 0u);
 
     return OM_OK;
 }
