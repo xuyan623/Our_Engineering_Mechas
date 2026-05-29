@@ -1,110 +1,23 @@
 #include "task/vofa_task/vofa_task.h"
 
-#include "config/app_config.h"
-#include "module/data_pool/data_pool.h"
-#include "task/arm_task/arm_task.h"
-#include "driver/motor/motor.h"
+#include "bsp/bsp_init.h"
+#include "drivers/peripheral/can/pal_can_dev.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "function/vofa/vofa.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
-#include <string.h>
+#include "task/arm_task/arm_task.h"
 
 #define VOFA_TASK_PERIOD_MS                        (10u)
-#define VOFA_CUSTOM_CONTROLLER_CHANNEL_COUNT       (8u)
-#define VOFA_MOTOR_FEEDBACK_COUNT                  (14u)
-#define VOFA_DEBUG_CHANNEL_COUNT                   (3u)
-#define VOFA_CHANNEL_INDEX_CONTROLLER_ONLINE       (0u)
-#define VOFA_CHANNEL_INDEX_WORK_MODE               (1u)
-#define VOFA_CHANNEL_INDEX_ANGLE_Y                 (2u)
-#define VOFA_CHANNEL_INDEX_ANGLE_Z                 (3u)
-#define VOFA_CHANNEL_INDEX_ANGLE_X                 (4u)
-#define VOFA_CHANNEL_INDEX_ANGLE_YAW               (5u)
-#define VOFA_CHANNEL_INDEX_ANGLE_PITCH             (6u)
-#define VOFA_CHANNEL_INDEX_ANGLE_ROLL              (7u)
-#define VOFA_CHANNEL_INDEX_MOTOR_FEEDBACK_BASE     (VOFA_CUSTOM_CONTROLLER_CHANNEL_COUNT)
-#define VOFA_CHANNEL_INDEX_DEBUG_BASE              (VOFA_CHANNEL_INDEX_MOTOR_FEEDBACK_BASE + VOFA_MOTOR_FEEDBACK_COUNT)
-#define VOFA_CHANNEL_INDEX_DEBUG_CHASSIS_MODE      (VOFA_CHANNEL_INDEX_DEBUG_BASE + 0u)
-#define VOFA_CHANNEL_INDEX_DEBUG_ALIGNMENT_DONE    (VOFA_CHANNEL_INDEX_DEBUG_BASE + 1u)
-#define VOFA_CHANNEL_INDEX_DEBUG_CONTROLLER_ONLINE (VOFA_CHANNEL_INDEX_DEBUG_BASE + 2u)
-#define VOFA_CHANNEL_COUNT                         (VOFA_CUSTOM_CONTROLLER_CHANNEL_COUNT + VOFA_MOTOR_FEEDBACK_COUNT + VOFA_DEBUG_CHANNEL_COUNT)
+#define VOFA_CHANNEL_COUNT                         (8u)
 #define VOFA_TASK_UART7_BAUDRATE                   (115200u)
 #define VOFA_TASK_UART7_TX_BUFSIZE                 (128u)
 #define VOFA_TASK_UART7_RX_BUFSIZE                 (64u)
 #define VOFA_TASK_UART7_RX_DRAIN_BUDGET            (32u)
 #define VOFA_TASK_STACK_BYTES                      (512u * OSAL_STACK_WORD_BYTES)
 
-static MotorFeedbackSnapshot g_vofa_feedback_snapshots[VOFA_MOTOR_FEEDBACK_COUNT] = {0};
 static float g_vofa_frame[VOFA_CHANNEL_COUNT] = {0.0f};
-
-static float vofa_task_resolve_pitch2_zero_angle_rad(void)
-{
-    Motor* pitch2_motor = OM_NULL;
-    float pitch2_zero_angle_rad = 0.0f;
-
-    pitch2_motor = motor_find_by_name("pitch2");
-    if (pitch2_motor == OM_NULL)
-    {
-        return 0.0f;
-    }
-
-    if (motor_get_initial_zero_angle_rad(
-            pitch2_motor,
-            &pitch2_zero_angle_rad) != OM_TRUE)
-    {
-        return 0.0f;
-    }
-
-    return pitch2_zero_angle_rad;
-}
-
-static float vofa_task_resolve_roll3_single_turn_rad(void)
-{
-    Motor* roll3_motor = OM_NULL;
-    float roll3_angle_rad = 0.0f;
-
-    roll3_motor = motor_find_by_name("roll3");
-    if (roll3_motor == OM_NULL)
-    {
-        return 0.0f;
-    }
-
-    if (motor_get_single_turn_angle_rad(roll3_motor, &roll3_angle_rad) != OM_TRUE)
-    {
-        return 0.0f;
-    }
-
-    return roll3_angle_rad;
-}
-
-static float vofa_task_convert_feedback_angle_to_action_unit(const MotorFeedbackSnapshot* snapshot)
-{
-    float pitch2_zero_angle_rad = 0.0f;
-
-    if (snapshot == OM_NULL || snapshot->name == OM_NULL)
-    {
-        return 0.0f;
-    }
-
-    if (strcmp(snapshot->name, "pitch1") == 0)
-    {
-        return snapshot->feedback.angle * APP_ARM_PITCH1_TARGET_RATIO;
-    }
-
-    if (strcmp(snapshot->name, "pitch2") == 0)
-    {
-        pitch2_zero_angle_rad = vofa_task_resolve_pitch2_zero_angle_rad();
-        return (pitch2_zero_angle_rad - snapshot->feedback.angle) / APP_ARM_PITCH2_GEAR_RATIO;
-    }
-
-    if (strcmp(snapshot->name, "roll3") == 0)
-    {
-        return vofa_task_resolve_roll3_single_turn_rad();
-    }
-
-    return snapshot->feedback.angle;
-}
 
 static OmRet vofa_task_prepare_uart7(Device* uart7_device)
 {
@@ -146,46 +59,55 @@ static void vofa_task_drain_uart7_rx(Device* uart7_device)
     }
 }
 
-static void vofa_task_fill_frame(float frame[VOFA_CHANNEL_COUNT])
+static float vofa_task_get_can_tx_fifo_used(Device* can_device)
 {
+    const HalCanHandler* can = (const HalCanHandler*)can_device;
+    size_t total_count = 0u;
+
+    if (can_device == OM_NULL)
+    {
+        return 0.0f;
+    }
+
+    total_count = can->cfg.txMsgListBufSize;
+    if (total_count == 0u || can->txHandler.txFifo.freeCount > total_count)
+    {
+        return 0.0f;
+    }
+
+    return (float)(total_count - can->txHandler.txFifo.freeCount);
+}
+
+static void vofa_task_fill_frame(
+    float frame[VOFA_CHANNEL_COUNT],
+    const BspDeviceRegistry* devices)
+{
+    float machine_angle_rad[7] = {0.0f};
     uint32_t index = 0u;
-    uint32_t snapshot_count = 0u;
 
     for (index = 0u; index < VOFA_CHANNEL_COUNT; index++)
     {
         frame[index] = 0.0f;
     }
 
-    frame[VOFA_CHANNEL_INDEX_CONTROLLER_ONLINE] = (float)DP_LOAD_UINT8(&g_data_pool.custom_controller.online);
-    frame[VOFA_CHANNEL_INDEX_WORK_MODE] = (float)DP_LOAD_UINT8(&g_data_pool.custom_controller.work_mode);
-    frame[VOFA_CHANNEL_INDEX_ANGLE_Y] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[0]);
-    frame[VOFA_CHANNEL_INDEX_ANGLE_Z] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[1]);
-    frame[VOFA_CHANNEL_INDEX_ANGLE_X] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[2]);
-    frame[VOFA_CHANNEL_INDEX_ANGLE_YAW] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[3]);
-    frame[VOFA_CHANNEL_INDEX_ANGLE_PITCH] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[4]);
-    frame[VOFA_CHANNEL_INDEX_ANGLE_ROLL] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[5]);
-
-    memset(g_vofa_feedback_snapshots, 0, sizeof(g_vofa_feedback_snapshots));
-    if (motor_copy_feedback_snapshots(
-            g_vofa_feedback_snapshots,
-            VOFA_MOTOR_FEEDBACK_COUNT,
-            &snapshot_count) != OM_OK)
+    if (devices == OM_NULL)
     {
         return;
     }
 
-    for (index = 0u; index < snapshot_count; index++)
-    {
-        frame[VOFA_CHANNEL_INDEX_MOTOR_FEEDBACK_BASE + index] =
-            vofa_task_convert_feedback_angle_to_action_unit(&g_vofa_feedback_snapshots[index]);
-    }
+    (void)arm_task_get_arm_motor_machine_angle_rad_snapshot(machine_angle_rad);
 
-    frame[VOFA_CHANNEL_INDEX_DEBUG_CHASSIS_MODE] =
-        (float)DP_LOAD_UINT8(&g_data_pool.mode.chassis_mode);
-    frame[VOFA_CHANNEL_INDEX_DEBUG_ALIGNMENT_DONE] =
-        (float)arm_task_get_custom_controller_alignment_done();
-    frame[VOFA_CHANNEL_INDEX_DEBUG_CONTROLLER_ONLINE] =
-        (float)DP_LOAD_UINT8(&g_data_pool.custom_controller.online);
+    /* I0-I6: 7 zhou ji gou jiao fan kui (rad), shun xu yu dong zuo biao yi zhi */
+    frame[0] = machine_angle_rad[0]; /* big_yaw   */
+    frame[1] = machine_angle_rad[1]; /* pitch1    */
+    frame[2] = machine_angle_rad[2]; /* pitch2    */
+    frame[3] = machine_angle_rad[3]; /* roll2     */
+    frame[4] = machine_angle_rad[4]; /* pitch3    */
+    frame[5] = machine_angle_rad[5]; /* roll3     */
+    frame[6] = machine_angle_rad[6]; /* grip      */
+
+    /* I7: custom controller takeover bit */
+    frame[7] = (float)arm_task_get_custom_controller_takeover_bit();
 }
 
 static void vofa_task_entry(void* arg)
@@ -196,7 +118,7 @@ static void vofa_task_entry(void* arg)
     while (1)
     {
         vofa_task_drain_uart7_rx(devices->uart7);
-        vofa_task_fill_frame(g_vofa_frame);
+        vofa_task_fill_frame(g_vofa_frame, devices);
         vofa_justfloat_send(devices->uart7, g_vofa_frame, VOFA_CHANNEL_COUNT);
         (void)osal_delay_until(&deadline_cursor_ms, VOFA_TASK_PERIOD_MS, OM_NULL);
     }

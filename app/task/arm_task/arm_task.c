@@ -2,123 +2,33 @@
 
 #include "algorithm/gravity_comp/gravity_comp.h"
 #include "config/app_config.h"
-#include "core/algorithm/controller/pid.h"
 #include "driver/motor/motor.h"
-#include "module/data_pool/data_pool.h"
-#include "module/event_bus/event_bus.h"
+#include "function/math_utils/math_utils.h"
 #include "module/motor_tx_dispatch/motor_tx_dispatch.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
+#include "task/arm_task/arm_task_internal.h"
 #include "task/mode_task/mode_task.h"
+#include "task/motor_communications_task/mct.h"
 #include <string.h>
 
-#define ARM_TASK_PERIOD_MS           (6u)
-#define ARM_TASK_STACK_BYTES         (1024u * OSAL_STACK_WORD_BYTES)
-#define ARM_TASK_PRIORITY            (4u)
-#define ARM_TASK_POSE_MACHINE_COUNT  (7u)
+#define ARM_TASK_PERIOD_MS                           (3u)
+#define ARM_TASK_BIG_YAW_CONTROL_PERIOD_MS           (10u)
+#define ARM_TASK_PITCH1_CONTROL_PERIOD_MS            (10u)
+#define ARM_TASK_PITCH2_CONTROL_PERIOD_MS            (3u)
+#define ARM_TASK_ROLL2_CONTROL_PERIOD_MS             (10u)
+#define ARM_TASK_PITCH3_CONTROL_PERIOD_MS            (10u)
+#define ARM_TASK_ROLL3_CONTROL_PERIOD_MS             (10u)
+#define ARM_TASK_GRIP_CONTROL_PERIOD_MS              (10u)
+#define ARM_TASK_TX_REQUEST_PERIOD_MS                (0u)
+#define ARM_TASK_STACK_BYTES                         (1024u * OSAL_STACK_WORD_BYTES)
+#define ARM_TASK_PRIORITY                            (4u)
+#define ARM_TASK_POSE_MACHINE_COUNT                  (7u)
 #define ARM_TASK_CUSTOM_CONTROLLER_WORK_MODE_ENCODER (0u)
-#define ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT        (6u)
 #define ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD      (0.08f)
-
-/* 机构角姿态表的索引顺序。
- * 保持与旧工程的 Machine_angle 轴顺序一致，便于直接迁移姿态表。
- */
-typedef enum
-{
-    ARM_TASK_MACHINE_BIG_YAW = 0u,
-    ARM_TASK_MACHINE_PITCH1,
-    ARM_TASK_MACHINE_PITCH2,
-    ARM_TASK_MACHINE_ROLL2,
-    ARM_TASK_MACHINE_PITCH3,
-    ARM_TASK_MACHINE_ROLL3,
-    ARM_TASK_MACHINE_GRIP,
-    ARM_TASK_MACHINE_COUNT
-} ArmTaskMachineAxis;
-
-typedef struct
-{
-    ChassisMode chassis_mode;
-    ClampAction clamp_action;
-    ExchangeAction exchange_action;
-    uint8_t primary_turn_ore_flag;
-    uint8_t custom_controller_force_takeover_flag;
-} ArmTaskSnapshot;
-
-typedef struct
-{
-    uint8_t online;
-    uint8_t work_mode;
-    float angle_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT];
-} ArmTaskCustomControllerSnapshot;
-
-/* 机械臂姿态使用当前正式链的“机构角”定义：
- * - big_yaw / pitch1 / pitch2 / roll2 / pitch3 / roll3 / grip：单位 rad
- * - roll3 仍保持 GM6020 单圈物理角语义，但在 arm_task 内部统一存成 rad
- *
- * 后续统一在一个地方映射到当前 motor 抽象层的绝对目标值。
- */
-typedef struct
-{
-    float machine_values[ARM_TASK_MACHINE_COUNT];
-} ArmTaskMachinePose;
-
-typedef struct
-{
-    float big_yaw_rad;
-    float pitch1_rad;
-    float pitch2_rad;
-    float roll2_rad;
-    float pitch3_rad;
-    float roll3_rad;
-    float grip_rad;
-} ArmTaskMotorTargets;
-
-/* arm_task 本地上下文：
- * - 直接持有机械臂各轴电机句柄
- * - 维护 roll3 的双环 PID
- * - 保存最近一次共享控制事实，用于动作时间窗推进
- * - pitch2 零位由 GO8010 owner 锁存，这里只读消费
- */
-typedef struct
-{
-    Motor* big_yaw_motor;
-    Motor* pitch1_motor;
-    Motor* pitch2_motor;
-    Motor* roll2_motor;
-    Motor* pitch3_motor;
-    Motor* roll3_motor;
-    Motor* grip_motor;
-    PidController roll3_angle_pid;
-    PidController roll3_speed_pid;
-    ArmTaskSnapshot last_snapshot;
-    ArmTaskMotorTargets smoothed_targets;
-    OsalTimeMs command_since_ms;
-    OmBool motors_bound_flag;
-    OmBool snapshot_initialized;
-    OmBool smoothed_targets_initialized;
-    OmBool custom_controller_alignment_done;
-    OmBool custom_controller_alignment_failed;
-    OmBool custom_controller_reference_captured;
-    OmBool custom_controller_was_active;
-    OmBool custom_controller_filter_initialized;
-    OsalTimeMs custom_controller_alignment_started_ms;
-    float custom_controller_neutral_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT];
-    float custom_controller_filtered_delta_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT];
-    float custom_controller_roll3_reference_rad;
-    float custom_controller_grip_reference_rad;
-} ArmTaskContext;
-
-typedef enum
-{
-    ARM_TASK_CUSTOM_AXIS_Y = 0u,
-    ARM_TASK_CUSTOM_AXIS_Z,
-    ARM_TASK_CUSTOM_AXIS_X,
-    ARM_TASK_CUSTOM_AXIS_YAW,
-    ARM_TASK_CUSTOM_AXIS_PITCH,
-    ARM_TASK_CUSTOM_AXIS_ROLL,
-} ArmTaskCustomControllerAxis;
+#define ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES (256u)
 
 static const char* g_arm_task_big_yaw_name = "big_yaw";
 static const char* g_arm_task_pitch1_name = "pitch1";
@@ -127,7 +37,13 @@ static const char* g_arm_task_roll2_name = "roll2";
 static const char* g_arm_task_pitch3_name = "pitch3";
 static const char* g_arm_task_roll3_name = "roll3";
 static const char* g_arm_task_grip_name = "grip";
-static volatile uint8_t g_arm_task_custom_controller_alignment_done_debug = 0u;
+volatile uint8_t g_arm_task_custom_controller_alignment_done_debug = 0u;
+ArmTaskContext* g_arm_task_owner_context = OM_NULL;
+static uint8_t g_arm_task_mode_channel_storage
+    [sizeof(ModeTaskControlSnapshot) * ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
+static OmAtomicU8 g_arm_task_mode_channel_ready_flags[ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
+static uint8_t g_arm_task_custom_controller_channel_storage
+    [ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES] = {0};
 /* 自定义控制器原始角度直接进机械臂时，pitch2 会被 6.33 齿比放大。
  * 这里在 arm_task 内先做每轴前处理：
  * - 死区：压掉控制器静止时的小抖动
@@ -166,67 +82,42 @@ static void arm_task_resolve_motor_targets(
  * - 旧工程 roll3 基准是 normal_angle = 271 deg，当前新电机的平衡位改为 213.75 deg
  * - 因此各动作 roll3 目标先按“213.75 + 旧 mode_angle”重算，再转成 rad 存储
  */
+/* sw2=DN / sw2=UP 默认 / CHECK / PITCH3_TORQUE_COLLECTION / CUSTOM_CONTROLLER_NORMAL */
 static const ArmTaskMachinePose g_arm_pose_zero = {
     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 3.7306414f, 0.0f}};
-static const ArmTaskMachinePose g_arm_pose_normal = {
+/* 常驻基础姿态，所有模式均叠加此偏移 */
+const ArmTaskMachinePose g_arm_pose_normal = {
     {0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.0f, 1.8f}};
+/* sw2=MI + sw1=UP + iw上边沿 -> GET_ENERGY_UNIT */
 static const ArmTaskMachinePose g_arm_pose_get_energy = {
     {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 3.7306414f, -1.8f}};
+/* sw2=MI + sw1=UP + iw下边沿 -> GET_ENERGY_UNIT1 */
 static const ArmTaskMachinePose g_arm_pose_get_energy1 = {
     {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 2.1530383f, -1.8f}};
+/* sw2=MI + sw1=MI + iw下边沿 -> GET_ENERGY_UNIT2 */
 static const ArmTaskMachinePose g_arm_pose_get_energy2 = {
     {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, 2.7812520f, -1.8f}};
+/* GET_ENERGY_UNIT 三段动作之第三段 / EXCHANGE PICK_ACTION1 中间态 */
 static const ArmTaskMachinePose g_arm_pose_store_energy = {
     {1.141f, 1.1042f, 1.18567f, 0.016975f, -1.55555f, 2.8489184f, 0.0f}};
+/* GET_ENERGY_UNIT2 二段动作之第二段 / EXCHANGE PICK_ACTION2 中间态 */
 static const ArmTaskMachinePose g_arm_pose_store_energy1 = {
     {-1.9018459f, 1.00080109f, 1.008974f, 0.09136295f, -1.222925131f, 4.0876327f, 0.0f}};
+/* sw2=MI + sw1=MI + iw上边沿 -> EXCHANGE */
 static const ArmTaskMachinePose g_arm_pose_exchange = {
     {0.0f, 0.64218f, 1.0447f, 0.0f, 0.0f, 3.7306414f, 0.0f}};
+/* EXCHANGE 子动作 PICK_ACTION1 后半段（sw1=DN 边沿触发） */
 static const ArmTaskMachinePose g_arm_pose_exchange_pick = {
     {1.041f, 1.2042f, 1.08567f, 0.016975f, -1.55555f, 2.8489184f, -1.8f}};
+/* EXCHANGE 子动作 PICK_ACTION2 后半段（sw1=UP 边沿触发） */
 static const ArmTaskMachinePose g_arm_pose_exchange_pick1 = {
     {-1.90189481f, 1.1f, 1.00948341f, 0.092153325f, -1.363282f, 4.0026160f, -1.8f}};
+/* sw2=MI + sw1=DN + iw上边沿 -> PRIMARY */
 static const ArmTaskMachinePose g_arm_pose_primary = {
     {0.0f, 1.46691f, 2.0053f, 0.1192f, -1.6f, 0.5890486f, 0.0f}};
+/* sw2=UP + sw1=MI + iw上边沿 -> SECONDARY_ORE */
 static const ArmTaskMachinePose g_arm_pose_secondary_ore = {
     {0.0f, 1.48691f, 0.85f, -1.57f, 0.0f, 3.7306414f, 0.0f}};
-
-static float arm_task_clamp_float(float value, float min_value, float max_value)
-{
-    if (value < min_value)
-    {
-        return min_value;
-    }
-    if (value > max_value)
-    {
-        return max_value;
-    }
-    return value;
-}
-
-static float arm_task_rad_to_deg(float angle_rad)
-{
-    return angle_rad * (180.0f / APP_PI);
-}
-
-static float arm_task_deg_to_rad(float angle_deg)
-{
-    return angle_deg * (APP_PI / 180.0f);
-}
-
-static float arm_task_apply_symmetric_deadband_deg(float value_deg, float deadband_deg)
-{
-    if (value_deg > deadband_deg)
-    {
-        return value_deg - deadband_deg;
-    }
-    if (value_deg < -deadband_deg)
-    {
-        return value_deg + deadband_deg;
-    }
-
-    return 0.0f;
-}
 
 static void arm_task_preprocess_custom_controller_delta_deg(
     ArmTaskContext* context,
@@ -246,10 +137,11 @@ static void arm_task_preprocess_custom_controller_delta_deg(
             controller_snapshot->angle_deg[axis_index] -
             context->custom_controller_neutral_deg[axis_index];
         const float deadbanded_delta_deg =
-            arm_task_apply_symmetric_deadband_deg(
+            math_utils_apply_symmetric_deadband(
                 raw_delta_deg,
                 g_arm_task_custom_controller_deadband_deg[axis_index]);
 
+        // 首次运行时直接使用死区处理后的值初始化滤波器
         if (context->custom_controller_filter_initialized != OM_TRUE)
         {
             context->custom_controller_filtered_delta_deg[axis_index] =
@@ -257,6 +149,7 @@ static void arm_task_preprocess_custom_controller_delta_deg(
         }
         else
         {
+            // 使用一阶低通滤波器平滑角度变化
             const float current_filtered_deg =
                 context->custom_controller_filtered_delta_deg[axis_index];
             const float alpha =
@@ -274,106 +167,73 @@ static void arm_task_preprocess_custom_controller_delta_deg(
     context->custom_controller_filter_initialized = OM_TRUE;
 }
 
-static float arm_task_normalize_deg(float angle_deg)
+static void arm_task_drain_mode_snapshots(ArmTaskContext* context)
 {
-    while (angle_deg > 180.0f)
-    {
-        angle_deg -= 360.0f;
-    }
-    while (angle_deg <= -180.0f)
-    {
-        angle_deg += 360.0f;
-    }
-    return angle_deg;
-}
+    ModeTaskControlSnapshot snapshot = {0};
 
-static float arm_task_resolve_nearest_equivalent_deg(float target_deg, float reference_deg)
-{
-    float target_normalized_deg = arm_task_normalize_deg(target_deg);
-    float reference_normalized_deg = arm_task_normalize_deg(reference_deg);
-    float delta_deg = target_normalized_deg - reference_normalized_deg;
-
-    while (delta_deg > 180.0f)
-    {
-        target_normalized_deg -= 360.0f;
-        delta_deg -= 360.0f;
-    }
-    while (delta_deg < -180.0f)
-    {
-        target_normalized_deg += 360.0f;
-        delta_deg += 360.0f;
-    }
-
-    return target_normalized_deg + (reference_deg - reference_normalized_deg);
-}
-
-static float arm_task_resolve_nearest_equivalent_rad(float target_rad, float reference_rad)
-{
-    return arm_task_deg_to_rad(
-        arm_task_resolve_nearest_equivalent_deg(
-            arm_task_rad_to_deg(target_rad),
-            arm_task_rad_to_deg(reference_rad)));
-}
-
-static float arm_task_rad_per_s_to_rpm(float speed_rad_per_s)
-{
-    return speed_rad_per_s * (60.0f / (2.0f * APP_PI));
-}
-
-static float arm_task_slew_value(float current_value, float target_value, float max_rate_rad_per_s, float dt_s)
-{
-    float max_step = 0.0f;
-    float delta = 0.0f;
-
-    if (dt_s <= 0.0f || max_rate_rad_per_s <= 0.0f)
-    {
-        return target_value;
-    }
-
-    max_step = max_rate_rad_per_s * dt_s;
-    delta = target_value - current_value;
-
-    if (delta > max_step)
-    {
-        return current_value + max_step;
-    }
-    if (delta < -max_step)
-    {
-        return current_value - max_step;
-    }
-    return target_value;
-}
-
-/* 每轮只读一次共享池快照，后续动作逻辑全部基于这份本地副本展开。 */
-static void arm_task_load_snapshot(ArmTaskSnapshot* snapshot)
-{
-    if (snapshot == OM_NULL)
+    if (context == OM_NULL)
     {
         return;
     }
 
-    snapshot->chassis_mode = (ChassisMode)DP_LOAD_UINT8(&g_data_pool.mode.chassis_mode);
-    snapshot->clamp_action = (ClampAction)DP_LOAD_UINT8(&g_data_pool.action.clamp_action);
-    snapshot->exchange_action = (ExchangeAction)DP_LOAD_UINT8(&g_data_pool.action.exchange_action);
-    snapshot->primary_turn_ore_flag = DP_LOAD_UINT8(&g_data_pool.action.primary_turn_ore_flag);
-    snapshot->custom_controller_force_takeover_flag =
-        DP_LOAD_UINT8(&g_data_pool.action.custom_controller_force_takeover_flag);
+    while (task_mpsc_channel_receive_nonblocking(&context->mode_channel, &snapshot) == OM_OK)
+    {
+        context->latest_mode_snapshot = snapshot;
+        context->mode_snapshot_ready = OM_TRUE;
+    }
 }
 
-static void arm_task_load_custom_controller_snapshot(ArmTaskCustomControllerSnapshot* snapshot)
+static void arm_task_drain_custom_controller_snapshots(ArmTaskContext* context)
+{
+    DpCustomControllerSnapshot snapshot = {0};
+
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    while (task_pipe_channel_receive(&context->custom_controller_channel, &snapshot, 0u) == OM_OK)
+    {
+        context->latest_custom_controller_snapshot = snapshot;
+    }
+}
+
+/* 每轮只读一次本地 latest-cache，正式输入不再从 DataPool 取。 */
+static OmBool arm_task_load_snapshot(
+    const ArmTaskContext* context,
+    ArmTaskSnapshot* snapshot)
+{
+    if (context == OM_NULL || snapshot == OM_NULL || context->mode_snapshot_ready != OM_TRUE)
+    {
+        return OM_FALSE;
+    }
+
+    snapshot->chassis_mode = (ChassisMode)context->latest_mode_snapshot.chassis_mode;
+    snapshot->clamp_action = (ClampAction)context->latest_mode_snapshot.clamp_action;
+    snapshot->exchange_action = (ExchangeAction)context->latest_mode_snapshot.exchange_action;
+    snapshot->primary_turn_ore_flag = context->latest_mode_snapshot.primary_turn_ore_flag;
+    snapshot->custom_controller_force_takeover_flag =
+        context->latest_mode_snapshot.custom_controller_force_takeover_flag;
+    return OM_TRUE;
+}
+
+static void arm_task_load_custom_controller_snapshot(
+    const ArmTaskContext* context,
+    ArmTaskCustomControllerSnapshot* snapshot)
 {
     uint32_t axis_index = 0u;
 
-    if (snapshot == OM_NULL)
+    if (context == OM_NULL || snapshot == OM_NULL)
     {
         return;
     }
 
-    snapshot->online = DP_LOAD_UINT8(&g_data_pool.custom_controller.online);
-    snapshot->work_mode = DP_LOAD_UINT8(&g_data_pool.custom_controller.work_mode);
+    snapshot->online = context->latest_custom_controller_snapshot.online;
+    snapshot->work_mode = context->latest_custom_controller_snapshot.work_mode;
     for (axis_index = 0u; axis_index < ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT; axis_index++)
     {
-        snapshot->angle_deg[axis_index] = DP_LOAD_FLOAT(&g_data_pool.custom_controller.angle_deg[axis_index]);
+        snapshot->angle_deg[axis_index] =
+            context->latest_custom_controller_snapshot.angle_deg[axis_index];
     }
 }
 
@@ -417,28 +277,36 @@ static OmBool arm_task_feedback_online(const MotorFeedback* feedback)
 
 static OmBool arm_task_motor_online(const Motor* motor)
 {
+    if (motor == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (motor->config.vendor == MOTOR_VENDOR_GO8010)
+    {
+        return motor_is_feedback_recent(
+                   motor,
+                   ARM_TASK_GO8010_RECENT_TIMEOUT_MS) == OM_TRUE
+                   ? OM_TRUE
+                   : OM_FALSE;
+    }
+
     return arm_task_feedback_online(motor_get_feedback(motor));
 }
 
-static OmBool arm_task_all_motors_online(const ArmTaskContext* context)
+static OmBool arm_task_roll3_online(const ArmTaskContext* context)
 {
     if (context == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    return (arm_task_motor_online(context->big_yaw_motor) == OM_TRUE &&
-            arm_task_motor_online(context->pitch1_motor) == OM_TRUE &&
-            arm_task_motor_online(context->pitch2_motor) == OM_TRUE &&
-            arm_task_motor_online(context->roll2_motor) == OM_TRUE &&
-            arm_task_motor_online(context->pitch3_motor) == OM_TRUE &&
-            arm_task_motor_online(context->roll3_motor) == OM_TRUE &&
-            arm_task_motor_online(context->grip_motor) == OM_TRUE)
-               ? OM_TRUE
-               : OM_FALSE;
+    return (arm_task_motor_online(context->roll3_motor) == OM_TRUE) ?
+               OM_TRUE :
+               OM_FALSE;
 }
 
-static OmBool arm_task_get_roll3_feedback_angle_rad(
+OmBool arm_task_get_roll3_feedback_angle_rad(
     const ArmTaskContext* context,
     float* angle_rad)
 {
@@ -550,10 +418,31 @@ static OmRet arm_task_try_bind_motors(ArmTaskContext* context)
     return OM_OK;
 }
 
+static OmRet arm_task_restore_control_modes(ArmTaskContext* context)
+{
+    if (context == OM_NULL || context->motors_bound_flag != OM_TRUE)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    if (motor_set_control_mode(context->big_yaw_motor, MOTOR_CONTROL_MODE_ANGLE) != OM_OK ||
+        motor_set_control_mode(context->pitch1_motor, MOTOR_CONTROL_MODE_ANGLE) != OM_OK ||
+        motor_set_control_mode(context->pitch2_motor, MOTOR_CONTROL_MODE_ANGLE) != OM_OK ||
+        motor_set_control_mode(context->roll2_motor, MOTOR_CONTROL_MODE_ANGLE) != OM_OK ||
+        motor_set_control_mode(context->pitch3_motor, MOTOR_CONTROL_MODE_ANGLE) != OM_OK ||
+        motor_set_control_mode(context->grip_motor, MOTOR_CONTROL_MODE_ANGLE) != OM_OK ||
+        motor_set_control_mode(context->roll3_motor, MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
+    {
+        return OM_ERROR;
+    }
+
+    return OM_OK;
+}
+
 /* pitch2 的绝对位置零位由 GO8010 owner 在正式通信 bring-up 中锁存。
  * arm_task 只读这个基准，不再自己维护初始化事实。
  */
-static OmBool arm_task_get_pitch2_zero_angle_rad(
+OmBool arm_task_get_pitch2_zero_angle_rad(
     const ArmTaskContext* context,
     float* pitch2_zero_angle_rad)
 {
@@ -637,6 +526,17 @@ static void arm_task_refresh_smoothed_targets_from_feedback(ArmTaskContext* cont
     context->smoothed_targets_initialized = OM_TRUE;
 }
 
+static void arm_task_clear_smoothed_targets(ArmTaskContext* context)
+{
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    memset(&context->smoothed_targets, 0, sizeof(context->smoothed_targets));
+    context->smoothed_targets_initialized = OM_FALSE;
+}
+
 static void arm_task_reset_custom_controller_state(ArmTaskContext* context)
 {
     uint32_t axis_index = 0u;
@@ -663,7 +563,19 @@ static void arm_task_apply_custom_controller_alignment_pose(
     ArmTaskContext* context,
     ArmTaskMachinePose* pose)
 {
+    float big_yaw_target_rad = 0.0f;
+    float pitch1_target_motor_rad = 0.0f;
+    float pitch2_target_motor_rad = 0.0f;
+    float roll2_target_rad = 0.0f;
+    float pitch3_target_rad = 0.0f;
+    float roll3_target_rad = 0.0f;
     float grip_target_rad = 0.0f;
+    float pitch2_zero_angle_rad = 0.0f;
+    const MotorFeedback* big_yaw_feedback = OM_NULL;
+    const MotorFeedback* pitch1_feedback = OM_NULL;
+    const MotorFeedback* pitch2_feedback = OM_NULL;
+    const MotorFeedback* roll2_feedback = OM_NULL;
+    const MotorFeedback* pitch3_feedback = OM_NULL;
     const MotorFeedback* grip_feedback = OM_NULL;
 
     if (context == OM_NULL || pose == OM_NULL)
@@ -675,15 +587,68 @@ static void arm_task_apply_custom_controller_alignment_pose(
 
     if (context->smoothed_targets_initialized == OM_TRUE)
     {
+        big_yaw_target_rad = context->smoothed_targets.big_yaw_rad;
+        pitch1_target_motor_rad = context->smoothed_targets.pitch1_rad;
+        pitch2_target_motor_rad = context->smoothed_targets.pitch2_rad;
+        roll2_target_rad = context->smoothed_targets.roll2_rad;
+        pitch3_target_rad = context->smoothed_targets.pitch3_rad;
+        roll3_target_rad = context->smoothed_targets.roll3_rad;
         grip_target_rad = context->smoothed_targets.grip_rad;
     }
     else
     {
+        big_yaw_feedback = motor_get_feedback(context->big_yaw_motor);
+        big_yaw_target_rad =
+            (big_yaw_feedback != OM_NULL) ? big_yaw_feedback->angle : 0.0f;
+
+        pitch1_feedback = motor_get_feedback(context->pitch1_motor);
+        pitch1_target_motor_rad =
+            (pitch1_feedback != OM_NULL) ? pitch1_feedback->angle : 0.0f;
+
+        pitch2_feedback = motor_get_feedback(context->pitch2_motor);
+        pitch2_target_motor_rad =
+            (pitch2_feedback != OM_NULL) ? pitch2_feedback->angle : 0.0f;
+
+        roll2_feedback = motor_get_feedback(context->roll2_motor);
+        roll2_target_rad =
+            (roll2_feedback != OM_NULL) ? roll2_feedback->angle : 0.0f;
+
+        pitch3_feedback = motor_get_feedback(context->pitch3_motor);
+        pitch3_target_rad =
+            (pitch3_feedback != OM_NULL) ? pitch3_feedback->angle : 0.0f;
+
+        if (arm_task_get_roll3_feedback_angle_rad(context, &roll3_target_rad) != OM_TRUE)
+        {
+            roll3_target_rad = g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_ROLL3];
+        }
+
         grip_feedback = motor_get_feedback(context->grip_motor);
         grip_target_rad =
             (grip_feedback != OM_NULL) ? grip_feedback->angle : g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP];
     }
 
+    if (arm_task_get_pitch2_zero_angle_rad(context, &pitch2_zero_angle_rad) != OM_TRUE)
+    {
+        pitch2_zero_angle_rad = pitch2_target_motor_rad;
+    }
+
+    /* 校准期保持当前整臂姿态：
+     * - 不再把手臂拖到固定对齐姿态
+     * - 等当前姿态稳定后，再以此姿态捕获 controller neutral 并接管
+     */
+    pose->machine_values[ARM_TASK_MACHINE_BIG_YAW] =
+        big_yaw_target_rad - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_BIG_YAW];
+    pose->machine_values[ARM_TASK_MACHINE_PITCH1] =
+        (pitch1_target_motor_rad / APP_ARM_PITCH1_TARGET_RATIO) -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH1];
+    pose->machine_values[ARM_TASK_MACHINE_PITCH2] =
+        ((pitch2_target_motor_rad - pitch2_zero_angle_rad) / (-APP_ARM_PITCH2_GEAR_RATIO)) -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH2];
+    pose->machine_values[ARM_TASK_MACHINE_ROLL2] =
+        roll2_target_rad - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_ROLL2];
+    pose->machine_values[ARM_TASK_MACHINE_PITCH3] =
+        pitch3_target_rad - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH3];
+    pose->machine_values[ARM_TASK_MACHINE_ROLL3] = roll3_target_rad;
     pose->machine_values[ARM_TASK_MACHINE_GRIP] =
         grip_target_rad - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP];
 }
@@ -692,88 +657,49 @@ static OmBool arm_task_custom_controller_alignment_reached(ArmTaskContext* conte
 {
     ArmTaskMachinePose alignment_pose = {0};
     ArmTaskMotorTargets targets = {0};
-    const MotorFeedback* feedback = OM_NULL;
-    float error_rad = 0.0f;
-    float pitch2_feedback_joint_rad = 0.0f;
-    float pitch2_target_joint_rad = 0.0f;
+    const MotorFeedback* big_yaw_feedback = OM_NULL;
+    const MotorFeedback* pitch1_feedback = OM_NULL;
+    const MotorFeedback* pitch2_feedback = OM_NULL;
+    const MotorFeedback* roll2_feedback = OM_NULL;
+    const MotorFeedback* pitch3_feedback = OM_NULL;
     float roll3_feedback_rad = 0.0f;
+    float pitch2_zero_angle_rad = 0.0f;
+    const float alignment_threshold_rad = 0.10471976f;
     float roll3_target_rad = 0.0f;
-    float roll3_error_rad = 0.0f;
 
     if (context == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    if (arm_task_all_motors_online(context) != OM_TRUE)
+    big_yaw_feedback = motor_get_feedback(context->big_yaw_motor);
+    pitch1_feedback = motor_get_feedback(context->pitch1_motor);
+    pitch2_feedback = motor_get_feedback(context->pitch2_motor);
+    roll2_feedback = motor_get_feedback(context->roll2_motor);
+    pitch3_feedback = motor_get_feedback(context->pitch3_motor);
+    if (arm_task_motor_online(context->big_yaw_motor) != OM_TRUE ||
+        arm_task_motor_online(context->pitch1_motor) != OM_TRUE ||
+        arm_task_motor_online(context->pitch2_motor) != OM_TRUE ||
+        arm_task_motor_online(context->roll2_motor) != OM_TRUE ||
+        arm_task_motor_online(context->pitch3_motor) != OM_TRUE ||
+        arm_task_roll3_online(context) != OM_TRUE)
     {
         return OM_FALSE;
     }
 
     arm_task_apply_custom_controller_alignment_pose(context, &alignment_pose);
     arm_task_resolve_motor_targets(context, &alignment_pose, &targets);
-    pitch2_target_joint_rad =
-        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH2] +
-        alignment_pose.machine_values[ARM_TASK_MACHINE_PITCH2];
 
-    feedback = motor_get_feedback(context->big_yaw_motor);
-    if (feedback == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-    error_rad = feedback->angle - targets.big_yaw_rad;
-    if (error_rad > ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD ||
-        error_rad < -ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD)
+    if (arm_task_get_pitch2_zero_angle_rad(context, &pitch2_zero_angle_rad) != OM_TRUE)
     {
         return OM_FALSE;
     }
 
-    feedback = motor_get_feedback(context->pitch1_motor);
-    if (feedback == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-    error_rad = feedback->angle - targets.pitch1_rad;
-    if (error_rad > ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD ||
-        error_rad < -ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD)
-    {
-        return OM_FALSE;
-    }
-
-    if (arm_task_get_pitch2_joint_feedback_rad(context, &pitch2_feedback_joint_rad) != OM_TRUE)
-    {
-        return OM_FALSE;
-    }
-    error_rad = pitch2_feedback_joint_rad - pitch2_target_joint_rad;
-    /* pitch2 走 GO8010 + 6.33 齿比，回位时关节侧会有更明显的零位抖动和齿隙残差。
-     * 自动对齐这里放宽一点，只影响“是否允许进入接管”，不改变正式控制精度。
-     */
-    if (error_rad > 0.10f ||
-        error_rad < -0.10f)
-    {
-        return OM_FALSE;
-    }
-
-    feedback = motor_get_feedback(context->roll2_motor);
-    if (feedback == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-    error_rad = feedback->angle - targets.roll2_rad;
-    if (error_rad > ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD ||
-        error_rad < -ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD)
-    {
-        return OM_FALSE;
-    }
-
-    feedback = motor_get_feedback(context->pitch3_motor);
-    if (feedback == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-    error_rad = feedback->angle - targets.pitch3_rad;
-    if (error_rad > ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD ||
-        error_rad < -ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD)
+    if (math_utils_abs_float(targets.big_yaw_rad - big_yaw_feedback->angle) > alignment_threshold_rad ||
+        math_utils_abs_float(targets.pitch1_rad - pitch1_feedback->angle) > alignment_threshold_rad ||
+        math_utils_abs_float(targets.pitch2_rad - pitch2_feedback->angle) > alignment_threshold_rad ||
+        math_utils_abs_float(targets.roll2_rad - roll2_feedback->angle) > alignment_threshold_rad ||
+        math_utils_abs_float(targets.pitch3_rad - pitch3_feedback->angle) > alignment_threshold_rad)
     {
         return OM_FALSE;
     }
@@ -784,11 +710,8 @@ static OmBool arm_task_custom_controller_alignment_reached(ArmTaskContext* conte
     }
 
     roll3_target_rad =
-        arm_task_resolve_nearest_equivalent_rad(targets.roll3_rad, roll3_feedback_rad);
-    roll3_error_rad = roll3_target_rad - roll3_feedback_rad;
-
-    return (roll3_error_rad <= 0.10471976f &&
-            roll3_error_rad >= -0.10471976f)
+        math_utils_resolve_nearest_equivalent_rad(targets.roll3_rad, roll3_feedback_rad);
+    return (math_utils_abs_float(roll3_target_rad - roll3_feedback_rad) <= alignment_threshold_rad)
                ? OM_TRUE
                : OM_FALSE;
 }
@@ -914,18 +837,18 @@ static void arm_task_apply_custom_controller_pose(
      * - I7(Roll)  -> roll3
      */
     pose->machine_values[ARM_TASK_MACHINE_BIG_YAW] =
-        arm_task_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_Y]);
+        math_utils_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_Y]);
     pose->machine_values[ARM_TASK_MACHINE_PITCH1] =
-        arm_task_deg_to_rad(-filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_Z]);
+        math_utils_deg_to_rad(-filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_Z]);
     pose->machine_values[ARM_TASK_MACHINE_PITCH2] =
-        arm_task_deg_to_rad(-filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_X]);
+        math_utils_deg_to_rad(-filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_X]);
     pose->machine_values[ARM_TASK_MACHINE_ROLL2] =
-        arm_task_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_YAW]);
+        math_utils_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_YAW]);
     pose->machine_values[ARM_TASK_MACHINE_PITCH3] =
-        arm_task_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_PITCH]);
+        math_utils_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_PITCH]);
     pose->machine_values[ARM_TASK_MACHINE_ROLL3] =
         context->custom_controller_roll3_reference_rad +
-        arm_task_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_ROLL]);
+        math_utils_deg_to_rad(filtered_delta_deg[ARM_TASK_CUSTOM_AXIS_ROLL]);
     pose->machine_values[ARM_TASK_MACHINE_GRIP] =
         context->custom_controller_grip_reference_rad -
         g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP];
@@ -1325,7 +1248,7 @@ static void arm_task_compute_gravity_feedforward(
         pitch2_zero_angle_rad,
         pitch3_angle_rad,
         roll2_angle_rad);
-    *pitch2_torque_ff = arm_task_clamp_float(
+    *pitch2_torque_ff = math_utils_clamp_float(
         *pitch2_torque_ff,
         APP_ARM_PITCH2_GRAVITY_FF_MIN,
         APP_ARM_PITCH2_GRAVITY_FF_MAX);
@@ -1342,6 +1265,9 @@ static void arm_task_compute_gravity_feedforward(
         pitch2_zero_angle_rad,
         pitch3_angle_rad,
         roll2_angle_rad);
+#if (APP_ARM_PITCH3_ENABLE_GRAVITY_FF == 0u)
+    *pitch3_torque_ff = 0.0f;
+#endif
     *roll2_torque_ff = roll2_grav_torque_calculate(
         pitch1_angle_rad,
         pitch2_angle_rad,
@@ -1350,58 +1276,80 @@ static void arm_task_compute_gravity_feedforward(
         roll2_angle_rad);
 }
 
+/**
+ * @brief 更新机械臂平滑目标值，对各个关节轴的目标角度进行速率限制平滑处理
+ * 
+ * 该函数使用斜坡滤波(slew rate limiting)算法，将期望的目标角度按照各关节的最大角速度限制
+ * 进行平滑过渡，避免电机控制指令突变。同时会先从反馈刷新平滑目标值的基准状态。
+ * 
+ * 对于roll3轴，会先解析最近等效角度以处理角度环绕问题，确保平滑过渡的正确性。
+ * 
+ * @param context 机械臂任务上下文指针，包含当前平滑目标状态和各轴配置信息
+ * @param desired_targets 期望的电机目标值指针，包含所有关节轴的目标角度(rad)
+ * @param current_tick_s 当前时间步长(秒)，用于计算允许的最大角度变化量
+ * 
+ * @note 如果context或desired_targets为空指针，函数直接返回不执行任何操作
+ * @note 各轴的最大角速度限制由APP_ARM_*_MAX_RATE_RAD_PER_S宏定义指定
+ */
 static void arm_task_update_smoothed_targets(
     ArmTaskContext* context,
     const ArmTaskMotorTargets* desired_targets,
     float current_tick_s)
 {
+    /* 参数有效性检查 */
     if (context == OM_NULL || desired_targets == OM_NULL)
     {
         return;
     }
 
+    /* 从电机反馈刷新平滑目标值的基准状态 */
     arm_task_refresh_smoothed_targets_from_feedback(context);
 
+    /* 对各关节轴应用斜坡滤波，限制角速度在允许范围内 */
     context->smoothed_targets.big_yaw_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.big_yaw_rad,
             desired_targets->big_yaw_rad,
             APP_ARM_BIG_YAW_MAX_RATE_RAD_PER_S,
             current_tick_s);
     context->smoothed_targets.pitch1_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.pitch1_rad,
             desired_targets->pitch1_rad,
             APP_ARM_PITCH1_MAX_RATE_RAD_PER_S,
             current_tick_s);
     context->smoothed_targets.pitch2_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.pitch2_rad,
             desired_targets->pitch2_rad,
             APP_ARM_PITCH2_MAX_RATE_RAD_PER_S,
             current_tick_s);
     context->smoothed_targets.roll2_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.roll2_rad,
             desired_targets->roll2_rad,
             APP_ARM_ROLL2_MAX_RATE_RAD_PER_S,
             current_tick_s);
     context->smoothed_targets.pitch3_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.pitch3_rad,
-            desired_targets->pitch3_rad,
+            math_utils_resolve_nearest_equivalent_rad(
+                desired_targets->pitch3_rad,
+                context->smoothed_targets.pitch3_rad),
             APP_ARM_PITCH3_MAX_RATE_RAD_PER_S,
             current_tick_s);
+
+    /* roll3轴需要特殊处理：先解析最近等效角度以处理角度环绕问题 */
     context->smoothed_targets.roll3_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.roll3_rad,
-            arm_task_resolve_nearest_equivalent_rad(
+            math_utils_resolve_nearest_equivalent_rad(
                 desired_targets->roll3_rad,
                 context->smoothed_targets.roll3_rad),
             APP_ARM_ROLL3_MAX_RATE_RAD_PER_S,
             current_tick_s);
     context->smoothed_targets.grip_rad =
-        arm_task_slew_value(
+        math_utils_slew_value(
             context->smoothed_targets.grip_rad,
             desired_targets->grip_rad,
             APP_ARM_GRIP_MAX_RATE_RAD_PER_S,
@@ -1441,7 +1389,7 @@ static void arm_task_apply_hold_angle_target(
     }
 
     feedback = motor_get_feedback(motor);
-    if (arm_task_feedback_online(feedback) != OM_TRUE)
+    if (arm_task_motor_online(motor) != OM_TRUE)
     {
         arm_task_apply_angle_target(motor, 0.0f, 0.0f, 0.0f, 0.0f);
         return;
@@ -1450,18 +1398,202 @@ static void arm_task_apply_hold_angle_target(
     arm_task_apply_angle_target(motor, feedback->angle, kp, kd, 0.0f);
 }
 
-/* roll3 仍沿用旧工程的双环思路。
- * 当前 motor 层没有 DJI 的 angle mode，因此这里直接算到电流目标。
- */
-static void arm_task_apply_roll3_target(ArmTaskContext* context, float target_roll3_rad, float current_tick_s)
+static void arm_task_reset_axis_control_state(ArmTaskContext* context)
+{
+    if (context == OM_NULL)
+    {
+        return;
+    }
+
+    pid_reset(&context->roll3_angle_pid);
+    pid_reset(&context->roll3_speed_pid);
+    context->last_big_yaw_control_ms = 0u;
+    context->last_pitch1_control_ms = 0u;
+    context->last_pitch2_control_ms = 0u;
+    context->last_roll2_control_ms = 0u;
+    context->last_pitch3_control_ms = 0u;
+    context->last_roll3_control_ms = 0u;
+    context->last_grip_control_ms = 0u;
+}
+
+static OmBool arm_task_should_run_big_yaw_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_big_yaw_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_big_yaw_control_ms) <
+            ARM_TASK_BIG_YAW_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_big_yaw_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static OmBool arm_task_should_run_pitch1_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_pitch1_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_pitch1_control_ms) <
+            ARM_TASK_PITCH1_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_pitch1_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static OmBool arm_task_should_run_pitch2_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_pitch2_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_pitch2_control_ms) <
+            ARM_TASK_PITCH2_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_pitch2_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static OmBool arm_task_should_run_roll2_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_roll2_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_roll2_control_ms) <
+            ARM_TASK_ROLL2_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_roll2_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static OmBool arm_task_should_run_pitch3_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_pitch3_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_pitch3_control_ms) <
+            ARM_TASK_PITCH3_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_pitch3_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static OmBool arm_task_should_run_roll3_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_roll3_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_roll3_control_ms) <
+            ARM_TASK_ROLL3_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_roll3_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static OmBool arm_task_pitch2_zero_ready(const ArmTaskContext* context)
+{
+    float zero_angle_rad = 0.0f;
+
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    return arm_task_get_pitch2_zero_angle_rad(context, &zero_angle_rad);
+}
+
+static OmBool arm_task_should_run_grip_control(
+    ArmTaskContext* context,
+    OsalTimeMs now_ms)
+{
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (context->last_grip_control_ms != 0u &&
+        (uint32_t)(now_ms - context->last_grip_control_ms) <
+            ARM_TASK_GRIP_CONTROL_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_grip_control_ms = now_ms;
+    return OM_TRUE;
+}
+
+static void arm_task_apply_current_command(
+    Motor* motor,
+    float current)
+{
+    if (motor == OM_NULL)
+    {
+        return;
+    }
+
+    (void)motor_set_current(motor, current);
+    (void)motor_control_compute(motor);
+}
+
+static void arm_task_apply_roll3_target(
+    ArmTaskContext* context,
+    float target_angle_rad,
+    float current_tick_s)
 {
     const MotorFeedback* feedback = OM_NULL;
-    float angle_feedback_rad = 0.0f;
-    float angle_feedback_deg = 0.0f;
-    float target_roll3_deg = 0.0f;
-    float speed_feedback_rpm = 0.0f;
-    float speed_reference_rpm = 0.0f;
-    float current_command = 0.0f;
+    float feedback_angle_rad = 0.0f;
+    float nearest_target_angle_rad = 0.0f;
+    float target_speed_rpm = 0.0f;
+    float feedback_angle_deg = 0.0f;
+    float target_angle_deg = 0.0f;
+    float feedback_speed_rpm = 0.0f;
+    float command_current = 0.0f;
 
     if (context == OM_NULL || context->roll3_motor == OM_NULL)
     {
@@ -1469,47 +1601,78 @@ static void arm_task_apply_roll3_target(ArmTaskContext* context, float target_ro
     }
 
     feedback = motor_get_feedback(context->roll3_motor);
-    if (feedback == OM_NULL || arm_task_feedback_online(feedback) != OM_TRUE ||
-        arm_task_get_roll3_feedback_angle_rad(context, &angle_feedback_rad) != OM_TRUE)
+    if (arm_task_feedback_online(feedback) != OM_TRUE ||
+        arm_task_get_roll3_feedback_angle_rad(context, &feedback_angle_rad) != OM_TRUE)
     {
-        arm_task_apply_angle_target(context->roll3_motor, 0.0f, 0.0f, 0.0f, 0.0f);
+        arm_task_apply_current_command(context->roll3_motor, 0.0f);
         return;
     }
 
-    angle_feedback_deg = arm_task_rad_to_deg(angle_feedback_rad);
-    target_roll3_deg =
-        arm_task_resolve_nearest_equivalent_deg(
-            arm_task_rad_to_deg(target_roll3_rad),
-            angle_feedback_deg);
-    speed_feedback_rpm = arm_task_rad_per_s_to_rpm(feedback->speed);
-    speed_reference_rpm =
-        pid_compute(
-            &context->roll3_angle_pid,
-            target_roll3_deg,
-            angle_feedback_deg,
-            current_tick_s);
-    current_command =
-        pid_compute(
-            &context->roll3_speed_pid,
-            speed_reference_rpm,
-            speed_feedback_rpm,
-            current_tick_s);
+    nearest_target_angle_rad =
+        math_utils_resolve_nearest_equivalent_rad(
+            target_angle_rad,
+            feedback_angle_rad);
+    feedback_angle_deg = math_utils_rad_to_deg(feedback_angle_rad);
+    target_angle_deg = math_utils_rad_to_deg(nearest_target_angle_rad);
+    feedback_speed_rpm = math_utils_rad_per_s_to_rpm(feedback->speed);
 
-    (void)motor_set_current(context->roll3_motor, current_command);
-    (void)motor_control_compute(context->roll3_motor);
+    /* roll3/GM6020 延续旧工程已验证的单位语义：
+     * - 外环：角度用 deg
+     * - 内环：速度用 rpm
+     * 这样现有 PID 量级才与 6020 raw current 输出匹配。
+     */
+    target_speed_rpm = pid_compute(
+        &context->roll3_angle_pid,
+        target_angle_deg,
+        feedback_angle_deg,
+        current_tick_s);
+    command_current = pid_compute(
+        &context->roll3_speed_pid,
+        target_speed_rpm,
+        feedback_speed_rpm,
+        current_tick_s);
+    arm_task_apply_current_command(
+        context->roll3_motor,
+        command_current);
 }
 
-static void arm_task_apply_offline_guard_output(ArmTaskContext* context, float current_tick_s)
+static OmBool arm_task_should_submit_tx_request(
+    ArmTaskContext* context,
+    ChassisMode chassis_mode,
+    OsalTimeMs now_ms)
 {
-    const MotorFeedback* roll3_feedback = OM_NULL;
-    float roll3_angle_rad = 0.0f;
-    float roll3_target_rad = 0.0f;
+    if (context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
 
+    if (mct_is_operational_active() != OM_TRUE ||
+        chassis_mode == MODE_CHASSIS_RELEASE)
+    {
+        context->last_tx_request_ms = 0u;
+        return OM_FALSE;
+    }
+
+    if (context->last_tx_request_ms != 0u &&
+        (uint32_t)(now_ms - context->last_tx_request_ms) <
+            ARM_TASK_TX_REQUEST_PERIOD_MS)
+    {
+        return OM_FALSE;
+    }
+
+    context->last_tx_request_ms = now_ms;
+    return OM_TRUE;
+}
+
+/* RELEASE 模式不推进动作，只把各角轴保持在当前反馈位置。 */
+static void arm_task_apply_release_output(ArmTaskContext* context)
+{
     if (context == OM_NULL)
     {
         return;
     }
 
+    arm_task_reset_axis_control_state(context);
     arm_task_apply_hold_angle_target(
         context->big_yaw_motor,
         APP_ARM_BIG_YAW_KP,
@@ -1530,91 +1693,11 @@ static void arm_task_apply_offline_guard_output(ArmTaskContext* context, float c
         context->pitch3_motor,
         APP_ARM_PITCH3_KP,
         APP_ARM_PITCH3_KD);
+    arm_task_apply_current_command(context->roll3_motor, 0.0f);
     arm_task_apply_hold_angle_target(
         context->grip_motor,
         APP_ARM_GRIP_KP,
         APP_ARM_GRIP_KD);
-
-    roll3_feedback = motor_get_feedback(context->roll3_motor);
-    if (arm_task_feedback_online(roll3_feedback) == OM_TRUE &&
-        arm_task_get_roll3_feedback_angle_rad(context, &roll3_angle_rad) == OM_TRUE)
-    {
-        /* 别的机械臂轴离线时，roll3 若仍在线，应继续保持“上一份有效目标”，
-         * 不能把目标直接改成当前角，否则 6020 会在离线保护期间变成跟手模式：
-         * 外力偏转时没有反向力，直到整臂恢复后才突然重新给力。
-         */
-        roll3_target_rad = (context->smoothed_targets_initialized == OM_TRUE) ?
-                               context->smoothed_targets.roll3_rad :
-                               roll3_angle_rad;
-        arm_task_apply_roll3_target(context, roll3_target_rad, current_tick_s);
-    }
-    else
-    {
-        (void)motor_set_current(context->roll3_motor, 0.0f);
-        (void)motor_control_compute(context->roll3_motor);
-    }
-}
-
-/* RELEASE 模式不推进动作，只把各角轴保持在当前反馈位置。 */
-static void arm_task_apply_release_output(ArmTaskContext* context)
-{
-    const MotorFeedback* feedback = OM_NULL;
-
-    if (context == OM_NULL)
-    {
-        return;
-    }
-
-    feedback = motor_get_feedback(context->big_yaw_motor);
-    arm_task_apply_angle_target(
-        context->big_yaw_motor,
-        (feedback != OM_NULL) ? feedback->angle : 0.0f,
-        0.0f,
-        0.0f,
-        0.0f);
-
-    feedback = motor_get_feedback(context->pitch1_motor);
-    arm_task_apply_angle_target(
-        context->pitch1_motor,
-        (feedback != OM_NULL) ? feedback->angle : 0.0f,
-        0.0f,
-        0.0f,
-        0.0f);
-
-    feedback = motor_get_feedback(context->pitch2_motor);
-    arm_task_apply_angle_target(
-        context->pitch2_motor,
-        (feedback != OM_NULL) ? feedback->angle : 0.0f,
-        0.0f,
-        0.0f,
-        0.0f);
-
-    feedback = motor_get_feedback(context->roll2_motor);
-    arm_task_apply_angle_target(
-        context->roll2_motor,
-        (feedback != OM_NULL) ? feedback->angle : 0.0f,
-        0.0f,
-        0.0f,
-        0.0f);
-
-    feedback = motor_get_feedback(context->pitch3_motor);
-    arm_task_apply_angle_target(
-        context->pitch3_motor,
-        (feedback != OM_NULL) ? feedback->angle : 0.0f,
-        0.0f,
-        0.0f,
-        0.0f);
-
-    feedback = motor_get_feedback(context->grip_motor);
-    arm_task_apply_angle_target(
-        context->grip_motor,
-        (feedback != OM_NULL) ? feedback->angle : 0.0f,
-        0.0f,
-        0.0f,
-        0.0f);
-
-    (void)motor_set_current(context->roll3_motor, 0.0f);
-    (void)motor_control_compute(context->roll3_motor);
 }
 
 /* 带时间窗的动作从“共享控制事实发生变化”那一刻重新计时。 */
@@ -1643,13 +1726,13 @@ static void arm_task_run_once(ArmTaskContext* context)
     ArmTaskCustomControllerSnapshot controller_snapshot = {0};
     ArmTaskMachinePose pose = {0};
     ArmTaskMotorTargets targets = {0};
+    const float current_tick_s = ((float)ARM_TASK_PERIOD_MS) / 1000.0f;
+    const OsalTimeMs now_ms = osal_time_now_monotonic();
+    OsalTimeMs elapsed_ms = 0u;
     float pitch1_torque_ff = 0.0f;
     float pitch2_torque_ff = 0.0f;
     float roll2_torque_ff = 0.0f;
     float pitch3_torque_ff = 0.0f;
-    const float current_tick_s = ((float)ARM_TASK_PERIOD_MS) / 1000.0f;
-    const OsalTimeMs now_ms = osal_time_now_monotonic();
-    OsalTimeMs elapsed_ms = 0u;
     OmBool custom_controller_mode_selected = OM_FALSE;
     OmBool custom_controller_input_ready = OM_FALSE;
     OmBool custom_controller_force_takeover_requested = OM_FALSE;
@@ -1660,6 +1743,14 @@ static void arm_task_run_once(ArmTaskContext* context)
         return;
     }
 
+    arm_task_drain_mode_snapshots(context);
+    arm_task_drain_custom_controller_snapshots(context);
+    if (arm_task_load_snapshot(context, &snapshot) != OM_TRUE)
+    {
+        return;
+    }
+    arm_task_load_custom_controller_snapshot(context, &controller_snapshot);
+
     /* 确保电机已绑定，如果未绑定则尝试绑定 */
     if (context->motors_bound_flag != OM_TRUE)
     {
@@ -1668,11 +1759,19 @@ static void arm_task_run_once(ArmTaskContext* context)
             return;
         }
     }
+    if (mct_is_operational_active() != OM_TRUE)
+    {
+        context->control_modes_armed_for_operational = OM_FALSE;
+    }
+    else if (context->control_modes_armed_for_operational != OM_TRUE)
+    {
+        if (arm_task_restore_control_modes(context) != OM_OK)
+        {
+            return;
+        }
+        context->control_modes_armed_for_operational = OM_TRUE;
+    }
 
-    /* 加载系统状态快照和自定义控制器状态 */
-    arm_task_load_snapshot(&snapshot);
-    arm_task_load_custom_controller_snapshot(&controller_snapshot);
-    
     /* 判断自定义控制器模式是否选中、输入是否就绪、是否请求强制接管 */
     custom_controller_mode_selected =
         (snapshot.chassis_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL) ? OM_TRUE : OM_FALSE;
@@ -1733,15 +1832,11 @@ static void arm_task_run_once(ArmTaskContext* context)
     /* 更新命令计时器 */
     arm_task_update_command_timer(context, &snapshot);
     
-    /* 根据电机在线状态和底盘模式选择不同的控制策略 */
-    if (arm_task_all_motors_online(context) != OM_TRUE)
-    {
-        /* 电机离线时，应用离线保护输出 */
-        context->snapshot_initialized = OM_FALSE;
-        context->smoothed_targets_initialized = OM_FALSE;
-        arm_task_apply_offline_guard_output(context, current_tick_s);
-    }
-    else if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
+    /* 机械臂目标链不应被单个轴的在线状态整体拖死。
+     * 这里先继续推进共享姿态 -> 电机目标 -> 平滑目标，
+     * 再在各轴输出点各自判断 online / hold。
+     */
+    if (snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
     {
         /* RELEASE 会让机械臂失力。重新回到可控模式时，必须从当前反馈重新建目标：
          * - 清掉动作计时，避免时间窗继续沿用上一次动作
@@ -1749,7 +1844,7 @@ static void arm_task_run_once(ArmTaskContext* context)
          * - 清掉自定义控制器接管状态，避免 release 前后的参考残留
          */
         context->snapshot_initialized = OM_FALSE;
-        context->smoothed_targets_initialized = OM_FALSE;
+        arm_task_clear_smoothed_targets(context);
         arm_task_reset_custom_controller_state(context);
 
         /* 底盘释放模式下，应用释放输出 */
@@ -1795,96 +1890,162 @@ static void arm_task_run_once(ArmTaskContext* context)
         
         /* 将机器姿态解析为各电机的目标值 */
         arm_task_resolve_motor_targets(context, &pose, &targets);
-        
         /* 对电机目标进行平滑滤波处理 */
         arm_task_update_smoothed_targets(context, &targets, current_tick_s);
-        
-        /* 计算重力前馈力矩补偿（pitch1-3和roll2） */
         arm_task_compute_gravity_feedforward(
             context,
             &pitch1_torque_ff,
             &pitch2_torque_ff,
             &roll2_torque_ff,
             &pitch3_torque_ff);
-
-        /* 应用大yaw轴角度控制 */
-        arm_task_apply_angle_target(
-            context->big_yaw_motor,
-            context->smoothed_targets.big_yaw_rad,
-            APP_ARM_BIG_YAW_KP,
-            APP_ARM_BIG_YAW_KD,
-            0.0f);
-        
-        /* 应用pitch1轴角度控制（含重力前馈） */
-        arm_task_apply_angle_target(
-            context->pitch1_motor,
-            context->smoothed_targets.pitch1_rad,
-            APP_ARM_PITCH1_KP,
-            APP_ARM_PITCH1_KD,
-            pitch1_torque_ff);
-        
-        /* 应用pitch2轴角度控制（含重力前馈） */
-        arm_task_apply_angle_target(
-            context->pitch2_motor,
-            context->smoothed_targets.pitch2_rad,
-            APP_ARM_PITCH2_KP,
-            APP_ARM_PITCH2_KD,
-            pitch2_torque_ff);
-        
-        /* 应用roll2轴角度控制（含重力前馈） */
-        arm_task_apply_angle_target(
-            context->roll2_motor,
-            context->smoothed_targets.roll2_rad,
-            APP_ARM_ROLL2_KP,
-            APP_ARM_ROLL2_KD,
-            roll2_torque_ff);
-        
-        /* 应用pitch3轴角度控制（含重力前馈） */
-        arm_task_apply_angle_target(
-            context->pitch3_motor,
-            context->smoothed_targets.pitch3_rad,
-            APP_ARM_PITCH3_KP,
-            APP_ARM_PITCH3_KD,
-            pitch3_torque_ff);
-        
-        /* 应用roll3轴目标控制 */
-        arm_task_apply_roll3_target(context, context->smoothed_targets.roll3_rad, current_tick_s);
-        
-        /* 应用夹爪电机角度控制 */
-        arm_task_apply_angle_target(
-            context->grip_motor,
-            context->smoothed_targets.grip_rad,
-            APP_ARM_GRIP_KP,
-            APP_ARM_GRIP_KD,
-            0.0f);
-    }
-
-    /* 提交电机TX数据到发送队列 */
-    (void)motor_tx_dispatch_submit(MOTOR_TX_SOURCE_ARM);
-
-    /* 发布电机TX请求事件，如果失败则上报致命错误并进入死循环 */
-    if (event_bus_publish(&g_event_bus, EVT_MOTOR_TX_REQUEST) != OSAL_OK)
-    {
-        sh_report_fatal(
-            SH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL,
-            "event_bus_publish EVT_MOTOR_TX_REQUEST failed");
-        for (;;)
+        if (arm_task_should_run_big_yaw_control(context, now_ms) == OM_TRUE)
         {
-            osal_sleep_ms(1000u);
+            if (arm_task_motor_online(context->big_yaw_motor) == OM_TRUE)
+            {
+                arm_task_apply_angle_target(
+                    context->big_yaw_motor,
+                    context->smoothed_targets.big_yaw_rad,
+                    APP_ARM_BIG_YAW_KP,
+                    APP_ARM_BIG_YAW_KD,
+                    0.0f);
+            }
+            else
+            {
+                arm_task_apply_hold_angle_target(
+                    context->big_yaw_motor,
+                    APP_ARM_BIG_YAW_KP,
+                    APP_ARM_BIG_YAW_KD);
+            }
+        }
+        if (arm_task_should_run_pitch1_control(context, now_ms) == OM_TRUE)
+        {
+            if (arm_task_motor_online(context->pitch1_motor) == OM_TRUE)
+            {
+                arm_task_apply_angle_target(
+                    context->pitch1_motor,
+                    context->smoothed_targets.pitch1_rad,
+                    APP_ARM_PITCH1_KP,
+                    APP_ARM_PITCH1_KD,
+                    pitch1_torque_ff);
+            }
+            else
+            {
+                arm_task_apply_hold_angle_target(
+                    context->pitch1_motor,
+                    APP_ARM_PITCH1_KP,
+                    APP_ARM_PITCH1_KD);
+            }
+        }
+        if (arm_task_should_run_pitch2_control(context, now_ms) == OM_TRUE)
+        {
+            if (arm_task_motor_online(context->pitch2_motor) == OM_TRUE &&
+                arm_task_pitch2_zero_ready(context) == OM_TRUE)
+            {
+                arm_task_apply_angle_target(
+                    context->pitch2_motor,
+                    context->smoothed_targets.pitch2_rad,
+                    APP_ARM_PITCH2_KP,
+                    APP_ARM_PITCH2_KD,
+                    pitch2_torque_ff);
+            }
+            else
+            {
+                arm_task_apply_hold_angle_target(
+                    context->pitch2_motor,
+                    APP_ARM_PITCH2_KP,
+                    APP_ARM_PITCH2_KD);
+            }
+        }
+        if (arm_task_should_run_roll2_control(context, now_ms) == OM_TRUE)
+        {
+            if (arm_task_motor_online(context->roll2_motor) == OM_TRUE)
+            {
+                arm_task_apply_angle_target(
+                    context->roll2_motor,
+                    context->smoothed_targets.roll2_rad,
+                    APP_ARM_ROLL2_KP,
+                    APP_ARM_ROLL2_KD,
+                    roll2_torque_ff);
+            }
+            else
+            {
+                arm_task_apply_hold_angle_target(
+                    context->roll2_motor,
+                    APP_ARM_ROLL2_KP,
+                    APP_ARM_ROLL2_KD);
+            }
+        }
+        if (arm_task_should_run_pitch3_control(context, now_ms) == OM_TRUE)
+        {
+            if (arm_task_motor_online(context->pitch3_motor) == OM_TRUE)
+            {
+                arm_task_apply_angle_target(
+                    context->pitch3_motor,
+                    context->smoothed_targets.pitch3_rad,
+                    APP_ARM_PITCH3_KP,
+                    APP_ARM_PITCH3_KD,
+                    pitch3_torque_ff);
+            }
+            else
+            {
+                arm_task_apply_hold_angle_target(
+                    context->pitch3_motor,
+                    APP_ARM_PITCH3_KP,
+                    APP_ARM_PITCH3_KD);
+            }
+        }
+        if (arm_task_should_run_roll3_control(context, now_ms) == OM_TRUE)
+        {
+            arm_task_apply_roll3_target(
+                context,
+                context->smoothed_targets.roll3_rad,
+                current_tick_s);
+        }
+        if (arm_task_should_run_grip_control(context, now_ms) == OM_TRUE)
+        {
+            if (arm_task_motor_online(context->grip_motor) == OM_TRUE)
+            {
+                arm_task_apply_angle_target(
+                    context->grip_motor,
+                    context->smoothed_targets.grip_rad,
+                    APP_ARM_GRIP_KP,
+                    APP_ARM_GRIP_KD,
+                    0.0f);
+            }
+            else
+            {
+                arm_task_apply_hold_angle_target(
+                    context->grip_motor,
+                    APP_ARM_GRIP_KP,
+                    APP_ARM_GRIP_KD);
+            }
         }
     }
+
+    if (arm_task_should_submit_tx_request(
+            context,
+            snapshot.chassis_mode,
+            now_ms) != OM_TRUE)
+    {
+        return;
+    }
+
+    (void)motor_tx_dispatch_submit(MOTOR_TX_SOURCE_ARM);
 }
 
-uint8_t arm_task_get_custom_controller_alignment_done(void)
-{
-    return g_arm_task_custom_controller_alignment_done_debug;
-}
-
-/* 固定周期执行，不阻塞等总线反馈。 */
+    /* 正式输入已经改走通道和 owner latest-cache；这里固定节拍运行。 */
 static void arm_task_entry(void* arg)
 {
     ArmTaskContext* context = (ArmTaskContext*)arg;
     OsalTimeMs deadline_cursor_ms = 0u;
+
+    if (context == OM_NULL)
+    {
+        for (;;)
+        {
+            (void)osal_sleep_ms(1000u);
+        }
+    }
 
     while (1)
     {
@@ -1912,9 +2073,46 @@ OmRet arm_task_start(void)
     }
 
     memset(&arm_task_context, 0, sizeof(arm_task_context));
+    g_arm_task_owner_context = &arm_task_context;
+    arm_task_context.latest_custom_controller_snapshot.online = 0u;
+    arm_task_context.latest_custom_controller_snapshot.work_mode = 0u;
+
+    ret = task_mpsc_channel_init(
+        &arm_task_context.mode_channel,
+        g_arm_task_mode_channel_storage,
+        g_arm_task_mode_channel_ready_flags,
+        sizeof(ModeTaskControlSnapshot),
+        ARM_TASK_MODE_CHANNEL_CAPACITY);
+    if (ret != OM_OK)
+    {
+        g_arm_task_owner_context = OM_NULL;
+        return ret;
+    }
+
+    /* mode 是正式状态 owner 的当前事实，允许在启动时直接种入当前 formal 快照。 */
+    if (mode_task_copy_control_snapshot(&arm_task_context.latest_mode_snapshot) == OM_TRUE)
+    {
+        arm_task_context.mode_snapshot_ready = OM_TRUE;
+    }
+
+    ret = task_pipe_channel_init(
+        &arm_task_context.custom_controller_channel,
+        g_arm_task_custom_controller_channel_storage,
+        ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES,
+        sizeof(DpCustomControllerSnapshot));
+    if (ret != OM_OK)
+    {
+        task_mpsc_channel_deinit(&arm_task_context.mode_channel);
+        g_arm_task_owner_context = OM_NULL;
+        return ret;
+    }
+
     ret = arm_task_init_pids(&arm_task_context);
     if (ret != OM_OK)
     {
+        task_pipe_channel_deinit(&arm_task_context.custom_controller_channel);
+        task_mpsc_channel_deinit(&arm_task_context.mode_channel);
+        g_arm_task_owner_context = OM_NULL;
         return ret;
     }
 
@@ -1925,9 +2123,39 @@ OmRet arm_task_start(void)
         &arm_task_context);
     if (status != OSAL_OK)
     {
+        task_pipe_channel_deinit(&arm_task_context.custom_controller_channel);
+        task_mpsc_channel_deinit(&arm_task_context.mode_channel);
+        g_arm_task_owner_context = OM_NULL;
         arm_task_thread = OM_NULL;
         return OM_ERROR;
     }
 
     return OM_OK;
+}
+
+OmRet arm_task_submit_mode_control_snapshot(
+    const ModeTaskControlSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL || g_arm_task_owner_context == OM_NULL)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    return task_mpsc_channel_submit_nonblocking(
+        &g_arm_task_owner_context->mode_channel,
+        snapshot);
+}
+
+OmRet arm_task_submit_custom_controller_snapshot(
+    const DpCustomControllerSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL || g_arm_task_owner_context == OM_NULL)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    return task_pipe_channel_submit_nonblocking(
+        &g_arm_task_owner_context->custom_controller_channel,
+        snapshot,
+        OM_TRUE);
 }
