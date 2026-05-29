@@ -289,7 +289,6 @@ void damiao_motor_set_mit(DamiaoMotorDrv* motor, float position, float velocity,
     uint16_t kp_raw = 0u;
     uint16_t kd_raw = 0u;
     uint16_t torque_raw = 0u;
-
     if (!motor)
         return;
 

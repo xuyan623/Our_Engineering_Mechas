@@ -180,6 +180,14 @@ static inline uint8_t damiao_motor_get_status(DamiaoMotorDrv* motor)
     return motor->measure.status;
 }
 
+/* 获取上一帧状态码。 */
+static inline uint8_t damiao_motor_get_last_status(DamiaoMotorDrv* motor)
+{
+    if (!motor)
+        return 0u;
+    return motor->measure.lastStatus;
+}
+
 /* 获取最近一次有效反馈时间戳。 */
 static inline uint32_t damiao_motor_get_feedback_timestamp_ms(DamiaoMotorDrv* motor)
 {

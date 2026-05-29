@@ -2,6 +2,7 @@
 
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "osal/osal_time.h"
+#include <math.h>
 #include <string.h>
 
 #define GO8010_DEVICE_NAME_USART6      ("usart6")
@@ -17,6 +18,10 @@
 #define GO8010_KP_MAX                  (500.0f)
 #define GO8010_KD_MIN                  (0.0f)
 #define GO8010_KD_MAX                  (5.0f)
+#define GO8010_FEEDBACK_TORQUE_EPS_NM  (0.5f)
+#define GO8010_FEEDBACK_SPEED_EPS_RAD_S (2.0f)
+#define GO8010_FEEDBACK_POSITION_EPS_RAD (2.0f)
+#define GO8010_FEEDBACK_MAX_JUMP_MARGIN_RAD (1.0f)
 
 /* 直接复用旧工程 PROTOCOL/crc.c 中的 CRC-CCITT 查表。 */
 static const uint16_t g_go8010_crc_ccitt_table[256] = {
@@ -70,6 +75,65 @@ static uint16_t go8010_crc_ccitt(const uint8_t* buffer, size_t length)
     }
 
     return crc;
+}
+
+static OmBool go8010_feedback_values_sane(
+    const Go8010MotorDrv* motor,
+    uint8_t mode,
+    float torque,
+    float speed,
+    float position,
+    uint32_t now_ms)
+{
+    float max_position_step_rad = 0.0f;
+    uint32_t dt_ms = 0u;
+
+    if (motor == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (mode != GO8010_CONTROL_MODE_JOINT)
+    {
+        return OM_FALSE;
+    }
+
+    if (torque < (GO8010_TORQUE_MIN_NM - GO8010_FEEDBACK_TORQUE_EPS_NM) ||
+        torque > (GO8010_TORQUE_MAX_NM + GO8010_FEEDBACK_TORQUE_EPS_NM))
+    {
+        return OM_FALSE;
+    }
+
+    if (speed < (GO8010_SPEED_MIN_RAD_S - GO8010_FEEDBACK_SPEED_EPS_RAD_S) ||
+        speed > (GO8010_SPEED_MAX_RAD_S + GO8010_FEEDBACK_SPEED_EPS_RAD_S))
+    {
+        return OM_FALSE;
+    }
+
+    if (position < (GO8010_POSITION_MIN_RAD - GO8010_FEEDBACK_POSITION_EPS_RAD) ||
+        position > (GO8010_POSITION_MAX_RAD + GO8010_FEEDBACK_POSITION_EPS_RAD))
+    {
+        return OM_FALSE;
+    }
+
+    if (motor->feedback.timestampMs == 0u)
+    {
+        return OM_TRUE;
+    }
+
+    dt_ms = now_ms - motor->feedback.timestampMs;
+    if (dt_ms > 0u && dt_ms <= 200u)
+    {
+        max_position_step_rad =
+            GO8010_SPEED_MAX_RAD_S * ((float)dt_ms / 1000.0f) +
+            GO8010_FEEDBACK_MAX_JUMP_MARGIN_RAD;
+        if (fabsf(position - motor->feedback.position) > max_position_step_rad)
+        {
+            return OM_FALSE;
+        }
+    }
+
+    return OM_TRUE;
 }
 
 static void go8010_drop_rx_cache_prefix(Go8010Bus* bus, size_t drop_length)
@@ -330,6 +394,11 @@ OmRet go8010_parse_feedback(Go8010MotorDrv* motor, const uint8_t* frame, size_t 
     int16_t speed_raw = 0;
     int32_t position_raw = 0;
     uint8_t frame_motor_id = 0u;
+    uint8_t frame_mode = 0u;
+    float torque = 0.0f;
+    float speed = 0.0f;
+    float position = 0.0f;
+    uint32_t now_ms = 0u;
 
     if (motor == OM_NULL || frame == OM_NULL)
     {
@@ -346,19 +415,36 @@ OmRet go8010_parse_feedback(Go8010MotorDrv* motor, const uint8_t* frame, size_t 
     {
         return OM_ERR_CONFLICT;
     }
+    frame_mode = (uint8_t)(frame[2] >> 4);
 
     torque_raw = (int16_t)((uint16_t)frame[3] | ((uint16_t)frame[4] << 8));
     speed_raw = (int16_t)((uint16_t)frame[5] | ((uint16_t)frame[6] << 8));
     position_raw =
         (int32_t)((uint32_t)frame[7] | ((uint32_t)frame[8] << 8) | ((uint32_t)frame[9] << 16) | ((uint32_t)frame[10] << 24));
 
+    torque = (float)torque_raw / 256.0f;
+    speed = ((float)speed_raw * GO8010_PI_TIMES_TWO_APPROX / 256.0f) - GO8010_SPEED_OFFSET_RAD_S;
+    position = (float)position_raw * GO8010_PI_TIMES_TWO_APPROX / 32768.0f;
+    now_ms = osal_time_now_monotonic();
+
+    if (go8010_feedback_values_sane(
+            motor,
+            frame_mode,
+            torque,
+            speed,
+            position,
+            now_ms) != OM_TRUE)
+    {
+        return OM_ERROR;
+    }
+
     motor->feedback.id = frame_motor_id;
-    motor->feedback.mode = (uint8_t)(frame[2] >> 4);
-    motor->feedback.torque = (float)torque_raw / 256.0f;
-    motor->feedback.speed = ((float)speed_raw * GO8010_PI_TIMES_TWO_APPROX / 256.0f) - GO8010_SPEED_OFFSET_RAD_S;
-    motor->feedback.position = (float)position_raw * GO8010_PI_TIMES_TWO_APPROX / 32768.0f;
+    motor->feedback.mode = frame_mode;
+    motor->feedback.torque = torque;
+    motor->feedback.speed = speed;
+    motor->feedback.position = position;
     motor->mode = motor->feedback.mode;
-    go8010_mark_online(motor, osal_time_now_monotonic());
+    go8010_mark_online(motor, now_ms);
 
     return OM_OK;
 }
