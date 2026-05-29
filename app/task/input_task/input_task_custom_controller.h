@@ -1,6 +1,7 @@
 #ifndef NEW_ROBOT_INPUT_TASK_CUSTOM_CONTROLLER_H
 #define NEW_ROBOT_INPUT_TASK_CUSTOM_CONTROLLER_H
 
+#include "module/data_pool/data_pool.h"
 #include "osal/osal_time.h"
 #include "task/input_task/input_task.h"
 #include <stdint.h>
@@ -61,5 +62,7 @@ void input_task_custom_controller_update_online_state(
     InputTaskCustomControllerDebugState* runtime,
     const InputTaskCustomControllerParser* parser,
     OsalTimeMs now_ms);
+void input_task_custom_controller_copy_snapshot(
+    DpCustomControllerSnapshot* snapshot);
 
 #endif

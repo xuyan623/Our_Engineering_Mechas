@@ -9,6 +9,9 @@ typedef struct
     volatile uint32_t rx_available_hint;
     volatile uint32_t frame_count;
     volatile uint32_t invalid_frame_count;
+    volatile uint32_t last_frame_ms;
+    volatile uint32_t last_frame_age_ms;
+    volatile uint8_t online;
 } InputTaskRcDebugState;
 
 /* 自定义控制器输入的最小调试视图：

@@ -2,6 +2,7 @@
 #define NEW_ROBOT_MODE_TASK_H
 
 #include "core/om_def.h"
+#include "module/data_pool/data_pool.h"
 #include <stdint.h>
 
 /* 全局控制模式：
@@ -57,6 +58,82 @@ typedef enum
     MODE_EXCHANGE_PICK_ACTION2,
 } ExchangeAction;
 
+/* 第一层：系统总状态。 */
+typedef enum
+{
+    MODE_TASK_SYSTEM_UNINITIALIZED = 0u,
+    MODE_TASK_SYSTEM_BOARD_INITIALIZING,
+    MODE_TASK_SYSTEM_MOTOR_INITIALIZING,
+    MODE_TASK_SYSTEM_RELEASE,
+    MODE_TASK_SYSTEM_OPERATIONAL,
+} ModeTaskSystemState;
+
+/* 第二层：板级初始化子状态。 */
+typedef enum
+{
+    MODE_TASK_BOARD_INIT_NONE = 0u,
+    MODE_TASK_BOARD_INIT_CAN_INITIALIZING,
+    MODE_TASK_BOARD_INIT_SERIAL_INITIALIZING,
+    MODE_TASK_BOARD_INIT_IMU_INITIALIZING,
+} ModeTaskBoardInitState;
+
+/* 第二层：电机初始化子状态。 */
+typedef enum
+{
+    MODE_TASK_MOTOR_INIT_NONE = 0u,
+    MODE_TASK_MOTOR_INIT_CHASSIS_INITIALIZING,
+    MODE_TASK_MOTOR_INIT_ARM_INITIALIZING,
+} ModeTaskMotorInitState;
+
+/* 第二层：正式控制域。 */
+typedef enum
+{
+    MODE_TASK_CONTROL_DOMAIN_NONE = 0u,
+    MODE_TASK_CONTROL_DOMAIN_RC,
+    MODE_TASK_CONTROL_DOMAIN_CUSTOM,
+} ModeTaskControlDomainState;
+
+/* 第三层：控制链在线状态。 */
+typedef enum
+{
+    MODE_TASK_CONTROL_LINK_OFFLINE = 0u,
+    MODE_TASK_CONTROL_LINK_ONLINE,
+} ModeTaskControlLinkState;
+
+/* 第四层：自定义控制器在线后的行为态。 */
+typedef enum
+{
+    MODE_TASK_CUSTOM_CONTROL_ALIGNING = 0u,
+    MODE_TASK_CUSTOM_CONTROL_TAKEOVER,
+} ModeTaskCustomControlState;
+
+typedef enum
+{
+    MODE_TASK_INIT_PROGRESS_CAN_READY = 0u,
+    MODE_TASK_INIT_PROGRESS_SERIAL_READY,
+    MODE_TASK_INIT_PROGRESS_IMU_READY,
+    MODE_TASK_INIT_PROGRESS_CHASSIS_MOTOR_READY,
+    MODE_TASK_INIT_PROGRESS_ARM_MOTOR_READY,
+} ModeTaskInitProgressKind;
+
+typedef struct
+{
+    uint8_t kind;
+    uint8_t value;
+} ModeTaskInitProgressMessage;
+
+typedef struct
+{
+    uint8_t system_state;
+    uint8_t control_domain_state;
+    uint8_t global_mode;
+    uint8_t chassis_mode;
+    uint8_t clamp_action;
+    uint8_t exchange_action;
+    uint8_t primary_turn_ore_flag;
+    uint8_t custom_controller_force_takeover_flag;
+} ModeTaskControlSnapshot;
+
 /* mode_task 的轻量调试状态：
  * - loop_count：任务循环次数
  * - publish_count：共享模式结果变化并成功发出 EVT_MODE_CHANGED 的次数
@@ -65,6 +142,13 @@ typedef struct
 {
     volatile uint32_t loop_count;
     volatile uint32_t publish_count;
+    volatile uint8_t system_state;
+    volatile uint8_t board_init_state;
+    volatile uint8_t motor_init_state;
+    volatile uint8_t control_domain_state;
+    volatile uint8_t rc_link_state;
+    volatile uint8_t custom_link_state;
+    volatile uint8_t custom_control_state;
 } ModeTaskDebugState;
 
 extern ModeTaskDebugState g_mode_task_debug;
@@ -74,5 +158,17 @@ extern ModeTaskDebugState g_mode_task_debug;
  * @return `OM_OK` 表示启动成功，其他返回值表示初始化或任务创建失败
  */
 OmRet mode_task_start(void);
+
+OmRet mode_task_submit_init_progress(
+    const ModeTaskInitProgressMessage* message);
+
+OmRet mode_task_submit_rc_snapshot(
+    const DpRcSnapshot* snapshot);
+
+OmRet mode_task_submit_custom_controller_snapshot(
+    const DpCustomControllerSnapshot* snapshot);
+
+OmBool mode_task_copy_control_snapshot(
+    ModeTaskControlSnapshot* snapshot);
 
 #endif

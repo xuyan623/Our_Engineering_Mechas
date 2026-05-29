@@ -1,6 +1,8 @@
 #ifndef NEW_ROBOT_INPUT_TASK_RC_H
 #define NEW_ROBOT_INPUT_TASK_RC_H
 
+#include "module/data_pool/data_pool.h"
+#include "osal/osal_time.h"
 #include "task/input_task/input_task.h"
 #include <stdint.h>
 
@@ -9,6 +11,7 @@
 #define INPUT_TASK_DBUS_CHANNEL_MAX_ABS         (660)
 #define INPUT_TASK_DBUS_CHANNEL_DEADBAND        (5)
 #define INPUT_TASK_DBUS_11BIT_MASK              (0x07FFu)
+#define INPUT_TASK_DBUS_FRAME_TIMEOUT_MS        (200u)
 #define INPUT_TASK_USART1_BAUDRATE              (100000u)
 #define INPUT_TASK_USART1_TX_BUFSIZE            (128u)
 #define INPUT_TASK_USART1_RX_BUFSIZE            (1024u)
@@ -41,7 +44,11 @@ typedef struct
 void input_task_rc_reset_runtime(InputTaskRcDebugState* runtime);
 /* 按旧工程 DBUS 位布局把 18 字节整帧解成一份 RC 快照。 */
 OmBool input_task_rc_decode_frame(const uint8_t raw_frame[INPUT_TASK_DBUS_FRAME_LEN], InputTaskRcFrame* frame);
+void input_task_rc_fill_snapshot(const InputTaskRcFrame* frame, DpRcSnapshot* snapshot);
 /* 把解析后的“原始输入事实”写回共享池，不在这里做模式解释。 */
 void input_task_rc_store_to_data_pool(const InputTaskRcFrame* frame);
+void input_task_rc_update_online_state(
+    InputTaskRcDebugState* runtime,
+    OsalTimeMs now_ms);
 
 #endif

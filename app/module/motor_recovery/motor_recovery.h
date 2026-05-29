@@ -1,6 +1,7 @@
 #ifndef NEW_ROBOT_MOTOR_RECOVERY_H
 #define NEW_ROBOT_MOTOR_RECOVERY_H
 
+#include "config/app_config.h"
 #include "core/om_def.h"
 #include "driver/motor/motor.h"
 #include "osal/osal_time.h"
@@ -47,13 +48,15 @@ typedef struct
     OmBool healthy;
 } MotorRecoveryP1010BPredicateSnapshot;
 
+#if (APP_MOTOR_AUTO_RECOVERY_ENABLE != 0u)
+
 /* 清空整个恢复模块上下文。
  * 正式通信任务在 runtime_init 早期调用，确保每次上电从干净状态开始。
  */
 void motor_recovery_reset(void);
 
 /* 将 app 侧对 P1010B 的恢复期默认约束写回 driver。
- * 这里收敛的是同步请求超时、重试次数和 query-mode active report。
+ * 这里收敛的是同步请求超时、重试次数和 active-report 配置。
  */
 void motor_recovery_configure_p1010b_driver(P1010BDriver* driver);
 
@@ -69,19 +72,9 @@ OmRet motor_recovery_register_entry(
 void motor_recovery_notify_damiao_enabled(Motor* motor);
 
 /* P1010B 在 enable 成功后需要一个短暂稳定窗口，
- * 这段时间只允许 query 建立在线时间戳，不应立刻再进恢复或报码。
+ * 这段时间只允许 active report 自然重建在线时间戳，不应立刻再进恢复或报码。
  */
 void motor_recovery_notify_p1010b_enabled(Motor* motor);
-
-/* P1010B 正式链采用 query-mode，因此在线判据应绑定到
- * “本轮 active_query 已经成功”这一事实，而不是依赖底层硬件时间戳。
- */
-void motor_recovery_notify_p1010b_query_ok(Motor* motor, OsalTimeMs timestamp_ms);
-
-/* P1010B 刚完成 enable 或仍处于多步恢复中时，
- * 正式 query 不应马上插进去打断 bring-up。
- */
-OmBool motor_recovery_should_defer_p1010b_query(const Motor* motor);
 
 /* 达妙正在跑恢复步骤时，常规 MIT 目标应短暂让位给恢复帧。
  * 这里只回答“当前这台电机是否该阻断常规目标”，不扩散成公共 Motor 状态。
@@ -116,5 +109,112 @@ OmRet motor_recovery_copy_p1010b_predicate_snapshots(
     MotorRecoveryP1010BPredicateSnapshot* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count);
+
+#else
+
+static inline void motor_recovery_reset(void)
+{
+}
+
+static inline void motor_recovery_configure_p1010b_driver(P1010BDriver* driver)
+{
+    if (driver == OM_NULL)
+    {
+        return;
+    }
+
+    driver->config.requestTimeoutMs = 5u;
+    driver->config.maxRetryCount = 0u;
+    driver->config.activeReport = (P1010BActiveReportConfig){
+        .enable = true,
+        .periodMs = APP_MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS,
+        .dataTypeSlots = {
+            (uint8_t)P1010B_REPORT_DATA_SPEED_RPM,
+            (uint8_t)P1010B_REPORT_DATA_IQ_AMPERE,
+            (uint8_t)P1010B_REPORT_DATA_BUS_VOLTAGE,
+            (uint8_t)P1010B_REPORT_DATA_ABSOLUTE_POSITION,
+        },
+    };
+    driver->runtime.activeReport = driver->config.activeReport;
+    driver->runtime.currentMode = driver->config.defaultMode;
+}
+
+static inline OmRet motor_recovery_register_entry(Motor* motor)
+{
+    static OsalTimeMs g_motor_recovery_disabled_damiao_observe_gate_ms = 0u;
+
+    if (motor != OM_NULL && motor->config.vendor == MOTOR_VENDOR_DAMIAO)
+    {
+        return motor_set_vendor_context(
+            motor,
+            &g_motor_recovery_disabled_damiao_observe_gate_ms);
+    }
+
+    return OM_OK;
+}
+
+static inline void motor_recovery_notify_damiao_enabled(Motor* motor)
+{
+    (void)motor;
+}
+
+static inline void motor_recovery_notify_p1010b_enabled(Motor* motor)
+{
+    (void)motor;
+}
+
+static inline OmBool motor_recovery_should_block_damiao_regular_target(const Motor* motor)
+{
+    (void)motor;
+    return OM_FALSE;
+}
+
+static inline void motor_recovery_arm_initial_grace(void)
+{
+}
+
+static inline void motor_recovery_rearm_registered_entries(void)
+{
+}
+
+static inline void motor_recovery_tick(void)
+{
+}
+
+static inline OmRet motor_recovery_copy_snapshots(
+    MotorRecoverySnapshot* snapshots,
+    uint32_t capacity,
+    uint32_t* snapshot_count)
+{
+    (void)snapshots;
+    (void)capacity;
+
+    if (snapshot_count == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    *snapshot_count = 0u;
+    return OM_OK;
+}
+
+static inline OmRet motor_recovery_copy_p1010b_predicate_snapshots(
+    MotorRecoveryP1010BPredicateSnapshot* snapshots,
+    uint32_t capacity,
+    uint32_t* snapshot_count)
+{
+    (void)snapshots;
+    (void)capacity;
+
+    if (snapshot_count == OM_NULL)
+    {
+        return OM_ERROR_NULL;
+    }
+
+    *snapshot_count = 0u;
+    return OM_OK;
+}
+
+#endif
 
 #endif

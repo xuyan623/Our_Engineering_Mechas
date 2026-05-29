@@ -95,25 +95,68 @@ OmBool input_task_rc_decode_frame(
 
 void input_task_rc_store_to_data_pool(const InputTaskRcFrame* frame)
 {
+    DpRcSnapshot snapshot = {0};
+
     if (frame == OM_NULL)
     {
         return;
     }
 
-    DP_STORE_INT16(&g_data_pool.rc.ch1, frame->ch1);
-    DP_STORE_INT16(&g_data_pool.rc.ch2, frame->ch2);
-    DP_STORE_INT16(&g_data_pool.rc.ch3, frame->ch3);
-    DP_STORE_INT16(&g_data_pool.rc.ch4, frame->ch4);
+    input_task_rc_fill_snapshot(frame, &snapshot);
+    dp_store_rc_snapshot(&snapshot);
+}
 
-    DP_STORE_UINT8(&g_data_pool.rc.sw1, frame->sw1);
-    DP_STORE_UINT8(&g_data_pool.rc.sw2, frame->sw2);
-    DP_STORE_UINT16(&g_data_pool.rc.iw, frame->iw);
+void input_task_rc_fill_snapshot(
+    const InputTaskRcFrame* frame,
+    DpRcSnapshot* snapshot)
+{
+    if (frame == OM_NULL || snapshot == OM_NULL)
+    {
+        return;
+    }
 
-    DP_STORE_INT16(&g_data_pool.rc.mouse.x, frame->mouse.x);
-    DP_STORE_INT16(&g_data_pool.rc.mouse.y, frame->mouse.y);
-    DP_STORE_INT16(&g_data_pool.rc.mouse.z, frame->mouse.z);
-    DP_STORE_UINT8(&g_data_pool.rc.mouse.l, frame->mouse.l);
-    DP_STORE_UINT8(&g_data_pool.rc.mouse.r, frame->mouse.r);
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->ch1 = frame->ch1;
+    snapshot->ch2 = frame->ch2;
+    snapshot->ch3 = frame->ch3;
+    snapshot->ch4 = frame->ch4;
+    snapshot->sw1 = frame->sw1;
+    snapshot->sw2 = frame->sw2;
+    snapshot->iw = frame->iw;
+    snapshot->online = 1u;
+    snapshot->mouse.x = frame->mouse.x;
+    snapshot->mouse.y = frame->mouse.y;
+    snapshot->mouse.z = frame->mouse.z;
+    snapshot->mouse.l = frame->mouse.l;
+    snapshot->mouse.r = frame->mouse.r;
+    snapshot->keyboard_bits = frame->keyboard_bits;
+}
 
-    DP_STORE_UINT16(&g_data_pool.rc.keyboard_bits, frame->keyboard_bits);
+void input_task_rc_update_online_state(
+    InputTaskRcDebugState* runtime,
+    OsalTimeMs now_ms)
+{
+    DpRcSnapshot snapshot = {0};
+
+    if (runtime == OM_NULL)
+    {
+        return;
+    }
+
+    dp_copy_rc_snapshot(&snapshot);
+
+    if (runtime->last_frame_ms == 0u)
+    {
+        runtime->last_frame_age_ms = 0u;
+        runtime->online = 0u;
+        snapshot.online = 0u;
+        dp_store_rc_snapshot(&snapshot);
+        return;
+    }
+
+    runtime->last_frame_age_ms = (uint32_t)(now_ms - runtime->last_frame_ms);
+    runtime->online =
+        (runtime->last_frame_age_ms <= INPUT_TASK_DBUS_FRAME_TIMEOUT_MS) ? 1u : 0u;
+    snapshot.online = runtime->online;
+    dp_store_rc_snapshot(&snapshot);
 }

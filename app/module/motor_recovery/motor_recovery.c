@@ -5,6 +5,8 @@
 #include "osal/osal_time.h"
 #include <string.h>
 
+#if (APP_MOTOR_AUTO_RECOVERY_ENABLE != 0u)
+
 /* 该模块是 app 层的运行时自动恢复 owner：
  * - 不拥有物理总线
  * - 不直接启动任务
@@ -18,7 +20,7 @@
 #define MOTOR_RECOVERY_P1010B_ENABLE_SETTLE_MS (150u)
 #define MOTOR_RECOVERY_P1010B_SYNC_TIMEOUT_MS (5u)
 #define MOTOR_RECOVERY_P1010B_MAX_RETRY_COUNT (0u)
-#define MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS (1u)
+#define MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS (APP_MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS)
 
 /* 恢复子状态机只在模块内部使用：
  * - P1010B 需要多步同步恢复
@@ -61,7 +63,6 @@ typedef struct
     OsalTimeMs offline_since_ms;
     OsalTimeMs observe_gate_until_ms;
     OsalTimeMs p1010b_enable_settle_until_ms;
-    OsalTimeMs p1010b_last_query_ok_ms;
     uint32_t recover_count;
 } MotorRecoveryEntry;
 
@@ -74,6 +75,7 @@ typedef struct
     MotorRecoveryEntry entries[MOTOR_RECOVERY_CAPACITY];
     uint32_t entry_count;
     OmBool runtime_fault_active;
+    OsalTimeMs last_tick_ms;
 } MotorRecoveryContext;
 
 static MotorRecoveryContext g_motor_recovery = {0};
@@ -144,19 +146,20 @@ static DamiaoMotorBus* motor_recovery_entry_damiao_bus(const MotorRecoveryEntry*
     return entry->motor->binding.damiao.bus;
 }
 
-/* P1010B 恢复统一走 query-mode。
- * 这样运行期在线判据不依赖主动上报链，而是和现有正式通信逻辑保持一致。
+/* P1010B 运行期正式反馈改由 active report 承载。
+ * 当前按规格书固定反馈顺序配置：
+ * speed -> iq current -> bus voltage -> absolute position。
  */
 static P1010BActiveReportConfig motor_recovery_make_p1010b_active_report_config(void)
 {
     return (P1010BActiveReportConfig){
-        .enable = false,
+        .enable = true,
         .periodMs = MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS,
         .dataTypeSlots = {
-            (uint8_t)P1010B_REPORT_DATA_ABSOLUTE_POSITION,
             (uint8_t)P1010B_REPORT_DATA_SPEED_RPM,
             (uint8_t)P1010B_REPORT_DATA_IQ_AMPERE,
             (uint8_t)P1010B_REPORT_DATA_BUS_VOLTAGE,
+            (uint8_t)P1010B_REPORT_DATA_ABSOLUTE_POSITION,
         },
     };
 }
@@ -192,10 +195,12 @@ static OmBool motor_recovery_enabled(void)
 }
 
 /* 在线判据在恢复模块里重新计算一次，而不是直接复用 motor->feedback.online。
- * 这样恢复模块只依赖“最近有效反馈时间戳”，不受别的上层语义耦合。
+ * 这样恢复模块只依赖“最近有效反馈时间戳”，不受底层 driver 自己的 online 位语义影响。
  */
 static OmBool motor_recovery_is_entry_online(const MotorRecoveryEntry* entry)
 {
+    const MotorFeedback* feedback = OM_NULL;
+
     if (entry == OM_NULL || entry->motor == OM_NULL)
     {
         return OM_FALSE;
@@ -209,8 +214,12 @@ static OmBool motor_recovery_is_entry_online(const MotorRecoveryEntry* entry)
         return motor_is_feedback_recent(entry->motor, entry->policy.online_timeout_ms);
 
     case MOTOR_VENDOR_P1010B:
-        return (entry->p1010b_last_query_ok_ms != 0u &&
-                (uint32_t)(osal_time_now_monotonic() - entry->p1010b_last_query_ok_ms) <= entry->policy.online_timeout_ms) ?
+        feedback = motor_get_feedback(entry->motor);
+        if (feedback == OM_NULL || feedback->timestamp_ms == 0u)
+        {
+            return OM_FALSE;
+        }
+        return ((uint32_t)(osal_time_now_monotonic() - feedback->timestamp_ms) <= entry->policy.online_timeout_ms) ?
                    OM_TRUE :
                    OM_FALSE;
 
@@ -658,55 +667,6 @@ void motor_recovery_notify_p1010b_enabled(Motor* motor)
     entry->offline_since_ms = 0u;
 }
 
-void motor_recovery_notify_p1010b_query_ok(Motor* motor, OsalTimeMs timestamp_ms)
-{
-    MotorRecoveryEntry* entry = OM_NULL;
-
-    if (motor_recovery_enabled() != OM_TRUE || motor == OM_NULL || timestamp_ms == 0u)
-    {
-        return;
-    }
-
-    entry = motor_recovery_find_entry_by_motor_mutable(motor);
-    if (entry == OM_NULL)
-    {
-        return;
-    }
-
-    entry->p1010b_last_query_ok_ms = timestamp_ms;
-}
-
-OmBool motor_recovery_should_defer_p1010b_query(const Motor* motor)
-{
-    const MotorRecoveryEntry* entry = OM_NULL;
-    OsalTimeMs now_ms = 0u;
-
-    if (motor_recovery_enabled() != OM_TRUE || motor == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-
-    entry = motor_recovery_find_entry_by_motor(motor);
-    if (entry == OM_NULL)
-    {
-        return OM_FALSE;
-    }
-
-    now_ms = osal_time_now_monotonic();
-    if (motor_recovery_is_p1010b_in_enable_settle_window(entry, now_ms) == OM_TRUE)
-    {
-        return OM_TRUE;
-    }
-
-    if (entry->state != MOTOR_RECOVERY_STATE_HEALTHY &&
-        entry->vendor_substate != MOTOR_RECOVERY_VENDOR_SUBSTATE_P1010B_DISABLE)
-    {
-        return OM_TRUE;
-    }
-
-    return OM_FALSE;
-}
-
 OmBool motor_recovery_should_block_damiao_regular_target(const Motor* motor)
 {
     const MotorRecoveryEntry* entry = OM_NULL;
@@ -784,7 +744,6 @@ void motor_recovery_rearm_registered_entries(void)
         entry->offline_since_ms = 0u;
         entry->observe_gate_until_ms = 0u;
         entry->p1010b_enable_settle_until_ms = 0u;
-        entry->p1010b_last_query_ok_ms = 0u;
         entry->recover_count = 0u;
     }
 
@@ -793,6 +752,8 @@ void motor_recovery_rearm_registered_entries(void)
         (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
         g_motor_recovery.runtime_fault_active = OM_FALSE;
     }
+
+    g_motor_recovery.last_tick_ms = 0u;
 }
 
 /* 模块主 tick。
@@ -809,6 +770,13 @@ void motor_recovery_tick(void)
     }
 
     now_ms = osal_time_now_monotonic();
+    if (g_motor_recovery.last_tick_ms != 0u &&
+        (uint32_t)(now_ms - g_motor_recovery.last_tick_ms) < APP_MOTOR_RECOVERY_TICK_PERIOD_MS)
+    {
+        return;
+    }
+
+    g_motor_recovery.last_tick_ms = now_ms;
     for (index = 0u; index < g_motor_recovery.entry_count; index++)
     {
         motor_recovery_tick_entry(&g_motor_recovery.entries[index], now_ms);
@@ -910,3 +878,5 @@ OmRet motor_recovery_copy_p1010b_predicate_snapshots(
 
     return OM_OK;
 }
+
+#endif

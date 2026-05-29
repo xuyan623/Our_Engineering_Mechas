@@ -11,6 +11,8 @@ typedef struct
     uint8_t reserved[INPUT_TASK_CUSTOM_CONTROLLER_PAYLOAD_LEN - sizeof(uint8_t) - sizeof(float) * INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT];
 } __attribute__((__packed__)) InputTaskCustomControllerPayload;
 
+static DpCustomControllerSnapshot g_input_task_custom_controller_snapshot = {0};
+
 /* 只有整帧 CRC16 和 cmd_id 都通过后，才把控制器事实写回共享池。
  * 这保证 arm_task / vofa_task 看到的始终是一份"最近一次合法帧"快照。
  */
@@ -42,6 +44,7 @@ static void input_task_custom_controller_consume_frame(
 {
     uint16_t cmd_id = 0u;
     InputTaskCustomControllerPayload payload = {0};
+    DpCustomControllerSnapshot snapshot = {0};
     uint32_t angle_index = 0u;
 
     /* 参数有效性检查：确保所有必需指针非空 */
@@ -80,20 +83,17 @@ static void input_task_custom_controller_consume_frame(
                INPUT_TASK_CUSTOM_CONTROLLER_CMD_LEN],
         sizeof(payload));
 
-    /* 更新共享数据池：将解析出的工作模式写入数据池 */
-    DP_STORE_UINT8(&g_data_pool.custom_controller.work_mode, payload.work_mode);
-    
-    /* 更新共享数据池：将所有关节角度数据写入数据池 */
+    snapshot.online = 1u;
+    snapshot.work_mode = payload.work_mode;
     for (angle_index = 0u; angle_index < INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT;
          angle_index++)
     {
-        DP_STORE_FLOAT(
-            &g_data_pool.custom_controller.angle_deg[angle_index],
-            payload.angle_deg[angle_index]);
+        snapshot.angle_deg[angle_index] = payload.angle_deg[angle_index];
     }
 
     /* 标记控制器在线状态，更新解析器时间戳和运行时统计信息 */
-    DP_STORE_UINT8(&g_data_pool.custom_controller.online, 1u);
+    g_input_task_custom_controller_snapshot = snapshot;
+    dp_store_custom_controller_snapshot(&snapshot);
     parser->last_frame_ms = now_ms;
     runtime->frame_count++;
     runtime->last_seq = frame[3];
@@ -113,18 +113,19 @@ void input_task_custom_controller_reset_runtime(
 
 void input_task_custom_controller_reset_shared_state(void)
 {
+    DpCustomControllerSnapshot snapshot = {0};
     uint32_t angle_index = 0u;
 
     /* 降级启动或控制器掉线时，统一把共享事实收回到“离线 + 0 值”。
      * 这样其它任务不需要再区分“从没启动成功”和“运行时断开”。
      */
-    DP_STORE_UINT8(&g_data_pool.custom_controller.online, 0u);
-    DP_STORE_UINT8(&g_data_pool.custom_controller.work_mode, 0u);
     for (angle_index = 0u; angle_index < INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT;
          angle_index++)
     {
-        DP_STORE_FLOAT(&g_data_pool.custom_controller.angle_deg[angle_index], 0.0f);
+        snapshot.angle_deg[angle_index] = 0.0f;
     }
+    g_input_task_custom_controller_snapshot = snapshot;
+    dp_store_custom_controller_snapshot(&snapshot);
 }
 
 void input_task_custom_controller_reset_parser(
@@ -281,7 +282,8 @@ void input_task_custom_controller_update_online_state(
 
     if (parser->last_frame_ms == 0u)
     {
-        DP_STORE_UINT8(&g_data_pool.custom_controller.online, 0u);
+        g_input_task_custom_controller_snapshot.online = 0u;
+        dp_store_custom_controller_snapshot(&g_input_task_custom_controller_snapshot);
         runtime->last_frame_age_ms = 0u;
         return;
     }
@@ -293,10 +295,23 @@ void input_task_custom_controller_update_online_state(
     if (runtime->last_frame_age_ms >
         INPUT_TASK_CUSTOM_CONTROLLER_FRAME_TIMEOUT_MS)
     {
-        DP_STORE_UINT8(&g_data_pool.custom_controller.online, 0u);
+        g_input_task_custom_controller_snapshot.online = 0u;
     }
     else
     {
-        DP_STORE_UINT8(&g_data_pool.custom_controller.online, 1u);
+        g_input_task_custom_controller_snapshot.online = 1u;
     }
+
+    dp_store_custom_controller_snapshot(&g_input_task_custom_controller_snapshot);
+}
+
+void input_task_custom_controller_copy_snapshot(
+    DpCustomControllerSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL)
+    {
+        return;
+    }
+
+    *snapshot = g_input_task_custom_controller_snapshot;
 }

@@ -8,6 +8,9 @@
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
+#include "task/arm_task/arm_task.h"
+#include "task/chassis_task/chassis_task.h"
+#include "task/mode_task/mode_task.h"
 #include "task/input_task/input_task_custom_controller.h"
 #include "task/input_task/input_task_judge_stub.h"
 #include "task/input_task/input_task_rc.h"
@@ -120,15 +123,25 @@ static void input_task_entry(void* arg)
     uint8_t raw_frame[INPUT_TASK_DBUS_FRAME_LEN] = {0};
     InputTaskRcFrame parsed_frame = {0};
     InputTaskCustomControllerParser custom_controller_parser = {0};
+    DpRcSnapshot rc_snapshot = {0};
+    DpCustomControllerSnapshot custom_controller_snapshot = {0};
     size_t read_len = 0u;
     uint8_t byte = 0u;
     OmBool has_valid_rc_frame = OM_FALSE;
+    OmBool custom_controller_snapshot_changed = OM_FALSE;
+    uint32_t previous_custom_controller_frame_count = 0u;
+    uint8_t previous_custom_controller_online = 0u;
 
     input_task_custom_controller_reset_parser(&custom_controller_parser, 0u);
 
     while (1)
     {
         has_valid_rc_frame = OM_FALSE;
+        custom_controller_snapshot_changed = OM_FALSE;
+        previous_custom_controller_frame_count =
+            g_input_task_runtime.custom_controller.frame_count;
+        input_task_custom_controller_copy_snapshot(&custom_controller_snapshot);
+        previous_custom_controller_online = custom_controller_snapshot.online;
 
         if (g_input_task_runtime.rc.rx_available_hint >= INPUT_TASK_DBUS_FRAME_LEN)
         {
@@ -148,7 +161,13 @@ static void input_task_entry(void* arg)
                         g_input_task_runtime.rc.invalid_frame_count++;
                     }
 
+                    input_task_rc_fill_snapshot(&parsed_frame, &rc_snapshot);
+                    now_ms = osal_time_now_monotonic();
+                    g_input_task_runtime.rc.last_frame_ms = (uint32_t)now_ms;
+                    g_input_task_runtime.rc.online = 1u;
                     input_task_rc_store_to_data_pool(&parsed_frame);
+                    (void)mode_task_submit_rc_snapshot(&rc_snapshot);
+                    (void)chassis_task_submit_rc_snapshot(&rc_snapshot);
                     g_input_task_runtime.rc.frame_count++;
                     has_valid_rc_frame = OM_TRUE;
                 }
@@ -179,16 +198,29 @@ static void input_task_entry(void* arg)
         }
 
         now_ms = osal_time_now_monotonic();
+        input_task_rc_update_online_state(&g_input_task_runtime.rc, now_ms);
         input_task_custom_controller_update_online_state(
             &g_input_task_runtime.custom_controller,
             &custom_controller_parser,
             now_ms);
 
+        input_task_custom_controller_copy_snapshot(&custom_controller_snapshot);
+        if (g_input_task_runtime.custom_controller.frame_count != previous_custom_controller_frame_count ||
+            custom_controller_snapshot.online != previous_custom_controller_online)
+        {
+            custom_controller_snapshot_changed = OM_TRUE;
+        }
+
+        if (custom_controller_snapshot_changed == OM_TRUE)
+        {
+            (void)mode_task_submit_custom_controller_snapshot(
+                &custom_controller_snapshot);
+            (void)arm_task_submit_custom_controller_snapshot(
+                &custom_controller_snapshot);
+        }
+
         if (has_valid_rc_frame == OM_TRUE)
         {
-            /* 这次仍只保留 DBUS 的“新输入到达”事件；
-             * 自定义控制器由 arm_task 周期轮询共享池，不额外新增第二个输入事件。
-             */
             if (event_bus_publish(&g_event_bus, EVT_RC_DATA_READY) != OSAL_OK)
             {
                 sh_report_fatal(
@@ -250,6 +282,13 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
     {
         input_task_thread = OM_NULL;
         return OM_ERROR;
+    }
+
+    {
+        const ModeTaskInitProgressMessage init_progress = {
+            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_SERIAL_READY,
+            .value = 1u};
+        (void)mode_task_submit_init_progress(&init_progress);
     }
 
     return OM_OK;

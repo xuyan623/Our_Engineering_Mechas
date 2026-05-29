@@ -1,123 +1,101 @@
 #ifndef NEW_ROBOT_DATA_POOL_H
 #define NEW_ROBOT_DATA_POOL_H
 
-#include "atomic/atomic_simple.h"
 #include <stdint.h>
-#include <string.h>
+
+#define DP_CUSTOM_CONTROLLER_ANGLE_COUNT (6u)
 
 typedef struct
 {
-    uint32_t v;
-} DpFloat;
+    float yaw;
+    float pitch;
+    float roll;
+    float yaw_rate;
+    float pitch_rate;
+    float roll_rate;
+    float wx;
+    float wy;
+    float wz;
+    float ax;
+    float ay;
+    float az;
+    float temp;
+} DpImuSnapshot;
 
 typedef struct
 {
-    int16_t v;
-} DpInt16;
+    int16_t x;
+    int16_t y;
+    int16_t z;
+    uint8_t l;
+    uint8_t r;
+} DpMouseSnapshot;
 
 typedef struct
 {
-    uint8_t v;
-} DpUint8;
+    int16_t ch1;
+    int16_t ch2;
+    int16_t ch3;
+    int16_t ch4;
+    uint8_t sw1;
+    uint8_t sw2;
+    uint16_t iw;
+    uint8_t online;
+    DpMouseSnapshot mouse;
+    uint16_t keyboard_bits;
+} DpRcSnapshot;
 
 typedef struct
 {
-    uint16_t v;
-} DpUint16;
+    uint8_t global_mode;
+    uint8_t chassis_mode;
+} DpModeSnapshot;
 
 typedef struct
 {
-    struct
-    {
-        DpFloat yaw;
-        DpFloat pitch;
-        DpFloat roll;
-        DpFloat yaw_rate;
-        DpFloat pitch_rate;
-        DpFloat roll_rate;
-        DpFloat wx;
-        DpFloat wy;
-        DpFloat wz;
-        DpFloat ax;
-        DpFloat ay;
-        DpFloat az;
-        DpFloat temp;
-    } imu;
+    uint8_t clamp_action;
+    uint8_t exchange_action;
+    uint8_t primary_turn_ore_flag;
+    uint8_t custom_controller_force_takeover_flag;
+} DpActionSnapshot;
 
-    struct
-    {
-        DpInt16 ch1;
-        DpInt16 ch2;
-        DpInt16 ch3;
-        DpInt16 ch4;
-        DpUint8 sw1;
-        DpUint8 sw2;
-        /* Old DBUS protocol encodes the wheel as an unsigned 11-bit value. */
-        DpUint16 iw;
-        struct
-        {
-            DpInt16 x;
-            DpInt16 y;
-            DpInt16 z;
-            DpUint8 l;
-            DpUint8 r;
-        } mouse;
-        DpUint16 keyboard_bits;
-    } rc;
+typedef struct
+{
+    uint8_t global_mode;
+    uint8_t chassis_mode;
+    uint8_t clamp_action;
+    uint8_t exchange_action;
+    uint8_t primary_turn_ore_flag;
+    uint8_t custom_controller_force_takeover_flag;
+} DpModeCompatSnapshot;
 
-    /* Shared control facts only; edge history stays inside task-local context. */
-    struct
-    {
-        DpUint8 global_mode;
-        DpUint8 chassis_mode;
-    } mode;
+typedef struct
+{
+    uint8_t online;
+    uint8_t work_mode;
+    float angle_deg[DP_CUSTOM_CONTROLLER_ANGLE_COUNT];
+} DpCustomControllerSnapshot;
 
-    struct
-    {
-        DpUint8 clamp_action;
-        DpUint8 exchange_action;
-        DpUint8 primary_turn_ore_flag;
-        DpUint8 custom_controller_force_takeover_flag;
-    } action;
-
-    struct
-    {
-        DpUint8 online;
-        DpUint8 work_mode;
-        DpFloat angle_deg[6];
-    } custom_controller;
+typedef struct
+{
+    DpImuSnapshot imu;
+    DpRcSnapshot rc;
+    DpModeSnapshot mode;
+    DpActionSnapshot action;
+    DpCustomControllerSnapshot custom_controller;
 } DataPool;
 
-static inline uint32_t dp_float_to_bits(float value)
-{
-    uint32_t raw = 0u;
+void dp_copy_imu_snapshot(DpImuSnapshot* snapshot);
+void dp_store_imu_snapshot(const DpImuSnapshot* snapshot);
 
-    /* 共享池中的浮点量按 32 位原始比特存储。
-     * 这样既能继续复用整数原子接口，也能让 IntelliSense 的类型检查成立。
-     */
-    memcpy(&raw, &value, sizeof(raw));
-    return raw;
-}
+void dp_copy_rc_snapshot(DpRcSnapshot* snapshot);
+void dp_store_rc_snapshot(const DpRcSnapshot* snapshot);
 
-static inline float dp_float_from_bits(uint32_t raw)
-{
-    float value = 0.0f;
+void dp_copy_mode_compat_snapshot(DpModeCompatSnapshot* snapshot);
+void dp_store_mode_compat_snapshot(const DpModeCompatSnapshot* snapshot);
 
-    memcpy(&value, &raw, sizeof(value));
-    return value;
-}
-
-#define DP_LOAD_FLOAT(ptr) dp_float_from_bits(OM_LOAD_RLX(&(ptr)->v))
-#define DP_STORE_FLOAT(ptr, value) OM_STORE_RLX(&(ptr)->v, dp_float_to_bits((value)))
-
-#define DP_LOAD_INT16(ptr) OM_LOAD_RLX(&(ptr)->v)
-#define DP_STORE_INT16(ptr, value) OM_STORE_RLX(&(ptr)->v, (value))
-
-#define DP_LOAD_UINT8(ptr) OM_LOAD_RLX(&(ptr)->v)
-#define DP_STORE_UINT8(ptr, value) OM_STORE_RLX(&(ptr)->v, (value))
-
-#define DP_LOAD_UINT16(ptr) OM_LOAD_RLX(&(ptr)->v)
-#define DP_STORE_UINT16(ptr, value) OM_STORE_RLX(&(ptr)->v, (value))
+void dp_copy_custom_controller_snapshot(DpCustomControllerSnapshot* snapshot);
+void dp_store_custom_controller_snapshot(const DpCustomControllerSnapshot* snapshot);
 
 extern DataPool g_data_pool;
 
