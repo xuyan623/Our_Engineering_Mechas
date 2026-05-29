@@ -27,10 +27,10 @@
 /* -------------------------------------------------------------------------- */
 
 /* 编译期开关：
- * - 1：启用运行时自动恢复
- * - 0：关闭恢复模块，只保留启动期 bring-up
+ * - 1：编译并启用整套运行时自动恢复
+ * - 0：把 motor_recovery 收成 no-op stub，只保留启动期 bring-up / query 配置
  */
-#define APP_MOTOR_AUTO_RECOVERY_ENABLE (1u)
+#define APP_MOTOR_AUTO_RECOVERY_ENABLE (0u)
 
 /* 所有电机统一使用的在线超时窗口，单位 ms。
  * 当前项目里达妙是经典 CAN 下的被动式一发一收，多电机同总线时
@@ -41,6 +41,14 @@
 
 /* 自动恢复重试间隔，单位 ms。 */
 #define APP_MOTOR_RECOVERY_RETRY_INTERVAL_MS (50u)
+
+/* 恢复模块主 tick 节拍，单位 ms。
+ * 要低于正常控制发送频率，避免恢复状态机本身与正式控制同频抖动。
+ */
+#define APP_MOTOR_RECOVERY_TICK_PERIOD_MS (50u)
+
+/* P1010B 主动上报周期，单位 ms。 */
+#define APP_MOTOR_RECOVERY_P1010B_REPORT_PERIOD_MS (50u)
 
 /* 离线故障报码去抖时间，单位 ms。 */
 #define APP_MOTOR_RECOVERY_FAULT_DEBOUNCE_MS (100u)
@@ -94,7 +102,7 @@
 #define APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S (500.0f)
 
 /* 总速度限制编译期开关（预处理器不支持浮点比较，用整数宏控制）。 */
-#define APP_CHASSIS_TOTAL_SPEED_LIMIT_ENABLE (1u)
+#define APP_CHASSIS_TOTAL_SPEED_LIMIT_ENABLE (0u)
 
 /* 遥控摇杆满量程分辨率。 */
 #define APP_RC_RESOLUTION (660.0f)
@@ -127,14 +135,23 @@
 #define APP_CHASSIS_RIGHT_LEG_REF_MAX_DEG (38.85f)
 
 /* 轮速 / 腿部双环 PID 参数。
+ * 前后轮 PID 已分组，当前默认数值先保持一致；
+ * 若现场确认前后桥动力学不同，再分别调这两组宏。
+ *
  * 轮速环的 Ki 保持旧工程“每 tick 累积 0.05*error”的离散语义，
  * chassis_task 会按任务周期换算到 OMR PID 的秒制接口。
  */
-#define APP_CHASSIS_WHEEL_SPEED_PID_KP (4.5f)
-#define APP_CHASSIS_WHEEL_SPEED_PID_KI (0.05f)
-#define APP_CHASSIS_WHEEL_SPEED_PID_KD (0.0f)
-#define APP_CHASSIS_WHEEL_SPEED_PID_OUT_LIMIT (10000.0f)
-#define APP_CHASSIS_WHEEL_SPEED_PID_INTEGRAL_LIMIT (2000.0f)
+#define APP_CHASSIS_FRONT_WHEEL_SPEED_PID_KP (4.5f)
+#define APP_CHASSIS_FRONT_WHEEL_SPEED_PID_KI (0.00f)
+#define APP_CHASSIS_FRONT_WHEEL_SPEED_PID_KD (0.0f)
+#define APP_CHASSIS_FRONT_WHEEL_SPEED_PID_OUT_LIMIT (10000.0f)
+#define APP_CHASSIS_FRONT_WHEEL_SPEED_PID_INTEGRAL_LIMIT (2000.0f)
+
+#define APP_CHASSIS_REAR_WHEEL_SPEED_PID_KP (3.0f)
+#define APP_CHASSIS_REAR_WHEEL_SPEED_PID_KI (0.0f)
+#define APP_CHASSIS_REAR_WHEEL_SPEED_PID_KD (0.0f)
+#define APP_CHASSIS_REAR_WHEEL_SPEED_PID_OUT_LIMIT (10000.0f)
+#define APP_CHASSIS_REAR_WHEEL_SPEED_PID_INTEGRAL_LIMIT (2000.0f)
 
 #define APP_CHASSIS_LEG_ANGLE_PID_KP (8.0f)
 #define APP_CHASSIS_LEG_ANGLE_PID_KI (0.0f)
@@ -188,9 +205,10 @@
 #define APP_ARM_ROLL2_KD (0.01f)
 #define APP_ARM_ROLL2_MAX_RATE_RAD_PER_S (2.0f)
 
-#define APP_ARM_PITCH3_KP (20.0f)
-#define APP_ARM_PITCH3_KD (0.01f)
+#define APP_ARM_PITCH3_KP (10.0f)
+#define APP_ARM_PITCH3_KD (0.02f)
 #define APP_ARM_PITCH3_MAX_RATE_RAD_PER_S (2.0f)
+#define APP_ARM_PITCH3_ENABLE_GRAVITY_FF (1u)
 
 #define APP_ARM_GRIP_KP (18.0f)
 #define APP_ARM_GRIP_KD (0.10f)
@@ -201,14 +219,14 @@
 #define APP_ARM_PITCH2_GRAVITY_FF_MIN (-1.42f)
 #define APP_ARM_PITCH2_GRAVITY_FF_MAX (1.43f)
 
-#define APP_ARM_ROLL3_ANGLE_PID_KP (3.0f)
+#define APP_ARM_ROLL3_ANGLE_PID_KP (5.0f)
 #define APP_ARM_ROLL3_ANGLE_PID_KI (0.0f)
-#define APP_ARM_ROLL3_ANGLE_PID_KD (0.1f)
+#define APP_ARM_ROLL3_ANGLE_PID_KD (0.0f)
 #define APP_ARM_ROLL3_ANGLE_PID_OUT_LIMIT (100.0f)
 #define APP_ARM_ROLL3_ANGLE_PID_INTEGRAL_LIMIT (10.0f)
 #define APP_ARM_ROLL3_MAX_RATE_RAD_PER_S (4.0f)
 
-#define APP_ARM_ROLL3_SPEED_PID_KP (35.0f)
+#define APP_ARM_ROLL3_SPEED_PID_KP (40.0f)
 #define APP_ARM_ROLL3_SPEED_PID_KI (0.0f)
 #define APP_ARM_ROLL3_SPEED_PID_KD (0.0f)
 #define APP_ARM_ROLL3_SPEED_PID_OUT_LIMIT (15000.0f)

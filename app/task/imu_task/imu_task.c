@@ -8,6 +8,8 @@
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
+#include "task/chassis_task/chassis_task.h"
+#include "task/mode_task/mode_task.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -18,9 +20,11 @@
 /* 这组计数只用于调试器和 VOFA 观察任务是否按预期工作。 */
 ImuTaskDebugState g_imu_task_debug = {0};
 
-static void imu_task_store_to_data_pool(const imu_data_t* imu_data)
+static void imu_task_fill_snapshot(
+    const imu_data_t* imu_data,
+    DpImuSnapshot* snapshot)
 {
-    if (imu_data == OM_NULL)
+    if (imu_data == OM_NULL || snapshot == OM_NULL)
     {
         return;
     }
@@ -28,23 +32,33 @@ static void imu_task_store_to_data_pool(const imu_data_t* imu_data)
     /* DataPool 暴露给上层的是处理后的物理量，
      * 不回灌驱动层原始寄存器值，也不把驱动内部临时状态提升成共享事实。
      */
-    DP_STORE_FLOAT(&g_data_pool.imu.yaw, imu_data->yaw);
-    DP_STORE_FLOAT(&g_data_pool.imu.pitch, imu_data->pit);
-    DP_STORE_FLOAT(&g_data_pool.imu.roll, imu_data->rol);
+    snapshot->yaw = imu_data->yaw;
+    snapshot->pitch = imu_data->pit;
+    snapshot->roll = imu_data->rol;
+    snapshot->yaw_rate = imu_data->yaw_rate;
+    snapshot->pitch_rate = imu_data->pit_rate;
+    snapshot->roll_rate = imu_data->rol_rate;
+    snapshot->wx = imu_data->wx;
+    snapshot->wy = imu_data->wy;
+    snapshot->wz = imu_data->wz;
+    snapshot->ax = imu_data->vx;
+    snapshot->ay = imu_data->vy;
+    snapshot->az = imu_data->vz;
+    snapshot->temp = imu_data->temp;
+}
 
-    DP_STORE_FLOAT(&g_data_pool.imu.yaw_rate, imu_data->yaw_rate);
-    DP_STORE_FLOAT(&g_data_pool.imu.pitch_rate, imu_data->pit_rate);
-    DP_STORE_FLOAT(&g_data_pool.imu.roll_rate, imu_data->rol_rate);
+static void imu_task_store_to_data_pool(const imu_data_t* imu_data)
+{
+    DpImuSnapshot snapshot = {0};
 
-    DP_STORE_FLOAT(&g_data_pool.imu.wx, imu_data->wx);
-    DP_STORE_FLOAT(&g_data_pool.imu.wy, imu_data->wy);
-    DP_STORE_FLOAT(&g_data_pool.imu.wz, imu_data->wz);
+    if (imu_data == OM_NULL)
+    {
+        return;
+    }
 
-    DP_STORE_FLOAT(&g_data_pool.imu.ax, imu_data->vx);
-    DP_STORE_FLOAT(&g_data_pool.imu.ay, imu_data->vy);
-    DP_STORE_FLOAT(&g_data_pool.imu.az, imu_data->vz);
-
-    DP_STORE_FLOAT(&g_data_pool.imu.temp, imu_data->temp);
+    imu_task_fill_snapshot(imu_data, &snapshot);
+    dp_store_imu_snapshot(&snapshot);
+    (void)chassis_task_submit_imu_snapshot(&snapshot);
 }
 
 static void imu_task_entry(void* arg)
@@ -129,6 +143,13 @@ OmRet imu_task_start(void)
     {
         imu_task_thread = OM_NULL;
         return OM_ERROR;
+    }
+
+    {
+        const ModeTaskInitProgressMessage init_progress = {
+            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_IMU_READY,
+            .value = 1u};
+        (void)mode_task_submit_init_progress(&init_progress);
     }
 
     return OM_OK;

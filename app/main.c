@@ -102,12 +102,19 @@ static void start_task(void* arg)
         goto supervisor_loop;
     }
 
-    imu_init_ret = mpu_device_init(9.8f);
-    if (imu_init_ret != 0U)
+    mode_task_ret = mode_task_start();
+    if (mode_task_ret != OM_OK)
     {
-        sh_report_fatal(SH_ERR_MPU_DEVICE_INIT_FAIL, "mpu_device_init failed");
+        sh_report_fatal(SH_ERR_MODE_TASK_START_FAIL, "mode_task_start failed");
         goto supervisor_loop;
     }
+
+    // imu_init_ret = mpu_device_init(9.8f);
+    // if (imu_init_ret != 0U)
+    // {
+    //     sh_report_fatal(SH_ERR_MPU_DEVICE_INIT_FAIL, "mpu_device_init failed");
+    //     goto supervisor_loop;
+    // }
 
     imu_task_ret = imu_task_start();
     if (imu_task_ret != OM_OK)
@@ -120,13 +127,6 @@ static void start_task(void* arg)
     if (input_task_ret != OM_OK)
     {
         sh_report_fatal(SH_ERR_INPUT_TASK_START_FAIL, "input_task_start failed");
-        goto supervisor_loop;
-    }
-
-    mode_task_ret = mode_task_start();
-    if (mode_task_ret != OM_OK)
-    {
-        sh_report_fatal(SH_ERR_MODE_TASK_START_FAIL, "mode_task_start failed");
         goto supervisor_loop;
     }
 

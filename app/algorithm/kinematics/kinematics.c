@@ -1,26 +1,9 @@
 #include "algorithm/kinematics/kinematics.h"
 
 #include "config/app_config.h"
+#include "function/math_utils/math_utils.h"
 #include <math.h>
 #include <string.h>
-
-static float kinematics_clamp_float(float value, float min_value, float max_value)
-{
-    if (value < min_value)
-    {
-        return min_value;
-    }
-    if (value > max_value)
-    {
-        return max_value;
-    }
-    return value;
-}
-
-static float kinematics_abs_float(float value)
-{
-    return (value < 0.0f) ? -value : value;
-}
 
 static float kinematics_normalize_angle(float angle_rad)
 {
@@ -54,9 +37,9 @@ static void kinematics_clamp_chassis_velocity(
         return;
     }
 
-    *vx_mm_per_s = kinematics_clamp_float(*vx_mm_per_s, -APP_CHASSIS_MAX_VX_MM_PER_S, APP_CHASSIS_MAX_VX_MM_PER_S);
-    *vy_mm_per_s = kinematics_clamp_float(*vy_mm_per_s, -APP_CHASSIS_MAX_VY_MM_PER_S, APP_CHASSIS_MAX_VY_MM_PER_S);
-    *vw_deg_per_s = kinematics_clamp_float(*vw_deg_per_s, -APP_CHASSIS_MAX_VW_DEG_PER_S, APP_CHASSIS_MAX_VW_DEG_PER_S);
+    *vx_mm_per_s = math_utils_clamp_float(*vx_mm_per_s, -APP_CHASSIS_MAX_VX_MM_PER_S, APP_CHASSIS_MAX_VX_MM_PER_S);
+    *vy_mm_per_s = math_utils_clamp_float(*vy_mm_per_s, -APP_CHASSIS_MAX_VY_MM_PER_S, APP_CHASSIS_MAX_VY_MM_PER_S);
+    *vw_deg_per_s = math_utils_clamp_float(*vw_deg_per_s, -APP_CHASSIS_MAX_VW_DEG_PER_S, APP_CHASSIS_MAX_VW_DEG_PER_S);
 
 #if (APP_CHASSIS_TOTAL_SPEED_LIMIT_ENABLE == 1u)
     {
@@ -115,7 +98,7 @@ static void kinematics_scale_wheel_rpm_float(
 
     for (index = 0u; index < MECANUM_WHEEL_COUNT; index++)
     {
-        const float abs_value = kinematics_abs_float(wheel_rpm_float[index]);
+        const float abs_value = math_utils_abs_float(wheel_rpm_float[index]);
 
         if (active_wheel_flags[index] != OM_TRUE)
         {
@@ -292,7 +275,7 @@ OmRet Change_Position_to_Motor_Angle(float x_mm, float z_mm, float* pitch1_motor
         return OM_ERROR_PARAM;
     }
 
-    asin_input = kinematics_clamp_float(arm_coefficient_c / denominator, -1.0f, 1.0f);
+    asin_input = math_utils_clamp_float(arm_coefficient_c / denominator, -1.0f, 1.0f);
     phi = atan2f(arm_coefficient_b, arm_coefficient_a);
 
     /* 保持与旧工程一致，选择“肘关节在下”的解。 */
@@ -304,8 +287,8 @@ OmRet Change_Position_to_Motor_Angle(float x_mm, float z_mm, float* pitch1_motor
     pitch1_angle = -kinematics_normalize_angle(pitch1_angle) + APP_ARM_PITCH1_ZERO_OFFSET_RAD;
     pitch2_angle = kinematics_normalize_angle(pitch2_angle) + APP_ARM_PITCH2_ZERO_OFFSET_RAD;
 
-    pitch1_angle = kinematics_clamp_float(pitch1_angle, APP_ARM_PITCH1_MIN_RAD, APP_ARM_PITCH1_MAX_RAD);
-    pitch2_angle = kinematics_clamp_float(pitch2_angle, APP_ARM_PITCH2_MIN_RAD, APP_ARM_PITCH2_MAX_RAD);
+    pitch1_angle = math_utils_clamp_float(pitch1_angle, APP_ARM_PITCH1_MIN_RAD, APP_ARM_PITCH1_MAX_RAD);
+    pitch2_angle = math_utils_clamp_float(pitch2_angle, APP_ARM_PITCH2_MIN_RAD, APP_ARM_PITCH2_MAX_RAD);
 
     *pitch1_motor_angle_rad = pitch1_angle;
     *pitch2_motor_angle_rad = pitch2_angle * APP_ARM_PITCH2_GEAR_RATIO;
