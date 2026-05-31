@@ -50,8 +50,8 @@ OmBool arm_task_get_custom_controller_pitch_axis_feedback(float* pitch_axis_feed
  *   [5] roll3     (rad)
  *   [6] grip      (rad)
  */
-/* Cai ji ji xie bi quan bu 7 zhou dian ji fan kui de ji gou jiao kuai zhao (ni ying she).
- * Shun xu yu g_arm_pose_* dong zuo biao yi zhi:
+/* 采集机械臂全部 7 轴电机反馈的机构角快照（逆映射）。
+ * 顺序与 g_arm_pose_* 动作表一致：
  *   [0] big_yaw   (rad)
  *   [1] pitch1    (rad)
  *   [2] pitch2    (rad)
@@ -60,8 +60,8 @@ OmBool arm_task_get_custom_controller_pitch_axis_feedback(float* pitch_axis_feed
  *   [5] roll3     (rad)
  *   [6] grip      (rad)
  *
- * Gai jie kou jiang dian ji yuan shi fan kui jiao ni xiang ying she hui ji gou jiao yu yi,
- * bian yu zai VOFA shang zhi jie yu g_arm_pose_* dong zuo biao shu zhi dui bi.
+ * 该接口将电机原始反馈角逆向映射回机构角语义，
+ * 便于在 VOFA 上直接与 g_arm_pose_* 动作表数值对比。
  */
 OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
     float machine_angle_rad[7]);

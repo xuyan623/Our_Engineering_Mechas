@@ -48,9 +48,7 @@ typedef struct
  */
 typedef struct
 {
-    Motor* wheel_motors[CHASSIS_TASK_WHEEL_COUNT];
-    Motor* leg_motors[CHASSIS_TASK_LEG_COUNT];
-    Motor* big_yaw_motor;
+    /* 电机句柄已外迁至模块局部缓存表，此处不再内嵌 */
     PidController front_wheel_speed_pids[CHASSIS_TASK_FRONT_WHEEL_COUNT];
     PidController rear_wheel_speed_pids[CHASSIS_TASK_REAR_WHEEL_COUNT];
     PidController leg_angle_pids[CHASSIS_TASK_LEG_COUNT];
@@ -67,13 +65,40 @@ typedef struct
     float big_yaw_hold_angle_rad;
     OsalTimeMs last_tx_request_ms;
     OsalTimeMs rc_rotate_saturation_since_ms;
-    OmBool big_yaw_hold_initialized;
-    OmBool motors_bound_flag;
-    OmBool control_modes_armed_for_operational;
-    OmBool mode_snapshot_ready;
-    OmBool rc_snapshot_ready;
-    OmBool imu_snapshot_ready;
+    uint16_t flags;
+    /* bit 0: big_yaw_hold_initialized */
+    /* bit 1: motors_bound */
+    /* bit 2: control_modes_armed */
+    /* bit 3: mode_snapshot_ready */
+    /* bit 4: rc_snapshot_ready */
+    /* bit 5: imu_snapshot_ready */
 } ChassisTaskContext;
+
+#define CHASSIS_TASK_FLAG_BIG_YAW_HOLD_INIT     (1u << 0u)
+#define CHASSIS_TASK_FLAG_MOTORS_BOUND          (1u << 1u)
+#define CHASSIS_TASK_FLAG_CONTROL_MODES_ARMED   (1u << 2u)
+#define CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY   (1u << 3u)
+#define CHASSIS_TASK_FLAG_RC_SNAPSHOT_READY     (1u << 4u)
+#define CHASSIS_TASK_FLAG_IMU_SNAPSHOT_READY    (1u << 5u)
+
+/* 电机句柄查询：由 chassis_task.c 内部缓存表支持。 */
+static inline Motor* chassis_task_get_wheel_motor(uint32_t index)
+{
+    extern Motor* g_chassis_task_wheel_motor_cache[];
+    return (index < CHASSIS_TASK_WHEEL_COUNT) ? g_chassis_task_wheel_motor_cache[index] : OM_NULL;
+}
+
+static inline Motor* chassis_task_get_leg_motor(uint32_t index)
+{
+    extern Motor* g_chassis_task_leg_motor_cache[];
+    return (index < CHASSIS_TASK_LEG_COUNT) ? g_chassis_task_leg_motor_cache[index] : OM_NULL;
+}
+
+static inline Motor* chassis_task_get_big_yaw_motor(void)
+{
+    extern Motor* g_chassis_task_big_yaw_motor;
+    return g_chassis_task_big_yaw_motor;
+}
 
 /* 底盘任务运行时上下文单例，由 chassis_task.c 定义。 */
 extern TaskContextSlotId g_chassis_task_slot_id;

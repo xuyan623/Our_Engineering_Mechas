@@ -29,7 +29,7 @@ const char*       task_context_pool_get_name(TaskContextSlotId slot_id);
 void              task_context_pool_call_diag_online(TaskContextSlotId slot_id, uint8_t* out_online);
 void              task_context_pool_call_diag_snapshot(TaskContextSlotId slot_id, float* out_buf, uint32_t cap, uint32_t* out_count);
 
-/* zhi xian ren wu mo kuai nei bu shi yong: na dao void* hou qiang zhuan cheng ju ti Context lei xing */
+/* 只限任务模块内部使用：拿到 void* 后强转成具体 Context 类型 */
 void*             task_context_pool_get_ptr(TaskContextSlotId slot_id);
 
 #endif

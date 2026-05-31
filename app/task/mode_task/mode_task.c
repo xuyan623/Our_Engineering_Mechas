@@ -101,26 +101,41 @@ typedef struct
  */
 typedef struct
 {
-    OmBool initialized;
     uint8_t last_sw1;
     uint8_t last_last_sw1;
     uint8_t last_sw2;
     uint16_t last_iw;
     GlobalMode last_global_mode;
     ChassisMode last_chassis_mode;
-    OmBool clamp_ready_to_change;
-    OmBool exchange_ready_to_change;
     ModeTaskSharedState shared_state;
     ModeTaskHierarchyContext hierarchy_state;
-    ModeTaskInitProgressContext init_progress;
     TaskPipeChannel rc_channel;
     TaskPipeChannel custom_controller_channel;
     DpRcSnapshot latest_rc_snapshot;
     DpCustomControllerSnapshot latest_custom_controller_snapshot;
-    OmBool rc_snapshot_ready;
+    uint16_t flags;
+    /* bit 0: initialized */
+    /* bit 1: clamp_ready_to_change */
+    /* bit 2: exchange_ready_to_change */
+    /* bit 3: rc_snapshot_ready */
+    /* bit 4: init_can_ready */
+    /* bit 5: init_serial_ready */
+    /* bit 6: init_imu_ready */
+    /* bit 7: init_chassis_motor_ready */
+    /* bit 8: init_arm_motor_ready */
     StateMachine global_machine;
     StateMachine chassis_machine;
 } ModeTaskContext;
+
+#define MODE_TASK_FLAG_INITIALIZED           (1u << 0u)
+#define MODE_TASK_FLAG_CLAMP_READY           (1u << 1u)
+#define MODE_TASK_FLAG_EXCHANGE_READY        (1u << 2u)
+#define MODE_TASK_FLAG_RC_SNAPSHOT_READY     (1u << 3u)
+#define MODE_TASK_FLAG_INIT_CAN_READY         (1u << 4u)
+#define MODE_TASK_FLAG_INIT_SERIAL_READY      (1u << 5u)
+#define MODE_TASK_FLAG_INIT_IMU_READY          (1u << 6u)
+#define MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY (1u << 7u)
+#define MODE_TASK_FLAG_INIT_ARM_MOTOR_READY    (1u << 8u)
 
 ModeTaskDebugState g_mode_task_debug = {0};
 static TaskMpscChannel g_mode_task_init_progress_channel = {0};
@@ -209,7 +224,7 @@ static void mode_task_load_rc_snapshot(ModeTaskRcSnapshot* snapshot)
 
     memset(snapshot, 0, sizeof(*snapshot));
     if (g_mode_task_owner_context == OM_NULL ||
-        g_mode_task_owner_context->rc_snapshot_ready != OM_TRUE)
+        !(g_mode_task_owner_context->flags & MODE_TASK_FLAG_RC_SNAPSHOT_READY))
     {
         return;
     }
@@ -236,7 +251,7 @@ static void mode_task_drain_rc_snapshots(ModeTaskContext* context)
     while (task_pipe_channel_receive(&context->rc_channel, &snapshot, 0u) == OM_OK)
     {
         context->latest_rc_snapshot = snapshot;
-        context->rc_snapshot_ready = OM_TRUE;
+        context->flags |= MODE_TASK_FLAG_RC_SNAPSHOT_READY;
     }
 }
 
@@ -515,19 +530,19 @@ static void mode_task_update_bootstrap_state_from_progress(ModeTaskContext* cont
 
     if (context->hierarchy_state.system_state == MODE_TASK_SYSTEM_BOARD_INITIALIZING)
     {
-        if (context->init_progress.can_ready != OM_TRUE)
+        if (!(context->flags & MODE_TASK_FLAG_INIT_CAN_READY))
         {
             context->hierarchy_state.board_init.state =
                 MODE_TASK_BOARD_INIT_CAN_INITIALIZING;
             return;
         }
-        if (context->init_progress.serial_ready != OM_TRUE)
+        if (!(context->flags & MODE_TASK_FLAG_INIT_SERIAL_READY))
         {
             context->hierarchy_state.board_init.state =
                 MODE_TASK_BOARD_INIT_SERIAL_INITIALIZING;
             return;
         }
-        if (context->init_progress.imu_ready != OM_TRUE)
+        if (!(context->flags & MODE_TASK_FLAG_INIT_IMU_READY))
         {
             context->hierarchy_state.board_init.state =
                 MODE_TASK_BOARD_INIT_IMU_INITIALIZING;
@@ -539,13 +554,13 @@ static void mode_task_update_bootstrap_state_from_progress(ModeTaskContext* cont
 
     if (context->hierarchy_state.system_state == MODE_TASK_SYSTEM_MOTOR_INITIALIZING)
     {
-        if (context->init_progress.chassis_motor_ready != OM_TRUE)
+        if (!(context->flags & MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY))
         {
             context->hierarchy_state.motor_init.state =
                 MODE_TASK_MOTOR_INIT_CHASSIS_INITIALIZING;
             return;
         }
-        if (context->init_progress.arm_motor_ready != OM_TRUE)
+        if (!(context->flags & MODE_TASK_FLAG_INIT_ARM_MOTOR_READY))
         {
             context->hierarchy_state.motor_init.state =
                 MODE_TASK_MOTOR_INIT_ARM_INITIALIZING;
@@ -760,19 +775,19 @@ static void mode_task_apply_init_progress_message(
     switch ((ModeTaskInitProgressKind)message->kind)
     {
     case MODE_TASK_INIT_PROGRESS_CAN_READY:
-        context->init_progress.can_ready = (message->value != 0u) ? OM_TRUE : OM_FALSE;
+        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_CAN_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_CAN_READY; }
         break;
     case MODE_TASK_INIT_PROGRESS_SERIAL_READY:
-        context->init_progress.serial_ready = (message->value != 0u) ? OM_TRUE : OM_FALSE;
+        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_SERIAL_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_SERIAL_READY; }
         break;
     case MODE_TASK_INIT_PROGRESS_IMU_READY:
-        context->init_progress.imu_ready = (message->value != 0u) ? OM_TRUE : OM_FALSE;
+        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_IMU_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_IMU_READY; }
         break;
     case MODE_TASK_INIT_PROGRESS_CHASSIS_MOTOR_READY:
-        context->init_progress.chassis_motor_ready = (message->value != 0u) ? OM_TRUE : OM_FALSE;
+        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY; }
         break;
     case MODE_TASK_INIT_PROGRESS_ARM_MOTOR_READY:
-        context->init_progress.arm_motor_ready = (message->value != 0u) ? OM_TRUE : OM_FALSE;
+        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_ARM_MOTOR_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_ARM_MOTOR_READY; }
         break;
     default:
         break;
@@ -1024,17 +1039,17 @@ static void mode_task_update_clamp_action(ModeTaskContext* context, const ModeTa
     if (mode_task_is_clamp_related_mode(state->chassis_mode) == OM_FALSE)
     {
         state->clamp_action = MODE_CLAMP_UN_CMD;
-        context->clamp_ready_to_change = OM_FALSE;
+        context->flags &= ~MODE_TASK_FLAG_CLAMP_READY;
         return;
     }
 
     /* 旧工程语义：sw1 回到中位后，才允许下一次动作切换。 */
     if (snapshot->sw1 == RC_SWITCH_MI)
     {
-        context->clamp_ready_to_change = OM_TRUE;
+        context->flags |= MODE_TASK_FLAG_CLAMP_READY;
     }
 
-    if (context->clamp_ready_to_change != OM_TRUE)
+    if (!(context->flags & MODE_TASK_FLAG_CLAMP_READY))
     {
         return;
     }
@@ -1045,7 +1060,7 @@ static void mode_task_update_clamp_action(ModeTaskContext* context, const ModeTa
         {
             state->clamp_action = (ClampAction)((uint8_t)state->clamp_action + 1u);
         }
-        context->clamp_ready_to_change = OM_FALSE;
+        context->flags &= ~MODE_TASK_FLAG_CLAMP_READY;
     }
     else if (mode_task_is_sw1_to_up_edge(context, snapshot) == OM_TRUE)
     {
@@ -1053,7 +1068,7 @@ static void mode_task_update_clamp_action(ModeTaskContext* context, const ModeTa
         {
             state->clamp_action = (ClampAction)((uint8_t)state->clamp_action - 1u);
         }
-        context->clamp_ready_to_change = OM_FALSE;
+        context->flags &= ~MODE_TASK_FLAG_CLAMP_READY;
     }
 }
 
@@ -1063,17 +1078,17 @@ static void mode_task_update_exchange_action(ModeTaskContext* context, const Mod
     if (state->chassis_mode != MODE_CHASSIS_EXCHANGE)
     {
         state->exchange_action = MODE_EXCHANGE_UN_CMD;
-        context->exchange_ready_to_change = OM_FALSE;
+        context->flags &= ~MODE_TASK_FLAG_EXCHANGE_READY;
         return;
     }
 
     if (snapshot->sw1 == RC_SWITCH_MI)
     {
-        context->exchange_ready_to_change = OM_TRUE;
+        context->flags |= MODE_TASK_FLAG_EXCHANGE_READY;
         state->exchange_action = MODE_EXCHANGE_UN_CMD;
     }
 
-    if (context->exchange_ready_to_change != OM_TRUE)
+    if (!(context->flags & MODE_TASK_FLAG_EXCHANGE_READY))
     {
         return;
     }
@@ -1081,12 +1096,12 @@ static void mode_task_update_exchange_action(ModeTaskContext* context, const Mod
     if (mode_task_is_sw1_to_dn_edge(context, snapshot) == OM_TRUE)
     {
         state->exchange_action = MODE_EXCHANGE_PICK_ACTION1;
-        context->exchange_ready_to_change = OM_FALSE;
+        context->flags &= ~MODE_TASK_FLAG_EXCHANGE_READY;
     }
     else if (mode_task_is_sw1_to_up_edge(context, snapshot) == OM_TRUE)
     {
         state->exchange_action = MODE_EXCHANGE_PICK_ACTION2;
-        context->exchange_ready_to_change = OM_FALSE;
+        context->flags &= ~MODE_TASK_FLAG_EXCHANGE_READY;
     }
 }
 
@@ -1193,13 +1208,13 @@ static void mode_task_run_once(ModeTaskContext* context)
     mode_task_load_rc_snapshot(&rc_snapshot);
     mode_task_load_custom_controller_snapshot(context, &custom_controller_snapshot);
 
-    if (context->initialized != OM_TRUE)
+    if (!(context->flags & MODE_TASK_FLAG_INITIALIZED))
     {
         context->last_sw1 = rc_snapshot.sw1;
         context->last_last_sw1 = rc_snapshot.sw1;
         context->last_sw2 = rc_snapshot.sw2;
         context->last_iw = rc_snapshot.iw;
-        context->initialized = OM_TRUE;
+        context->flags |= MODE_TASK_FLAG_INITIALIZED;
     }
 
     mode_task_drain_init_progress_messages(context);
@@ -1324,16 +1339,13 @@ static void mode_task_ctx_reset(void* ctx)
     self->last_iw = 0u;
     self->last_global_mode = MODE_GLOBAL_RELEASE_CTRL;
     self->last_chassis_mode = MODE_CHASSIS_RELEASE;
-    self->clamp_ready_to_change = OM_FALSE;
-    self->exchange_ready_to_change = OM_FALSE;
+    self->flags = 0u;
     memset(&self->shared_state, 0, sizeof(self->shared_state));
     self->shared_state.global_mode = MODE_GLOBAL_RELEASE_CTRL;
     self->shared_state.chassis_mode = MODE_CHASSIS_RELEASE;
     memset(&self->hierarchy_state, 0, sizeof(self->hierarchy_state));
-    memset(&self->init_progress, 0, sizeof(self->init_progress));
     memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
     memset(&self->latest_custom_controller_snapshot, 0, sizeof(self->latest_custom_controller_snapshot));
-    self->rc_snapshot_ready = OM_FALSE;
 }
 
 static void mode_task_ctx_cleanup(void* ctx)
@@ -1386,8 +1398,7 @@ OmRet mode_task_start(void)
     mode_task_board_init_context_reset(&ctx->hierarchy_state.board_init);
     mode_task_motor_init_context_reset(&ctx->hierarchy_state.motor_init);
     mode_task_operational_context_reset(&ctx->hierarchy_state.operational);
-    mode_task_init_progress_context_reset(&ctx->init_progress);
-    ctx->rc_snapshot_ready = OM_FALSE;
+    ctx->flags = 0u;
     mode_task_update_debug_state(ctx);
 
     ret = task_mpsc_channel_init(

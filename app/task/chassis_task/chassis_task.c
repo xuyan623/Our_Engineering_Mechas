@@ -50,6 +50,13 @@ static const char* g_chassis_task_leg_names[CHASSIS_TASK_LEG_COUNT] = {
     "joint_leg_l",
 };
 static const char* g_chassis_task_big_yaw_name = "big_yaw";
+Motor* g_chassis_task_wheel_motor_cache[CHASSIS_TASK_WHEEL_COUNT] = {0};
+Motor* g_chassis_task_leg_motor_cache[CHASSIS_TASK_LEG_COUNT] = {0};
+Motor* g_chassis_task_big_yaw_motor = OM_NULL;
+static PidController g_front_wheel_speed_pids[CHASSIS_TASK_FRONT_WHEEL_COUNT] = {0};
+static PidController g_rear_wheel_speed_pids[CHASSIS_TASK_REAR_WHEEL_COUNT] = {0};
+static PidController g_leg_angle_pids[CHASSIS_TASK_LEG_COUNT] = {0};
+static PidController g_leg_speed_pids[CHASSIS_TASK_LEG_COUNT] = {0};
 TaskContextSlotId g_chassis_task_slot_id = 0;
 static uint8_t g_chassis_task_mode_channel_storage
     [sizeof(ModeTaskControlSnapshot) * CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
@@ -78,10 +85,10 @@ static PidController* chassis_task_get_wheel_speed_pid(
 
     if (chassis_task_is_front_wheel_index(wheel_index) == OM_TRUE)
     {
-        return &context->front_wheel_speed_pids[wheel_index];
+        return &g_front_wheel_speed_pids[wheel_index];
     }
 
-    return &context->rear_wheel_speed_pids[wheel_index - CHASSIS_TASK_FRONT_WHEEL_COUNT];
+    return &g_rear_wheel_speed_pids[wheel_index - CHASSIS_TASK_FRONT_WHEEL_COUNT];
 }
 
 static OmBool chassis_task_motor_feedback_recent(const Motor* motor, uint32_t timeout_ms)
@@ -111,7 +118,7 @@ static void chassis_task_drain_mode_snapshots(ChassisTaskContext* context)
     while (task_mpsc_channel_receive_nonblocking(&context->mode_channel, &snapshot) == OM_OK)
     {
         context->latest_mode_snapshot = snapshot;
-        context->mode_snapshot_ready = OM_TRUE;
+        context->flags |= CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY;
     }
 }
 
@@ -127,7 +134,7 @@ static void chassis_task_drain_rc_snapshots(ChassisTaskContext* context)
     while (task_pipe_channel_receive(&context->rc_channel, &snapshot, 0u) == OM_OK)
     {
         context->latest_rc_snapshot = snapshot;
-        context->rc_snapshot_ready = OM_TRUE;
+        context->flags |= CHASSIS_TASK_FLAG_RC_SNAPSHOT_READY;
     }
 }
 
@@ -143,7 +150,7 @@ static void chassis_task_drain_imu_snapshots(ChassisTaskContext* context)
     while (task_pipe_channel_receive(&context->imu_channel, &snapshot, 0u) == OM_OK)
     {
         context->latest_imu_snapshot = snapshot;
-        context->imu_snapshot_ready = OM_TRUE;
+        context->flags |= CHASSIS_TASK_FLAG_IMU_SNAPSHOT_READY;
     }
 }
 
@@ -152,8 +159,8 @@ static OmBool chassis_task_load_snapshot(
     ChassisTaskInputSnapshot* snapshot)
 {
     if (context == OM_NULL || snapshot == OM_NULL ||
-        context->mode_snapshot_ready != OM_TRUE ||
-        context->rc_snapshot_ready != OM_TRUE)
+        !(context->flags & CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY) ||
+        !(context->flags & CHASSIS_TASK_FLAG_RC_SNAPSHOT_READY))
     {
         return OM_FALSE;
     }
@@ -170,7 +177,7 @@ static OmBool chassis_task_load_snapshot(
     snapshot->global_mode = (GlobalMode)context->latest_mode_snapshot.global_mode;
     snapshot->chassis_mode = (ChassisMode)context->latest_mode_snapshot.chassis_mode;
     snapshot->imu_pitch_deg =
-        (context->imu_snapshot_ready == OM_TRUE) ? context->latest_imu_snapshot.pitch : 0.0f;
+        ((context->flags & CHASSIS_TASK_FLAG_IMU_SNAPSHOT_READY)) ? context->latest_imu_snapshot.pitch : 0.0f;
     return OM_TRUE;
 }
 
@@ -213,7 +220,7 @@ static OmRet chassis_task_init_pids(ChassisTaskContext* context)
     for (index = 0u; index < CHASSIS_TASK_FRONT_WHEEL_COUNT; index++)
     {
         ret = chassis_task_init_pid(
-            &context->front_wheel_speed_pids[index],
+            &g_front_wheel_speed_pids[index],
             APP_CHASSIS_FRONT_WHEEL_SPEED_PID_KP,
             front_wheel_speed_ki,
             APP_CHASSIS_FRONT_WHEEL_SPEED_PID_KD,
@@ -228,7 +235,7 @@ static OmRet chassis_task_init_pids(ChassisTaskContext* context)
     for (index = 0u; index < CHASSIS_TASK_REAR_WHEEL_COUNT; index++)
     {
         ret = chassis_task_init_pid(
-            &context->rear_wheel_speed_pids[index],
+            &g_rear_wheel_speed_pids[index],
             APP_CHASSIS_REAR_WHEEL_SPEED_PID_KP,
             rear_wheel_speed_ki,
             APP_CHASSIS_REAR_WHEEL_SPEED_PID_KD,
@@ -243,7 +250,7 @@ static OmRet chassis_task_init_pids(ChassisTaskContext* context)
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
         ret = chassis_task_init_pid(
-            &context->leg_angle_pids[index],
+            &g_leg_angle_pids[index],
             APP_CHASSIS_LEG_ANGLE_PID_KP,
             APP_CHASSIS_LEG_ANGLE_PID_KI,
             APP_CHASSIS_LEG_ANGLE_PID_KD,
@@ -255,7 +262,7 @@ static OmRet chassis_task_init_pids(ChassisTaskContext* context)
         }
 
         ret = chassis_task_init_pid(
-            &context->leg_speed_pids[index],
+            &g_leg_speed_pids[index],
             APP_CHASSIS_LEG_SPEED_PID_KP,
             APP_CHASSIS_LEG_SPEED_PID_KI,
             APP_CHASSIS_LEG_SPEED_PID_KD,
@@ -279,12 +286,12 @@ static OmRet chassis_task_try_bind_motors(ChassisTaskContext* context)
         return OM_ERROR_NULL;
     }
 
-    context->motors_bound_flag = OM_FALSE;
+    context->flags &= ~CHASSIS_TASK_FLAG_MOTORS_BOUND;
 
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
-        context->wheel_motors[index] = motor_find_by_name(g_chassis_task_wheel_names[index]);
-        if (context->wheel_motors[index] == OM_NULL)
+        g_chassis_task_wheel_motor_cache[index] = motor_find_by_name(g_chassis_task_wheel_names[index]);
+        if (chassis_task_get_wheel_motor(index) == OM_NULL)
         {
             return OM_ERROR_NULL;
         }
@@ -292,22 +299,22 @@ static OmRet chassis_task_try_bind_motors(ChassisTaskContext* context)
 
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
-        context->leg_motors[index] = motor_find_by_name(g_chassis_task_leg_names[index]);
-        if (context->leg_motors[index] == OM_NULL)
+        g_chassis_task_leg_motor_cache[index] = motor_find_by_name(g_chassis_task_leg_names[index]);
+        if (chassis_task_get_leg_motor(index) == OM_NULL)
         {
             return OM_ERROR_NULL;
         }
     }
 
 #if (BIG_YAW_TEMP_HOLD_ENABLE == 1u)
-    context->big_yaw_motor = motor_find_by_name(g_chassis_task_big_yaw_name);
+    chassis_task_get_big_yaw_motor() = motor_find_by_name(g_chassis_task_big_yaw_name);
 #else
-    context->big_yaw_motor = OM_NULL;
+    g_chassis_task_big_yaw_motor = OM_NULL;
 #endif
 
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
-        if (motor_set_control_mode(context->wheel_motors[index], MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
+        if (motor_set_control_mode(chassis_task_get_wheel_motor(index), MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
         {
             return OM_ERROR;
         }
@@ -315,22 +322,22 @@ static OmRet chassis_task_try_bind_motors(ChassisTaskContext* context)
 
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
-        if (motor_set_control_mode(context->leg_motors[index], MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
+        if (motor_set_control_mode(chassis_task_get_leg_motor(index), MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
         {
             return OM_ERROR;
         }
     }
 
-    if (context->big_yaw_motor != OM_NULL)
+    if (chassis_task_get_big_yaw_motor() != OM_NULL)
     {
-        if (motor_set_control_mode(context->big_yaw_motor, MOTOR_CONTROL_MODE_DISABLED) != OM_OK)
+        if (motor_set_control_mode(chassis_task_get_big_yaw_motor(), MOTOR_CONTROL_MODE_DISABLED) != OM_OK)
         {
             return OM_ERROR;
         }
-        context->big_yaw_hold_initialized = OM_FALSE;
+        context->flags &= ~CHASSIS_TASK_FLAG_BIG_YAW_HOLD_INIT;
     }
 
-    context->motors_bound_flag = OM_TRUE;
+    context->flags |= CHASSIS_TASK_FLAG_MOTORS_BOUND;
     return OM_OK;
 }
 
@@ -338,14 +345,14 @@ static OmRet chassis_task_restore_control_modes(ChassisTaskContext* context)
 {
     uint32_t index = 0u;
 
-    if (context == OM_NULL || context->motors_bound_flag != OM_TRUE)
+    if (context == OM_NULL || !(context->flags & CHASSIS_TASK_FLAG_MOTORS_BOUND))
     {
         return OM_ERROR_NULL;
     }
 
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
-        if (motor_set_control_mode(context->wheel_motors[index], MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
+        if (motor_set_control_mode(chassis_task_get_wheel_motor(index), MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
         {
             return OM_ERROR;
         }
@@ -353,15 +360,15 @@ static OmRet chassis_task_restore_control_modes(ChassisTaskContext* context)
 
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
-        if (motor_set_control_mode(context->leg_motors[index], MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
+        if (motor_set_control_mode(chassis_task_get_leg_motor(index), MOTOR_CONTROL_MODE_CURRENT) != OM_OK)
         {
             return OM_ERROR;
         }
     }
 
-    if (context->big_yaw_motor != OM_NULL)
+    if (chassis_task_get_big_yaw_motor() != OM_NULL)
     {
-        if (motor_set_control_mode(context->big_yaw_motor, MOTOR_CONTROL_MODE_DISABLED) != OM_OK)
+        if (motor_set_control_mode(chassis_task_get_big_yaw_motor(), MOTOR_CONTROL_MODE_DISABLED) != OM_OK)
         {
             return OM_ERROR;
         }
@@ -612,12 +619,12 @@ static void chassis_task_apply_zero_output(ChassisTaskContext* context)
 
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
-        chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);
+        chassis_task_apply_current_command(chassis_task_get_wheel_motor(index), 0.0f);
     }
 
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
-        chassis_task_apply_current_command(context->leg_motors[index], 0.0f);
+        chassis_task_apply_current_command(chassis_task_get_leg_motor(index), 0.0f);
     }
 }
 
@@ -653,13 +660,13 @@ static void chassis_task_apply_big_yaw_hold(ChassisTaskContext* context)
 #if (BIG_YAW_TEMP_HOLD_ENABLE == 1u)
     const MotorFeedback* feedback = OM_NULL;
 
-    if (context == OM_NULL || context->big_yaw_motor == OM_NULL)
+    if (context == OM_NULL || chassis_task_get_big_yaw_motor() == OM_NULL)
     {
         return;
     }
 
-    feedback = motor_get_feedback(context->big_yaw_motor);
-    if (context->big_yaw_hold_initialized != OM_TRUE)
+    feedback = motor_get_feedback(chassis_task_get_big_yaw_motor());
+    if (!(context->flags & CHASSIS_TASK_FLAG_BIG_YAW_HOLD_INIT))
     {
         if (feedback == OM_NULL || feedback->online != OM_TRUE)
         {
@@ -667,17 +674,17 @@ static void chassis_task_apply_big_yaw_hold(ChassisTaskContext* context)
         }
 
         context->big_yaw_hold_angle_rad = feedback->angle;
-        context->big_yaw_hold_initialized = OM_TRUE;
+        context->flags |= CHASSIS_TASK_FLAG_BIG_YAW_HOLD_INIT;
     }
 
-    motor_set_angle(context->big_yaw_motor, context->big_yaw_hold_angle_rad);
-    motor_set_speed(context->big_yaw_motor, 0.0f);
+    motor_set_angle(chassis_task_get_big_yaw_motor(), context->big_yaw_hold_angle_rad);
+    motor_set_speed(chassis_task_get_big_yaw_motor(), 0.0f);
     motor_set_position_gains(
-        context->big_yaw_motor,
+        chassis_task_get_big_yaw_motor(),
         APP_CHASSIS_BIG_YAW_HOLD_KP,
         APP_CHASSIS_BIG_YAW_HOLD_KD);
-    motor_set_torque(context->big_yaw_motor, 0.0f);
-    (void)motor_control_compute(context->big_yaw_motor);
+    motor_set_torque(chassis_task_get_big_yaw_motor(), 0.0f);
+    (void)motor_control_compute(chassis_task_get_big_yaw_motor());
 #else
     (void)context;
 #endif
@@ -733,16 +740,16 @@ static void chassis_task_resolve_wheel_online_flags(
         wheel_online_flags[index] = OM_FALSE;
 
         /* 检查上下文和电机指针是否有效 */
-        if (context == OM_NULL || context->wheel_motors[index] == OM_NULL)
+        if (context == OM_NULL || chassis_task_get_wheel_motor(index) == OM_NULL)
         {
             offline_wheel_count++;
             last_offline_wheel_id = (MecanumWheelId)index;
             continue;
         }
 
-        feedback = motor_get_feedback(context->wheel_motors[index]);
+        feedback = motor_get_feedback(chassis_task_get_wheel_motor(index));
         /* 检查电机反馈数据是否在有效时间范围内 */
-        if (chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) == OM_TRUE)
+        if (chassis_task_motor_feedback_recent(chassis_task_get_wheel_motor(index), g_chassis_task_wheel_feedback_timeout_ms) == OM_TRUE)
         {
             wheel_online_flags[index] = OM_TRUE;
             (*online_wheel_count)++;
@@ -792,7 +799,7 @@ static void chassis_task_apply_wheel_control(
     /* 遍历所有轮子电机，逐个应用速度控制 */
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
-        const MotorFeedback* feedback = motor_get_feedback(context->wheel_motors[index]);
+        const MotorFeedback* feedback = motor_get_feedback(chassis_task_get_wheel_motor(index));
         PidController* wheel_speed_pid = chassis_task_get_wheel_speed_pid(context, index);
         float wheel_speed_fdb_rpm = 0.0f;
         float current_cmd = 0.0f;
@@ -800,10 +807,10 @@ static void chassis_task_apply_wheel_control(
         /* 检查轮子是否激活且反馈数据有效，否则重置PID并停止电机 */
         if (wheel_active_flags[index] != OM_TRUE ||
             wheel_speed_pid == OM_NULL ||
-            chassis_task_motor_feedback_recent(context->wheel_motors[index], g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
+            chassis_task_motor_feedback_recent(chassis_task_get_wheel_motor(index), g_chassis_task_wheel_feedback_timeout_ms) != OM_TRUE)
         {
             pid_reset(wheel_speed_pid);
-            chassis_task_apply_current_command(context->wheel_motors[index], 0.0f);
+            chassis_task_apply_current_command(chassis_task_get_wheel_motor(index), 0.0f);
             continue;
         }
 
@@ -819,7 +826,7 @@ static void chassis_task_apply_wheel_control(
                 current_tick_s);
 
         /* 应用电流控制指令到电机 */
-        chassis_task_apply_current_command(context->wheel_motors[index], current_cmd);
+        chassis_task_apply_current_command(chassis_task_get_wheel_motor(index), current_cmd);
     }
 }
 
@@ -851,7 +858,7 @@ static void chassis_task_apply_leg_control(
 
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
-        const MotorFeedback* feedback = motor_get_feedback(context->leg_motors[index]);
+        const MotorFeedback* feedback = motor_get_feedback(chassis_task_get_leg_motor(index));
         const float leg_angle_fdb_deg =
             (feedback != OM_NULL) ? math_utils_normalize_deg(math_utils_rad_to_deg(feedback->angle)) : 0.0f;
         const float leg_speed_fdb_rpm =
@@ -866,7 +873,7 @@ static void chassis_task_apply_leg_control(
         /* 外环：角度PID控制器计算期望转速 */
         leg_speed_ref_rpm =
             pid_compute(
-                &context->leg_angle_pids[index],
+                &g_leg_angle_pids[index],
                 leg_reference_deg[index],
                 leg_angle_fdb_deg,
                 current_tick_s);
@@ -874,12 +881,12 @@ static void chassis_task_apply_leg_control(
         /* 内环：速度PID控制器计算期望电流 */
         leg_current_raw =
             pid_compute(
-                &context->leg_speed_pids[index],
+                &g_leg_speed_pids[index],
                 leg_speed_ref_rpm,
                 context->leg_speed_filtered_rpm[index],
                 current_tick_s);
 
-        chassis_task_apply_current_command(context->leg_motors[index], leg_current_raw / 100.0f);
+        chassis_task_apply_current_command(chassis_task_get_leg_motor(index), leg_current_raw / 100.0f);
     }
 }
 
@@ -939,7 +946,7 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     }
 
     /* 确保电机已绑定，未绑定时尝试绑定 */
-    if (context->motors_bound_flag != OM_TRUE)
+    if (!(context->flags & CHASSIS_TASK_FLAG_MOTORS_BOUND))
     {
         if (chassis_task_try_bind_motors(context) != OM_OK)
         {
@@ -948,16 +955,16 @@ static void chassis_task_run_once(ChassisTaskContext* context)
     }
     if (mct_is_operational_active() != OM_TRUE)
     {
-        context->control_modes_armed_for_operational = OM_FALSE;
+        context->flags &= ~CHASSIS_TASK_FLAG_CONTROL_MODES_ARMED;
         context->last_tx_request_ms = 0u;
     }
-    else if (context->control_modes_armed_for_operational != OM_TRUE)
+    else if (!(context->flags & CHASSIS_TASK_FLAG_CONTROL_MODES_ARMED))
     {
         if (chassis_task_restore_control_modes(context) != OM_OK)
         {
             return;
         }
-        context->control_modes_armed_for_operational = OM_TRUE;
+        context->flags |= CHASSIS_TASK_FLAG_CONTROL_MODES_ARMED;
     }
 
     chassis_task_resolve_wheel_online_flags(
@@ -1082,10 +1089,7 @@ static void chassis_task_ctx_reset(void* ctx)
     self->big_yaw_hold_angle_rad = 0.0f;
     self->last_tx_request_ms = 0u;
     self->rc_rotate_saturation_since_ms = 0u;
-    self->big_yaw_hold_initialized = OM_FALSE;
-    self->mode_snapshot_ready = OM_FALSE;
-    self->rc_snapshot_ready = OM_FALSE;
-    self->imu_snapshot_ready = OM_FALSE;
+    self->flags = 0u;
 }
 
 static void chassis_task_ctx_cleanup(void* ctx)
@@ -1140,12 +1144,12 @@ OmRet chassis_task_start(void)
         return ret;
     }
 
-    /* mode shi zheng shi zhuang tai owner de dang qian shi shi, yun xu zai qi dong shi zhi jie zhong ru dang qian kuai zhao.
-     * RC / IMU ze bi xu deng dai ge zi zheng shi tong dao shou bao, bu neng zai cong guan ce chi guan zhong.
+    /* mode 是正式状态 owner 的当前事实，允许在启动时直接种入当前快照.
+     * RC / IMU 则必须等待各自正式通道首包，不能再从观测池灌种.
      */
     if (mode_task_copy_control_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
     {
-        ctx->mode_snapshot_ready = OM_TRUE;
+        ctx->flags |= CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY;
     }
 
     ret = task_pipe_channel_init(
@@ -1186,7 +1190,7 @@ OmRet chassis_task_start(void)
         return ret;
     }
 
-    /* chuang jian di pan ren wu xian cheng */
+    /* 创建底盘任务线程 */
     status = osal_thread_create(
         &chassis_task_thread,
         &chassis_task_attr,

@@ -96,54 +96,69 @@ typedef enum
     ARM_TASK_CUSTOM_AXIS_ROLL,
 } ArmTaskCustomControllerAxis;
 
+/* 电机句柄查询：由 arm_task.c 内部缓存表支持。 */
+static inline Motor* arm_task_get_motor(ArmTaskMachineAxis axis)
+{
+    extern Motor* g_arm_task_motor_cache[];
+    return (axis < ARM_TASK_MACHINE_COUNT) ? g_arm_task_motor_cache[axis] : OM_NULL;
+}
+
 /* arm_task 本地上下文：
- * - 直接持有机械臂各轴电机句柄
- * - 维护 roll3 的双环 PID
+ * - 电机句柄已外迁至模块局部缓存表，不再内嵌
+ * - roll3 双环 PID 通过 motor compute_hook 绑定到电机实例
  * - 保存最近一次共享控制事实，用于动作时间窗推进
  * - pitch2 零位由 GO8010 owner 锁存，这里只读消费
  */
 typedef struct
 {
-    Motor* big_yaw_motor;
-    Motor* pitch1_motor;
-    Motor* pitch2_motor;
-    Motor* roll2_motor;
-    Motor* pitch3_motor;
-    Motor* roll3_motor;
-    Motor* grip_motor;
-    PidController roll3_angle_pid;
-    PidController roll3_speed_pid;
+    /* 通信通道 */
     TaskMpscChannel mode_channel;
     TaskPipeChannel custom_controller_channel;
+
+    /* 输入快照 */
     ModeTaskControlSnapshot latest_mode_snapshot;
     DpCustomControllerSnapshot latest_custom_controller_snapshot;
     ArmTaskSnapshot last_snapshot;
+
+    /* 平滑目标值 */
     ArmTaskMotorTargets smoothed_targets;
+
+    /* 时间戳：command + tx_request + 各轴控制 */
     OsalTimeMs command_since_ms;
     OsalTimeMs last_tx_request_ms;
-    OsalTimeMs last_big_yaw_control_ms;
-    OsalTimeMs last_pitch1_control_ms;
-    OsalTimeMs last_pitch2_control_ms;
-    OsalTimeMs last_roll2_control_ms;
-    OsalTimeMs last_pitch3_control_ms;
-    OsalTimeMs last_roll3_control_ms;
-    OsalTimeMs last_grip_control_ms;
-    OmBool motors_bound_flag;
-    OmBool control_modes_armed_for_operational;
-    OmBool snapshot_initialized;
-    OmBool smoothed_targets_initialized;
-    OmBool custom_controller_alignment_done;
-    OmBool custom_controller_alignment_failed;
-    OmBool custom_controller_reference_captured;
-    OmBool custom_controller_was_active;
-    OmBool custom_controller_filter_initialized;
-    OsalTimeMs custom_controller_alignment_started_ms;
+    OsalTimeMs last_control_ms[ARM_TASK_MACHINE_COUNT];
+
+    /* 自定义控制器状态 */
     float custom_controller_neutral_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT];
     float custom_controller_filtered_delta_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT];
     float custom_controller_roll3_reference_rad;
     float custom_controller_grip_reference_rad;
-    OmBool mode_snapshot_ready;
+    OsalTimeMs custom_controller_alignment_started_ms;
+
+    /* 标志位打包 */
+    uint16_t flags;
+    /* bit 0: motors_bound */
+    /* bit 1: control_modes_armed */
+    /* bit 2: snapshot_initialized */
+    /* bit 3: smoothed_targets_initialized */
+    /* bit 4: custom_controller_alignment_done */
+    /* bit 5: custom_controller_alignment_failed */
+    /* bit 6: custom_controller_reference_captured */
+    /* bit 7: custom_controller_was_active */
+    /* bit 8: custom_controller_filter_initialized */
+    /* bit 9: mode_snapshot_ready */
 } ArmTaskContext;
+
+#define ARM_TASK_FLAG_MOTORS_BOUND               (1u << 0u)
+#define ARM_TASK_FLAG_CONTROL_MODES_ARMED        (1u << 1u)
+#define ARM_TASK_FLAG_SNAPSHOT_INITIALIZED       (1u << 2u)
+#define ARM_TASK_FLAG_SMOOTHED_TARGETS_INIT      (1u << 3u)
+#define ARM_TASK_FLAG_CUSTOM_ALIGNMENT_DONE      (1u << 4u)
+#define ARM_TASK_FLAG_CUSTOM_ALIGNMENT_FAILED    (1u << 5u)
+#define ARM_TASK_FLAG_CUSTOM_REF_CAPTURED        (1u << 6u)
+#define ARM_TASK_FLAG_CUSTOM_WAS_ACTIVE          (1u << 7u)
+#define ARM_TASK_FLAG_CUSTOM_FILTER_INIT         (1u << 8u)
+#define ARM_TASK_FLAG_MODE_SNAPSHOT_READY       (1u << 9u)
 
 /* arm_task 运行时上下文单例，由 arm_task.c 定义。 */
 extern TaskContextSlotId g_arm_task_slot_id;
@@ -167,7 +182,7 @@ OmBool arm_task_get_roll3_feedback_angle_rad(
     float* angle_rad);
 
 
-/* Ji gou jiao chang zhu ji chu zi tai biao, gong ni xiang ying she shi yong. */
+/* 机构角常驻基础姿态表，供逆向映射使用。 */
 extern const ArmTaskMachinePose g_arm_pose_normal;
 
 #endif

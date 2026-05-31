@@ -26,21 +26,21 @@ OmBool chassis_task_get_debug_snapshot(
     /* 四轮：反馈转速（rpm）、命令电流 */
     for (index = 0u; index < CHASSIS_TASK_WHEEL_COUNT; index++)
     {
-        const MotorFeedback* feedback = motor_get_feedback(g_chassis_task_owner_context->wheel_motors[index]);
+        const MotorFeedback* feedback = motor_get_feedback(chassis_task_get_wheel_motor(index));
         wheel_feedback_rpm[index] =
             (feedback != OM_NULL) ? math_utils_rad_per_s_to_rpm(feedback->speed) : 0.0f;
         wheel_command_current[index] =
-            motor_get_output(g_chassis_task_owner_context->wheel_motors[index]);
+            motor_get_output(chassis_task_get_wheel_motor(index));
     }
 
     /* 两腿：反馈角度（deg）、命令电流 */
     for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
     {
-        const MotorFeedback* feedback = motor_get_feedback(g_chassis_task_owner_context->leg_motors[index]);
+        const MotorFeedback* feedback = motor_get_feedback(chassis_task_get_leg_motor(index));
         leg_feedback_deg[index] =
             (feedback != OM_NULL) ? math_utils_normalize_deg(math_utils_rad_to_deg(feedback->angle)) : 0.0f;
         leg_command_current[index] =
-            motor_get_output(g_chassis_task_owner_context->leg_motors[index]);
+            motor_get_output(chassis_task_get_leg_motor(index));
     }
 
     return OM_TRUE;
@@ -55,5 +55,5 @@ OmBool chassis_task_get_debug_chassis_mode(
     }
 
     *chassis_mode = g_chassis_task_owner_context->latest_mode_snapshot.chassis_mode;
-    return (g_chassis_task_owner_context->mode_snapshot_ready == OM_TRUE) ? OM_TRUE : OM_FALSE;
+    return ((g_chassis_task_owner_context->flags & CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY)) ? OM_TRUE : OM_FALSE;
 }

@@ -31,7 +31,7 @@ uint8_t arm_task_get_custom_controller_takeover_bit(void)
 
     return (g_arm_task_owner_context->latest_mode_snapshot.chassis_mode ==
                 MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL &&
-            g_arm_task_owner_context->custom_controller_alignment_done == OM_TRUE &&
+            (g_arm_task_owner_context->flags & ARM_TASK_FLAG_CUSTOM_ALIGNMENT_DONE) &&
             g_arm_task_owner_context->latest_custom_controller_snapshot.online != 0u &&
             g_arm_task_owner_context->latest_custom_controller_snapshot.work_mode ==
                 ARM_TASK_CUSTOM_CONTROLLER_WORK_MODE_ENCODER)
@@ -68,7 +68,7 @@ OmBool arm_task_get_pitch2_debug_snapshot(
             ? OM_TRUE
             : OM_FALSE;
 
-    pitch2_feedback = motor_get_feedback(g_arm_task_owner_context->pitch2_motor);
+    pitch2_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH2));
     *pitch2_feedback_deg =
         (pitch2_feedback != OM_NULL) ? math_utils_rad_to_deg(pitch2_feedback->angle) : 0.0f;
     *pitch2_feedback_rpm =
@@ -79,7 +79,7 @@ OmBool arm_task_get_pitch2_debug_snapshot(
         (pitch2_feedback != OM_NULL) ? pitch2_feedback->torque : 0.0f;
     *pitch2_feedback_online =
         (motor_is_feedback_recent(
-             g_arm_task_owner_context->pitch2_motor,
+             arm_task_get_motor(ARM_TASK_MACHINE_PITCH2),
              ARM_TASK_GO8010_RECENT_TIMEOUT_MS) == OM_TRUE)
             ? 1.0f
             : 0.0f;
@@ -136,19 +136,19 @@ OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
         return OM_FALSE;
     }
 
-    /* big_yaw: zhi jie ni xiang */
-    fb = motor_get_feedback(g_arm_task_owner_context->big_yaw_motor);
+    /* big_yaw: 直接逆向 */
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_BIG_YAW));
     machine_angle_rad[0] = (fb != OM_NULL) ?
         (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_BIG_YAW]) : 0.0f;
 
-    /* pitch1: xian chu yi ratio zai jian normal */
-    fb = motor_get_feedback(g_arm_task_owner_context->pitch1_motor);
+    /* pitch1: 先除以 ratio 再减 normal */
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH1));
     machine_angle_rad[1] = (fb != OM_NULL) ?
         (fb->angle / APP_ARM_PITCH1_TARGET_RATIO -
          g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH1]) : 0.0f;
 
-    /* pitch2: xian jian zero, zai chu yi -gear_ratio, zai jian normal */
-    fb = motor_get_feedback(g_arm_task_owner_context->pitch2_motor);
+    /* pitch2: 先减 zero, 再除以 -gear_ratio, 再减 normal */
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH2));
     if (fb != OM_NULL)
     {
         if (arm_task_get_pitch2_zero_angle_rad(g_arm_task_owner_context, &pitch2_zero_rad) != OM_TRUE)
@@ -164,20 +164,20 @@ OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
         machine_angle_rad[2] = 0.0f;
     }
 
-    /* roll2: zhi jie ni xiang */
-    fb = motor_get_feedback(g_arm_task_owner_context->roll2_motor);
+    /* roll2: 直接逆向 */
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_ROLL2));
     machine_angle_rad[3] = (fb != OM_NULL) ?
         (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_ROLL2]) : 0.0f;
 
-    /* pitch3: zhi jie ni xiang */
-    fb = motor_get_feedback(g_arm_task_owner_context->pitch3_motor);
+    /* pitch3: 直接逆向 */
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH3));
     machine_angle_rad[4] = (fb != OM_NULL) ?
         (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH3]) : 0.0f;
 
-    /* roll3: GM6020 bian ma qi fan wei [-pi, pi), zi tai biao yong [0, 2*pi).
-     * Ni xiang shi tou chuan, dan yao zuo [0, 2*pi) unwrap cai neng yu dong zuo biao wan quan dui qi.
+    /* roll3: GM6020 编码器范围 [-pi, pi), 姿态表用 [0, 2*pi).
+     * 逆向是透传，但要做 [0, 2*pi) unwrap 才能与动作表完全对齐。
      */
-    fb = motor_get_feedback(g_arm_task_owner_context->roll3_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_ROLL3));
     if (fb != OM_NULL)
     {
         float roll3_unwrapped = fb->angle;
@@ -196,8 +196,8 @@ OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
         machine_angle_rad[5] = 0.0f;
     }
 
-    /* grip: zhi jie ni xiang */
-    fb = motor_get_feedback(g_arm_task_owner_context->grip_motor);
+    /* grip: 直接逆向 */
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_GRIP));
     machine_angle_rad[6] = (fb != OM_NULL) ?
         (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP]) : 0.0f;
 
@@ -214,25 +214,25 @@ OmBool arm_task_get_arm_motor_feedback_rad_snapshot(
         return OM_FALSE;
     }
 
-    fb = motor_get_feedback(g_arm_task_owner_context->big_yaw_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_BIG_YAW));
     arm_feedback_rad[0] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
-    fb = motor_get_feedback(g_arm_task_owner_context->pitch1_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH1));
     arm_feedback_rad[1] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
-    fb = motor_get_feedback(g_arm_task_owner_context->pitch2_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH2));
     arm_feedback_rad[2] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
-    fb = motor_get_feedback(g_arm_task_owner_context->roll2_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_ROLL2));
     arm_feedback_rad[3] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
-    fb = motor_get_feedback(g_arm_task_owner_context->pitch3_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH3));
     arm_feedback_rad[4] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
-    fb = motor_get_feedback(g_arm_task_owner_context->roll3_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_ROLL3));
     arm_feedback_rad[5] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
-    fb = motor_get_feedback(g_arm_task_owner_context->grip_motor);
+    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_GRIP));
     arm_feedback_rad[6] = (fb != OM_NULL) ? fb->angle : 0.0f;
 
     return OM_TRUE;
@@ -264,7 +264,7 @@ OmBool arm_task_get_pitch1_debug_snapshot(
             ? OM_TRUE
             : OM_FALSE;
 
-    pitch1_feedback = motor_get_feedback(g_arm_task_owner_context->pitch1_motor);
+    pitch1_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH1));
     *pitch1_feedback_deg =
         (pitch1_feedback != OM_NULL) ? math_utils_rad_to_deg(pitch1_feedback->angle) : 0.0f;
     *pitch1_feedback_rpm =
@@ -273,7 +273,7 @@ OmBool arm_task_get_pitch1_debug_snapshot(
         (pitch1_feedback != OM_NULL) ? pitch1_feedback->torque : 0.0f;
     *pitch1_feedback_online =
         (motor_is_feedback_recent(
-             g_arm_task_owner_context->pitch1_motor,
+             arm_task_get_motor(ARM_TASK_MACHINE_PITCH1),
              ARM_TASK_DAMIAO_RECENT_TIMEOUT_MS) == OM_TRUE)
             ? 1.0f
             : 0.0f;
@@ -311,7 +311,7 @@ OmBool arm_task_get_pitch3_debug_snapshot(
             ? OM_TRUE
             : OM_FALSE;
 
-    pitch3_feedback = motor_get_feedback(g_arm_task_owner_context->pitch3_motor);
+    pitch3_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH3));
     *pitch3_feedback_deg =
         (pitch3_feedback != OM_NULL) ? math_utils_rad_to_deg(pitch3_feedback->angle) : 0.0f;
     *pitch3_feedback_rpm =
@@ -320,7 +320,7 @@ OmBool arm_task_get_pitch3_debug_snapshot(
         (pitch3_feedback != OM_NULL) ? pitch3_feedback->torque : 0.0f;
     *pitch3_feedback_online =
         (motor_is_feedback_recent(
-             g_arm_task_owner_context->pitch3_motor,
+             arm_task_get_motor(ARM_TASK_MACHINE_PITCH3),
              ARM_TASK_DAMIAO_RECENT_TIMEOUT_MS) == OM_TRUE)
             ? 1.0f
             : 0.0f;
@@ -383,7 +383,7 @@ OmBool arm_task_get_debug_snapshot(
             : OM_FALSE;
 
     /* big_yaw：反馈角、目标角、力矩反馈 */
-    big_yaw_feedback = motor_get_feedback(g_arm_task_owner_context->big_yaw_motor);
+    big_yaw_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_BIG_YAW));
     *big_yaw_feedback_deg =
         (big_yaw_feedback != OM_NULL) ? math_utils_rad_to_deg(big_yaw_feedback->angle) : 0.0f;
     *big_yaw_target_deg =
@@ -394,7 +394,7 @@ OmBool arm_task_get_debug_snapshot(
         (big_yaw_feedback != OM_NULL) ? big_yaw_feedback->torque : 0.0f;
 
     /* pitch1：反馈角、目标角、力矩反馈 */
-    pitch1_feedback = motor_get_feedback(g_arm_task_owner_context->pitch1_motor);
+    pitch1_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH1));
     *pitch1_feedback_deg =
         (pitch1_feedback != OM_NULL) ? math_utils_rad_to_deg(pitch1_feedback->angle) : 0.0f;
     *pitch1_target_deg =
@@ -405,7 +405,7 @@ OmBool arm_task_get_debug_snapshot(
         (pitch1_feedback != OM_NULL) ? pitch1_feedback->torque : 0.0f;
 
     /* pitch2：反馈角、目标角、力矩反馈 */
-    pitch2_feedback = motor_get_feedback(g_arm_task_owner_context->pitch2_motor);
+    pitch2_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH2));
     *pitch2_feedback_deg =
         (pitch2_feedback != OM_NULL) ? math_utils_rad_to_deg(pitch2_feedback->angle) : 0.0f;
     *pitch2_target_deg =
@@ -416,7 +416,7 @@ OmBool arm_task_get_debug_snapshot(
         (pitch2_feedback != OM_NULL) ? pitch2_feedback->torque : 0.0f;
 
     /* pitch3：反馈角、目标角、力矩反馈 */
-    pitch3_feedback = motor_get_feedback(g_arm_task_owner_context->pitch3_motor);
+    pitch3_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH3));
     *pitch3_feedback_deg =
         (pitch3_feedback != OM_NULL) ? math_utils_rad_to_deg(pitch3_feedback->angle) : 0.0f;
     *pitch3_target_deg =
@@ -427,7 +427,7 @@ OmBool arm_task_get_debug_snapshot(
         (pitch3_feedback != OM_NULL) ? pitch3_feedback->torque : 0.0f;
 
     /* grip：反馈角、目标角、力矩反馈 */
-    grip_feedback = motor_get_feedback(g_arm_task_owner_context->grip_motor);
+    grip_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_GRIP));
     *grip_feedback_deg =
         (grip_feedback != OM_NULL) ? math_utils_rad_to_deg(grip_feedback->angle) : 0.0f;
     *grip_target_deg =
