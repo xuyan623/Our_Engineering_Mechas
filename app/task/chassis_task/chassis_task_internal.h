@@ -14,6 +14,7 @@
 #include "module/task_channel/task_channel.h"
 #include "osal/osal_time.h"
 #include "task/mode_task/mode_task.h"
+#include "module/task_context_pool/task_context_pool.h"
 #include <atomic/atomic.h>
 #include <stdint.h>
 
@@ -75,6 +76,11 @@ typedef struct
 } ChassisTaskContext;
 
 /* 底盘任务运行时上下文单例，由 chassis_task.c 定义。 */
-extern ChassisTaskContext* g_chassis_task_owner_context;
+extern TaskContextSlotId g_chassis_task_slot_id;
+static inline ChassisTaskContext* chassis_task_get_owner_context(void)
+{
+    return (ChassisTaskContext*)task_context_pool_get_ptr(g_chassis_task_slot_id);
+}
+#define g_chassis_task_owner_context chassis_task_get_owner_context()
 
 #endif

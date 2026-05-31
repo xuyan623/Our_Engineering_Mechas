@@ -244,6 +244,32 @@ static void mct_entry(void* arg)
  * - 调 runtime_init 完成 owner 接线
  * - 创建正式通信线程
  */
+/* VTable for mct context pool. */
+static void mct_ctx_init(void* ctx)
+{
+    (void)ctx;
+}
+
+static void mct_ctx_reset(void* ctx)
+{
+    (void)ctx;
+}
+
+static void mct_ctx_cleanup(void* ctx)
+{
+    MctRuntime* self = (MctRuntime*)ctx;
+    task_command_mailbox_deinit(&self->owner_command_mailbox);
+}
+
+static const TaskContextVTable g_mct_vtable = {
+    .task_name = "mct",
+    .init = mct_ctx_init,
+    .reset = mct_ctx_reset,
+    .cleanup = mct_ctx_cleanup,
+    .diag_online = OM_NULL,
+    .diag_snapshot = OM_NULL,
+};
+
 OmRet mct_start(const BspDeviceRegistry* devices)
 {
     static OsalThread* mct_thread = OM_NULL;
@@ -253,6 +279,7 @@ OmRet mct_start(const BspDeviceRegistry* devices)
         MCT_PRIORITY};
     OsalStatus status = OSAL_INVALID;
     OmRet ret = OM_OK;
+    MctRuntime* ctx = OM_NULL;
 
     if (devices == OM_NULL)
     {
@@ -264,9 +291,19 @@ OmRet mct_start(const BspDeviceRegistry* devices)
         return OM_ERR_CONFLICT;
     }
 
-    ret = mct_runtime_init(&g_mct_runtime, devices);
+    g_mct_slot_id = task_context_pool_alloc("mct", sizeof(MctRuntime), &g_mct_vtable);
+    if (g_mct_slot_id == 0u)
+    {
+        return OM_ERROR;
+    }
+
+    ctx = (MctRuntime*)task_context_pool_get_ptr(g_mct_slot_id);
+
+    ret = mct_runtime_init(ctx, devices);
     if (ret != OM_OK)
     {
+        task_context_pool_free(g_mct_slot_id);
+        g_mct_slot_id = 0u;
         return ret;
     }
 
@@ -274,10 +311,11 @@ OmRet mct_start(const BspDeviceRegistry* devices)
         &mct_thread,
         &mct_thread_attr,
         mct_entry,
-        &g_mct_runtime);
+        ctx);
     if (status != OSAL_OK)
     {
-        task_command_mailbox_deinit(&g_mct_runtime.owner_command_mailbox);
+        task_context_pool_free(g_mct_slot_id);
+        g_mct_slot_id = 0u;
         mct_thread = OM_NULL;
         return OM_ERROR;
     }

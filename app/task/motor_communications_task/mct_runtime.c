@@ -31,7 +31,7 @@ const MctDamiaoConfig g_mct_damiao_configs[MCT_DAMIAO_COUNT] = {
     {.name = "pitch3", .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = 0x05u, .master_id = 0x15u, .installed = OM_TRUE},
 };
 
-MctRuntime g_mct_runtime = {0};
+TaskContextSlotId g_mct_slot_id = 0;
 
 /* owner 侧 CAN bring-up：
  * - open

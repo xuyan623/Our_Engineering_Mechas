@@ -13,6 +13,7 @@
 #include "task/chassis_task/chassis_task.h"
 #include "task/motor_communications_task/mct.h"
 #include "FreeRTOS.h"
+#include "module/task_context_pool/task_context_pool.h"
 #include "task.h"
 #include <string.h>
 
@@ -129,7 +130,12 @@ static OmAtomicU8 g_mode_task_init_progress_ready_flags[MODE_TASK_INIT_PROGRESS_
 static uint8_t g_mode_task_rc_channel_storage[MODE_TASK_RC_CHANNEL_CAPACITY_BYTES] = {0};
 static uint8_t g_mode_task_custom_controller_channel_storage
     [MODE_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES] = {0};
-static ModeTaskContext* g_mode_task_owner_context = OM_NULL;
+static TaskContextSlotId g_mode_task_slot_id = 0;
+static inline ModeTaskContext* mode_task_get_owner_context(void)
+{
+    return (ModeTaskContext*)task_context_pool_get_ptr(g_mode_task_slot_id);
+}
+#define g_mode_task_owner_context mode_task_get_owner_context()
 static OmBool mode_task_bootstrap_allows_compat_control(
     const ModeTaskContext* context);
 
@@ -1302,13 +1308,55 @@ static void mode_task_entry(void* arg)
     }
 }
 
+/* VTable for mode_task context pool. */
+static void mode_task_ctx_init(void* ctx)
+{
+    ModeTaskContext* self = (ModeTaskContext*)ctx;
+    memset(self, 0, sizeof(ModeTaskContext));
+}
+
+static void mode_task_ctx_reset(void* ctx)
+{
+    ModeTaskContext* self = (ModeTaskContext*)ctx;
+    self->last_sw1 = 0u;
+    self->last_last_sw1 = 0u;
+    self->last_sw2 = 0u;
+    self->last_iw = 0u;
+    self->last_global_mode = MODE_GLOBAL_RELEASE_CTRL;
+    self->last_chassis_mode = MODE_CHASSIS_RELEASE;
+    self->clamp_ready_to_change = OM_FALSE;
+    self->exchange_ready_to_change = OM_FALSE;
+    memset(&self->shared_state, 0, sizeof(self->shared_state));
+    self->shared_state.global_mode = MODE_GLOBAL_RELEASE_CTRL;
+    self->shared_state.chassis_mode = MODE_CHASSIS_RELEASE;
+    memset(&self->hierarchy_state, 0, sizeof(self->hierarchy_state));
+    memset(&self->init_progress, 0, sizeof(self->init_progress));
+    memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
+    memset(&self->latest_custom_controller_snapshot, 0, sizeof(self->latest_custom_controller_snapshot));
+    self->rc_snapshot_ready = OM_FALSE;
+}
+
+static void mode_task_ctx_cleanup(void* ctx)
+{
+    (void)ctx;
+}
+
+static const TaskContextVTable g_mode_task_vtable = {
+    .task_name = "mode_task",
+    .init = mode_task_ctx_init,
+    .reset = mode_task_ctx_reset,
+    .cleanup = mode_task_ctx_cleanup,
+    .diag_online = OM_NULL,
+    .diag_snapshot = OM_NULL,
+};
+
 OmRet mode_task_start(void)
 {
     static OsalThread* mode_task_thread = OM_NULL;
-    static ModeTaskContext mode_task_context = {0};
     const OsalThreadAttr mode_task_attr = {"mode_task", 768u * OSAL_STACK_WORD_BYTES, 4u};
     OsalStatus status = OSAL_INVALID;
     OmRet ret = OM_OK;
+    ModeTaskContext* ctx = OM_NULL;
 
     if (mode_task_thread != OM_NULL)
     {
@@ -1316,25 +1364,31 @@ OmRet mode_task_start(void)
     }
 
     memset(&g_mode_task_debug, 0, sizeof(g_mode_task_debug));
-    memset(&mode_task_context, 0, sizeof(mode_task_context));
-    g_mode_task_owner_context = &mode_task_context;
+
+    g_mode_task_slot_id = task_context_pool_alloc("mode_task", sizeof(ModeTaskContext), &g_mode_task_vtable);
+    if (g_mode_task_slot_id == 0u)
+    {
+        return OM_ERROR;
+    }
+
+    ctx = (ModeTaskContext*)task_context_pool_get_ptr(g_mode_task_slot_id);
 
     /* 启动时所有共享控制结果先落到安全默认态。 */
-    mode_task_context.shared_state.global_mode = MODE_GLOBAL_RELEASE_CTRL;
-    mode_task_context.shared_state.chassis_mode = MODE_CHASSIS_RELEASE;
-    mode_task_context.shared_state.clamp_action = MODE_CLAMP_UN_CMD;
-    mode_task_context.shared_state.exchange_action = MODE_EXCHANGE_UN_CMD;
-    mode_task_context.shared_state.primary_turn_ore_flag = 0u;
-    mode_task_context.shared_state.custom_controller_force_takeover_flag = 0u;
-    mode_task_context.last_global_mode = MODE_GLOBAL_RELEASE_CTRL;
-    mode_task_context.last_chassis_mode = MODE_CHASSIS_RELEASE;
-    mode_task_context.hierarchy_state.system_state = MODE_TASK_SYSTEM_UNINITIALIZED;
-    mode_task_board_init_context_reset(&mode_task_context.hierarchy_state.board_init);
-    mode_task_motor_init_context_reset(&mode_task_context.hierarchy_state.motor_init);
-    mode_task_operational_context_reset(&mode_task_context.hierarchy_state.operational);
-    mode_task_init_progress_context_reset(&mode_task_context.init_progress);
-    mode_task_context.rc_snapshot_ready = OM_FALSE;
-    mode_task_update_debug_state(&mode_task_context);
+    ctx->shared_state.global_mode = MODE_GLOBAL_RELEASE_CTRL;
+    ctx->shared_state.chassis_mode = MODE_CHASSIS_RELEASE;
+    ctx->shared_state.clamp_action = MODE_CLAMP_UN_CMD;
+    ctx->shared_state.exchange_action = MODE_EXCHANGE_UN_CMD;
+    ctx->shared_state.primary_turn_ore_flag = 0u;
+    ctx->shared_state.custom_controller_force_takeover_flag = 0u;
+    ctx->last_global_mode = MODE_GLOBAL_RELEASE_CTRL;
+    ctx->last_chassis_mode = MODE_CHASSIS_RELEASE;
+    ctx->hierarchy_state.system_state = MODE_TASK_SYSTEM_UNINITIALIZED;
+    mode_task_board_init_context_reset(&ctx->hierarchy_state.board_init);
+    mode_task_motor_init_context_reset(&ctx->hierarchy_state.motor_init);
+    mode_task_operational_context_reset(&ctx->hierarchy_state.operational);
+    mode_task_init_progress_context_reset(&ctx->init_progress);
+    ctx->rc_snapshot_ready = OM_FALSE;
+    mode_task_update_debug_state(ctx);
 
     ret = task_mpsc_channel_init(
         &g_mode_task_init_progress_channel,
@@ -1344,70 +1398,76 @@ OmRet mode_task_start(void)
         MODE_TASK_INIT_PROGRESS_CHANNEL_CAPACITY);
     if (ret != OM_OK)
     {
-        g_mode_task_owner_context = OM_NULL;
+        task_context_pool_free(g_mode_task_slot_id);
+        g_mode_task_slot_id = 0u;
         return ret;
     }
 
     ret = task_pipe_channel_init(
-        &mode_task_context.rc_channel,
+        &ctx->rc_channel,
         g_mode_task_rc_channel_storage,
         MODE_TASK_RC_CHANNEL_CAPACITY_BYTES,
         sizeof(DpRcSnapshot));
     if (ret != OM_OK)
     {
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
-        g_mode_task_owner_context = OM_NULL;
+        task_context_pool_free(g_mode_task_slot_id);
+        g_mode_task_slot_id = 0u;
         return ret;
     }
 
     ret = task_pipe_channel_init(
-        &mode_task_context.custom_controller_channel,
+        &ctx->custom_controller_channel,
         g_mode_task_custom_controller_channel_storage,
         MODE_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES,
         sizeof(DpCustomControllerSnapshot));
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&mode_task_context.rc_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
-        g_mode_task_owner_context = OM_NULL;
+        task_context_pool_free(g_mode_task_slot_id);
+        g_mode_task_slot_id = 0u;
         return ret;
     }
 
-    ret = sm_init(&mode_task_context.global_machine, g_mode_global_states, (uint8_t)(sizeof(g_mode_global_states) / sizeof(g_mode_global_states[0])),
-                  OM_NULL, 0u, (StateId)MODE_GLOBAL_RELEASE_CTRL, &mode_task_context);
+    ret = sm_init(&ctx->global_machine, g_mode_global_states, (uint8_t)(sizeof(g_mode_global_states) / sizeof(g_mode_global_states[0])),
+                  OM_NULL, 0u, (StateId)MODE_GLOBAL_RELEASE_CTRL, ctx);
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&mode_task_context.custom_controller_channel);
-        task_pipe_channel_deinit(&mode_task_context.rc_channel);
+        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
-        g_mode_task_owner_context = OM_NULL;
+        task_context_pool_free(g_mode_task_slot_id);
+        g_mode_task_slot_id = 0u;
         return ret;
     }
 
-    ret = sm_init(&mode_task_context.chassis_machine, g_mode_chassis_states, (uint8_t)(sizeof(g_mode_chassis_states) / sizeof(g_mode_chassis_states[0])),
-                  OM_NULL, 0u, (StateId)MODE_CHASSIS_RELEASE, &mode_task_context);
+    ret = sm_init(&ctx->chassis_machine, g_mode_chassis_states, (uint8_t)(sizeof(g_mode_chassis_states) / sizeof(g_mode_chassis_states[0])),
+                  OM_NULL, 0u, (StateId)MODE_CHASSIS_RELEASE, ctx);
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&mode_task_context.custom_controller_channel);
-        task_pipe_channel_deinit(&mode_task_context.rc_channel);
+        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
-        g_mode_task_owner_context = OM_NULL;
+        task_context_pool_free(g_mode_task_slot_id);
+        g_mode_task_slot_id = 0u;
         return ret;
     }
 
     /* 在任务真正启动前先把默认模式写进共享池，
      * 这样下游即使比 mode_task 更早运行，也不会读到未初始化模式值。
      */
-    mode_task_store_shared_state(&mode_task_context.shared_state);
+    mode_task_store_shared_state(&ctx->shared_state);
 
-    status = osal_thread_create(&mode_task_thread, &mode_task_attr, mode_task_entry, &mode_task_context);
+    status = osal_thread_create(&mode_task_thread, &mode_task_attr, mode_task_entry, ctx);
     if (status != OSAL_OK)
     {
-        task_pipe_channel_deinit(&mode_task_context.custom_controller_channel);
-        task_pipe_channel_deinit(&mode_task_context.rc_channel);
+        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
         mode_task_thread = OM_NULL;
-        g_mode_task_owner_context = OM_NULL;
+        task_context_pool_free(g_mode_task_slot_id);
+        g_mode_task_slot_id = 0u;
         return OM_ERROR;
     }
 

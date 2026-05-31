@@ -4,6 +4,7 @@
 #include "driver/motor/motor.h"
 #include "module/task_channel/task_channel.h"
 #include "task/motor_communications_task/mct.h"
+#include "module/task_context_pool/task_context_pool.h"
 #include <stdint.h>
 
 /* mct 的固定调度参数。
@@ -102,7 +103,8 @@ typedef struct
 extern const MctDjiChassisConfig g_mct_dji_chassis_configs[MCT_DJI_CHASSIS_COUNT];
 extern const MctP1010BConfig g_mct_p1010b_configs[MCT_P1010B_COUNT];
 extern const MctDamiaoConfig g_mct_damiao_configs[MCT_DAMIAO_COUNT];
-extern MctRuntime g_mct_runtime;
+extern TaskContextSlotId g_mct_slot_id;
+#define g_mct_runtime (*(MctRuntime*)task_context_pool_get_ptr(g_mct_slot_id))
 
 /* owner 接线：
  * - bring-up CAN / USART6

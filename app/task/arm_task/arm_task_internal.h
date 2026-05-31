@@ -14,6 +14,7 @@
 #include "module/task_channel/task_channel.h"
 #include "osal/osal_time.h"
 #include "task/mode_task/mode_task.h"
+#include "module/task_context_pool/task_context_pool.h"
 #include <atomic/atomic.h>
 #include <stdint.h>
 
@@ -145,7 +146,12 @@ typedef struct
 } ArmTaskContext;
 
 /* arm_task 运行时上下文单例，由 arm_task.c 定义。 */
-extern ArmTaskContext* g_arm_task_owner_context;
+extern TaskContextSlotId g_arm_task_slot_id;
+static inline ArmTaskContext* arm_task_get_owner_context(void)
+{
+    return (ArmTaskContext*)task_context_pool_get_ptr(g_arm_task_slot_id);
+}
+#define g_arm_task_owner_context arm_task_get_owner_context()
 
 /* 自定义控制器对齐完成调试指示，由 arm_task.c 定义。 */
 extern volatile uint8_t g_arm_task_custom_controller_alignment_done_debug;

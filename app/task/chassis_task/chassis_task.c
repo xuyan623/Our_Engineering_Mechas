@@ -50,7 +50,7 @@ static const char* g_chassis_task_leg_names[CHASSIS_TASK_LEG_COUNT] = {
     "joint_leg_l",
 };
 static const char* g_chassis_task_big_yaw_name = "big_yaw";
-ChassisTaskContext* g_chassis_task_owner_context = OM_NULL;
+TaskContextSlotId g_chassis_task_slot_id = 0;
 static uint8_t g_chassis_task_mode_channel_storage
     [sizeof(ModeTaskControlSnapshot) * CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
 static OmAtomicU8 g_chassis_task_mode_channel_ready_flags[CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
@@ -1063,16 +1063,55 @@ static void chassis_task_entry(void* arg)
  *         - OM_ERROR: 线程创建失败
  *         - 其他错误码: PID初始化失败时返回的具体错误码
  */
+/* VTable for chassis_task context pool. */
+static void chassis_task_ctx_init(void* ctx)
+{
+    ChassisTaskContext* self = (ChassisTaskContext*)ctx;
+    memset(self, 0, sizeof(ChassisTaskContext));
+}
+
+static void chassis_task_ctx_reset(void* ctx)
+{
+    ChassisTaskContext* self = (ChassisTaskContext*)ctx;
+    memset(&self->latest_mode_snapshot, 0, sizeof(self->latest_mode_snapshot));
+    memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
+    memset(&self->latest_imu_snapshot, 0, sizeof(self->latest_imu_snapshot));
+    memset(self->last_wheel_speed_ref_rpm, 0, sizeof(self->last_wheel_speed_ref_rpm));
+    memset(self->leg_speed_filtered_rpm, 0, sizeof(self->leg_speed_filtered_rpm));
+    self->pit_leg_cmd_deg = 0.0f;
+    self->big_yaw_hold_angle_rad = 0.0f;
+    self->last_tx_request_ms = 0u;
+    self->rc_rotate_saturation_since_ms = 0u;
+    self->big_yaw_hold_initialized = OM_FALSE;
+    self->mode_snapshot_ready = OM_FALSE;
+    self->rc_snapshot_ready = OM_FALSE;
+    self->imu_snapshot_ready = OM_FALSE;
+}
+
+static void chassis_task_ctx_cleanup(void* ctx)
+{
+    (void)ctx;
+}
+
+static const TaskContextVTable g_chassis_task_vtable = {
+    .task_name = "chassis_task",
+    .init = chassis_task_ctx_init,
+    .reset = chassis_task_ctx_reset,
+    .cleanup = chassis_task_ctx_cleanup,
+    .diag_online = OM_NULL,
+    .diag_snapshot = OM_NULL,
+};
+
 OmRet chassis_task_start(void)
 {
     static OsalThread* chassis_task_thread = OM_NULL;
-    static ChassisTaskContext chassis_task_context = {0};
     const OsalThreadAttr chassis_task_attr = {
         "chassis_task",
         CHASSIS_TASK_STACK_BYTES,
         CHASSIS_TASK_PRIORITY};
     OsalStatus status = OSAL_INVALID;
     OmRet ret = OM_OK;
+    ChassisTaskContext* ctx = OM_NULL;
 
     /* 检查任务是否已经启动，防止重复创建 */
     if (chassis_task_thread != OM_NULL)
@@ -1080,77 +1119,86 @@ OmRet chassis_task_start(void)
         return OM_ERR_CONFLICT;
     }
 
-    /* 初始化任务上下文并配置PID控制器 */
-    memset(&chassis_task_context, 0, sizeof(chassis_task_context));
-    g_chassis_task_owner_context = &chassis_task_context;
+    g_chassis_task_slot_id = task_context_pool_alloc("chassis_task", sizeof(ChassisTaskContext), &g_chassis_task_vtable);
+    if (g_chassis_task_slot_id == 0u)
+    {
+        return OM_ERROR;
+    }
+
+    ctx = (ChassisTaskContext*)task_context_pool_get_ptr(g_chassis_task_slot_id);
 
     ret = task_mpsc_channel_init(
-        &chassis_task_context.mode_channel,
+        &ctx->mode_channel,
         g_chassis_task_mode_channel_storage,
         g_chassis_task_mode_channel_ready_flags,
         sizeof(ModeTaskControlSnapshot),
         CHASSIS_TASK_MODE_CHANNEL_CAPACITY);
     if (ret != OM_OK)
     {
-        g_chassis_task_owner_context = OM_NULL;
+        task_context_pool_free(g_chassis_task_slot_id);
+        g_chassis_task_slot_id = 0u;
         return ret;
     }
 
-    /* mode 是正式状态 owner 的当前事实，允许在启动时直接种入当前快照。
-     * RC / IMU 则必须等待各自正式通道首包，不能再从观测池灌种。
+    /* mode shi zheng shi zhuang tai owner de dang qian shi shi, yun xu zai qi dong shi zhi jie zhong ru dang qian kuai zhao.
+     * RC / IMU ze bi xu deng dai ge zi zheng shi tong dao shou bao, bu neng zai cong guan ce chi guan zhong.
      */
-    if (mode_task_copy_control_snapshot(&chassis_task_context.latest_mode_snapshot) == OM_TRUE)
+    if (mode_task_copy_control_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
     {
-        chassis_task_context.mode_snapshot_ready = OM_TRUE;
+        ctx->mode_snapshot_ready = OM_TRUE;
     }
 
     ret = task_pipe_channel_init(
-        &chassis_task_context.rc_channel,
+        &ctx->rc_channel,
         g_chassis_task_rc_channel_storage,
         CHASSIS_TASK_RC_CHANNEL_CAPACITY_BYTES,
         sizeof(DpRcSnapshot));
     if (ret != OM_OK)
     {
-        task_mpsc_channel_deinit(&chassis_task_context.mode_channel);
-        g_chassis_task_owner_context = OM_NULL;
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_chassis_task_slot_id);
+        g_chassis_task_slot_id = 0u;
         return ret;
     }
 
     ret = task_pipe_channel_init(
-        &chassis_task_context.imu_channel,
+        &ctx->imu_channel,
         g_chassis_task_imu_channel_storage,
         CHASSIS_TASK_IMU_CHANNEL_CAPACITY_BYTES,
         sizeof(DpImuSnapshot));
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&chassis_task_context.rc_channel);
-        task_mpsc_channel_deinit(&chassis_task_context.mode_channel);
-        g_chassis_task_owner_context = OM_NULL;
+        task_pipe_channel_deinit(&ctx->rc_channel);
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_chassis_task_slot_id);
+        g_chassis_task_slot_id = 0u;
         return ret;
     }
 
-    ret = chassis_task_init_pids(&chassis_task_context);
+    ret = chassis_task_init_pids(ctx);
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&chassis_task_context.imu_channel);
-        task_pipe_channel_deinit(&chassis_task_context.rc_channel);
-        task_mpsc_channel_deinit(&chassis_task_context.mode_channel);
-        g_chassis_task_owner_context = OM_NULL;
+        task_pipe_channel_deinit(&ctx->imu_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_chassis_task_slot_id);
+        g_chassis_task_slot_id = 0u;
         return ret;
     }
 
-    /* 创建底盘任务线程 */
+    /* chuang jian di pan ren wu xian cheng */
     status = osal_thread_create(
         &chassis_task_thread,
         &chassis_task_attr,
         chassis_task_entry,
-        &chassis_task_context);
+        ctx);
     if (status != OSAL_OK)
     {
-        task_pipe_channel_deinit(&chassis_task_context.imu_channel);
-        task_pipe_channel_deinit(&chassis_task_context.rc_channel);
-        task_mpsc_channel_deinit(&chassis_task_context.mode_channel);
-        g_chassis_task_owner_context = OM_NULL;
+        task_pipe_channel_deinit(&ctx->imu_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_chassis_task_slot_id);
+        g_chassis_task_slot_id = 0u;
         chassis_task_thread = OM_NULL;
         return OM_ERROR;
     }

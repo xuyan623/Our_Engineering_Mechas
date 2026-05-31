@@ -38,7 +38,7 @@ static const char* g_arm_task_pitch3_name = "pitch3";
 static const char* g_arm_task_roll3_name = "roll3";
 static const char* g_arm_task_grip_name = "grip";
 volatile uint8_t g_arm_task_custom_controller_alignment_done_debug = 0u;
-ArmTaskContext* g_arm_task_owner_context = OM_NULL;
+TaskContextSlotId g_arm_task_slot_id = 0;
 static uint8_t g_arm_task_mode_channel_storage
     [sizeof(ModeTaskControlSnapshot) * ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
 static OmAtomicU8 g_arm_task_mode_channel_ready_flags[ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
@@ -89,11 +89,15 @@ static const ArmTaskMachinePose g_arm_pose_zero = {
 const ArmTaskMachinePose g_arm_pose_normal = {
     {0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.0f, 1.8f}};
 /* sw2=MI + sw1=UP + iw上边沿 -> GET_ENERGY_UNIT */
+// static const ArmTaskMachinePose g_arm_pose_get_energy = {
+//     {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 3.7306414f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy = {
-    {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 3.7306414f, -1.8f}};
+    {0.0f, 0.64218f, 1.0447f, 0.8f, 1.3f, 3.7306414f, 0.0f}};
 /* sw2=MI + sw1=UP + iw下边沿 -> GET_ENERGY_UNIT1 */
+// static const ArmTaskMachinePose g_arm_pose_get_energy1 = {
+//     {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 2.1530383f, -1.8f}};
 static const ArmTaskMachinePose g_arm_pose_get_energy1 = {
-    {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 2.1530383f, -1.8f}};
+    {0.0f, 0.64218f, 1.0447f, -0.8f, 1.3f, 3.7306414f, 0.0f}};
 /* sw2=MI + sw1=MI + iw下边沿 -> GET_ENERGY_UNIT2 */
 static const ArmTaskMachinePose g_arm_pose_get_energy2 = {
     {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, 2.7812520f, -1.8f}};
@@ -2056,63 +2060,120 @@ static void arm_task_entry(void* arg)
 }
 
 /* 启动入口只负责上下文初始化和任务创建。 */
+/* VTable for arm_task context pool. */
+static void arm_task_ctx_init(void* ctx)
+{
+    ArmTaskContext* self = (ArmTaskContext*)ctx;
+    memset(self, 0, sizeof(ArmTaskContext));
+    self->latest_custom_controller_snapshot.online = 0u;
+    self->latest_custom_controller_snapshot.work_mode = 0u;
+}
+
+static void arm_task_ctx_reset(void* ctx)
+{
+    ArmTaskContext* self = (ArmTaskContext*)ctx;
+    memset(&self->last_snapshot, 0, sizeof(self->last_snapshot));
+    memset(&self->smoothed_targets, 0, sizeof(self->smoothed_targets));
+    memset(&self->latest_mode_snapshot, 0, sizeof(self->latest_mode_snapshot));
+    memset(&self->latest_custom_controller_snapshot, 0, sizeof(self->latest_custom_controller_snapshot));
+    self->command_since_ms = 0u;
+    self->last_tx_request_ms = 0u;
+    self->last_big_yaw_control_ms = 0u;
+    self->last_pitch1_control_ms = 0u;
+    self->last_pitch2_control_ms = 0u;
+    self->last_roll2_control_ms = 0u;
+    self->last_pitch3_control_ms = 0u;
+    self->last_roll3_control_ms = 0u;
+    self->last_grip_control_ms = 0u;
+    self->snapshot_initialized = OM_FALSE;
+    self->smoothed_targets_initialized = OM_FALSE;
+    self->custom_controller_alignment_done = OM_FALSE;
+    self->custom_controller_alignment_failed = OM_FALSE;
+    self->custom_controller_reference_captured = OM_FALSE;
+    self->custom_controller_was_active = OM_FALSE;
+    self->custom_controller_filter_initialized = OM_FALSE;
+    self->custom_controller_alignment_started_ms = 0u;
+    self->mode_snapshot_ready = OM_FALSE;
+}
+
+static void arm_task_ctx_cleanup(void* ctx)
+{
+    (void)ctx;
+}
+
+static const TaskContextVTable g_arm_task_vtable = {
+    .task_name = "arm_task",
+    .init = arm_task_ctx_init,
+    .reset = arm_task_ctx_reset,
+    .cleanup = arm_task_ctx_cleanup,
+    .diag_online = OM_NULL,
+    .diag_snapshot = OM_NULL,
+};
+
+/* 启动入口只负责上下文初始化和任务创建。 */
 OmRet arm_task_start(void)
 {
     static OsalThread* arm_task_thread = OM_NULL;
-    static ArmTaskContext arm_task_context = {0};
     const OsalThreadAttr arm_task_attr = {
         "arm_task",
         ARM_TASK_STACK_BYTES,
         ARM_TASK_PRIORITY};
     OsalStatus status = OSAL_INVALID;
     OmRet ret = OM_OK;
+    ArmTaskContext* ctx = OM_NULL;
 
     if (arm_task_thread != OM_NULL)
     {
         return OM_ERR_CONFLICT;
     }
 
-    memset(&arm_task_context, 0, sizeof(arm_task_context));
-    g_arm_task_owner_context = &arm_task_context;
-    arm_task_context.latest_custom_controller_snapshot.online = 0u;
-    arm_task_context.latest_custom_controller_snapshot.work_mode = 0u;
+    g_arm_task_slot_id = task_context_pool_alloc("arm_task", sizeof(ArmTaskContext), &g_arm_task_vtable);
+    if (g_arm_task_slot_id == 0u)
+    {
+        return OM_ERROR;
+    }
+
+    ctx = (ArmTaskContext*)task_context_pool_get_ptr(g_arm_task_slot_id);
 
     ret = task_mpsc_channel_init(
-        &arm_task_context.mode_channel,
+        &ctx->mode_channel,
         g_arm_task_mode_channel_storage,
         g_arm_task_mode_channel_ready_flags,
         sizeof(ModeTaskControlSnapshot),
         ARM_TASK_MODE_CHANNEL_CAPACITY);
     if (ret != OM_OK)
     {
-        g_arm_task_owner_context = OM_NULL;
+        task_context_pool_free(g_arm_task_slot_id);
+        g_arm_task_slot_id = 0u;
         return ret;
     }
 
-    /* mode 是正式状态 owner 的当前事实，允许在启动时直接种入当前 formal 快照。 */
-    if (mode_task_copy_control_snapshot(&arm_task_context.latest_mode_snapshot) == OM_TRUE)
+    /* mode shi zheng shi zhuang tai owner de dang qian shi shi, yun xu zai qi dong shi zhi jie zhong ru dang qian formal kuai zhao. */
+    if (mode_task_copy_control_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
     {
-        arm_task_context.mode_snapshot_ready = OM_TRUE;
+        ctx->mode_snapshot_ready = OM_TRUE;
     }
 
     ret = task_pipe_channel_init(
-        &arm_task_context.custom_controller_channel,
+        &ctx->custom_controller_channel,
         g_arm_task_custom_controller_channel_storage,
         ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES,
         sizeof(DpCustomControllerSnapshot));
     if (ret != OM_OK)
     {
-        task_mpsc_channel_deinit(&arm_task_context.mode_channel);
-        g_arm_task_owner_context = OM_NULL;
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_arm_task_slot_id);
+        g_arm_task_slot_id = 0u;
         return ret;
     }
 
-    ret = arm_task_init_pids(&arm_task_context);
+    ret = arm_task_init_pids(ctx);
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&arm_task_context.custom_controller_channel);
-        task_mpsc_channel_deinit(&arm_task_context.mode_channel);
-        g_arm_task_owner_context = OM_NULL;
+        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_arm_task_slot_id);
+        g_arm_task_slot_id = 0u;
         return ret;
     }
 
@@ -2120,19 +2181,19 @@ OmRet arm_task_start(void)
         &arm_task_thread,
         &arm_task_attr,
         arm_task_entry,
-        &arm_task_context);
+        ctx);
     if (status != OSAL_OK)
     {
-        task_pipe_channel_deinit(&arm_task_context.custom_controller_channel);
-        task_mpsc_channel_deinit(&arm_task_context.mode_channel);
-        g_arm_task_owner_context = OM_NULL;
+        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_arm_task_slot_id);
+        g_arm_task_slot_id = 0u;
         arm_task_thread = OM_NULL;
         return OM_ERROR;
     }
 
     return OM_OK;
 }
-
 OmRet arm_task_submit_mode_control_snapshot(
     const ModeTaskControlSnapshot* snapshot)
 {
