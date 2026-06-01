@@ -48,11 +48,7 @@ typedef struct
  */
 typedef struct
 {
-    /* 电机句柄已外迁至模块局部缓存表，此处不再内嵌 */
-    PidController front_wheel_speed_pids[CHASSIS_TASK_FRONT_WHEEL_COUNT];
-    PidController rear_wheel_speed_pids[CHASSIS_TASK_REAR_WHEEL_COUNT];
-    PidController leg_angle_pids[CHASSIS_TASK_LEG_COUNT];
-    PidController leg_speed_pids[CHASSIS_TASK_LEG_COUNT];
+    /* 电机句柄及 PID 控制器均已外迁至模块局部缓存/静态变量，此处不再内嵌 */
     TaskMpscChannel mode_channel;
     TaskPipeChannel rc_channel;
     TaskPipeChannel imu_channel;
@@ -60,7 +56,6 @@ typedef struct
     DpRcSnapshot latest_rc_snapshot;
     DpImuSnapshot latest_imu_snapshot;
     float last_wheel_speed_ref_rpm[CHASSIS_TASK_WHEEL_COUNT];
-    float leg_speed_filtered_rpm[CHASSIS_TASK_LEG_COUNT];
     float pit_leg_cmd_deg;
     float big_yaw_hold_angle_rad;
     OsalTimeMs last_tx_request_ms;

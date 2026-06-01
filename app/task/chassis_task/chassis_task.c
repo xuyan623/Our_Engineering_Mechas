@@ -56,7 +56,6 @@ Motor* g_chassis_task_big_yaw_motor = OM_NULL;
 static PidController g_front_wheel_speed_pids[CHASSIS_TASK_FRONT_WHEEL_COUNT] = {0};
 static PidController g_rear_wheel_speed_pids[CHASSIS_TASK_REAR_WHEEL_COUNT] = {0};
 static PidController g_leg_angle_pids[CHASSIS_TASK_LEG_COUNT] = {0};
-static PidController g_leg_speed_pids[CHASSIS_TASK_LEG_COUNT] = {0};
 TaskContextSlotId g_chassis_task_slot_id = 0;
 static uint8_t g_chassis_task_mode_channel_storage
     [sizeof(ModeTaskControlSnapshot) * CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
@@ -256,18 +255,6 @@ static OmRet chassis_task_init_pids(ChassisTaskContext* context)
             APP_CHASSIS_LEG_ANGLE_PID_KD,
             APP_CHASSIS_LEG_ANGLE_PID_OUT_LIMIT,
             APP_CHASSIS_LEG_ANGLE_PID_INTEGRAL_LIMIT);
-        if (ret != OM_OK)
-        {
-            return ret;
-        }
-
-        ret = chassis_task_init_pid(
-            &g_leg_speed_pids[index],
-            APP_CHASSIS_LEG_SPEED_PID_KP,
-            APP_CHASSIS_LEG_SPEED_PID_KI,
-            APP_CHASSIS_LEG_SPEED_PID_KD,
-            APP_CHASSIS_LEG_SPEED_PID_OUT_LIMIT,
-            APP_CHASSIS_LEG_SPEED_PID_INTEGRAL_LIMIT);
         if (ret != OM_OK)
         {
             return ret;
@@ -569,10 +556,6 @@ static void chassis_task_reset_leg_command(ChassisTaskContext* context)
     }
 
     context->pit_leg_cmd_deg = 0.0f;
-    for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
-    {
-        context->leg_speed_filtered_rpm[index] = 0.0f;
-    }
 }
 
 static void chassis_task_reset_wheel_control_state(ChassisTaskContext* context)
@@ -861,32 +844,19 @@ static void chassis_task_apply_leg_control(
         const MotorFeedback* feedback = motor_get_feedback(chassis_task_get_leg_motor(index));
         const float leg_angle_fdb_deg =
             (feedback != OM_NULL) ? math_utils_normalize_deg(math_utils_rad_to_deg(feedback->angle)) : 0.0f;
-        const float leg_speed_fdb_rpm =
-            (feedback != OM_NULL) ? math_utils_rad_per_s_to_rpm(feedback->speed) : 0.0f;
-        float leg_speed_ref_rpm = 0.0f;
         float leg_current_raw = 0.0f;
 
-        /* 对速度反馈进行一阶低通滤波，抑制高频噪声 */
-        context->leg_speed_filtered_rpm[index] =
-            0.16f * leg_speed_fdb_rpm + 0.84f * context->leg_speed_filtered_rpm[index];
-
-        /* 外环：角度PID控制器计算期望转速 */
-        leg_speed_ref_rpm =
+        /* 单环：角度 PID 直接出电流（与旧工程对齐） */
+        leg_current_raw =
             pid_compute(
                 &g_leg_angle_pids[index],
                 leg_reference_deg[index],
                 leg_angle_fdb_deg,
                 current_tick_s);
-        
-        /* 内环：速度PID控制器计算期望电流 */
-        leg_current_raw =
-            pid_compute(
-                &g_leg_speed_pids[index],
-                leg_speed_ref_rpm,
-                context->leg_speed_filtered_rpm[index],
-                current_tick_s);
 
-        chassis_task_apply_current_command(chassis_task_get_leg_motor(index), leg_current_raw / 100.0f);
+        chassis_task_apply_current_command(
+            chassis_task_get_leg_motor(index),
+            leg_current_raw / 100.0f);
     }
 }
 
@@ -1084,7 +1054,6 @@ static void chassis_task_ctx_reset(void* ctx)
     memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
     memset(&self->latest_imu_snapshot, 0, sizeof(self->latest_imu_snapshot));
     memset(self->last_wheel_speed_ref_rpm, 0, sizeof(self->last_wheel_speed_ref_rpm));
-    memset(self->leg_speed_filtered_rpm, 0, sizeof(self->leg_speed_filtered_rpm));
     self->pit_leg_cmd_deg = 0.0f;
     self->big_yaw_hold_angle_rad = 0.0f;
     self->last_tx_request_ms = 0u;
