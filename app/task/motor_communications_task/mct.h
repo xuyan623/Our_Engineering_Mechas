@@ -49,30 +49,6 @@ typedef struct
 
 typedef struct
 {
-    int16_t target_output_raw;
-    uint32_t feedback_timestamp_ms;
-    uint32_t raw_rx_count;
-} MctDjiRoll3DiagSnapshot;
-
-typedef struct
-{
-    uint32_t raw_rx_count;
-    uint32_t tx_attempt_count;
-    uint32_t tx_success_count;
-    uint32_t tx_fail_count;
-    uint32_t dirty_unit_count;
-} MctDjiBusDiagSnapshot;
-
-typedef struct
-{
-    uint32_t raw_rx_count;
-    uint32_t raw_feedback_count;
-    uint32_t raw_rx_motor1_count;
-    uint32_t raw_rx_motor2_count;
-} MctP1010BBusDiagSnapshot;
-
-typedef struct
-{
     uint8_t operational_active;
     uint32_t last_tx_request_sources_mask;
     uint8_t last_tx_request_overflowed;
@@ -126,12 +102,6 @@ OmRet mct_copy_p1010b_diag_snapshots(
     MctP1010BDiagSnapshot* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count);
-OmRet mct_copy_dji_roll3_diag(
-    MctDjiRoll3DiagSnapshot* snapshot);
-OmRet mct_copy_dji_bus_diag(
-    MctDjiBusDiagSnapshot* snapshot);
-OmRet mct_copy_p1010b_bus_diag(
-    MctP1010BBusDiagSnapshot* snapshot);
 
 /* 拷贝达妙总线级诊断快照。 */
 OmRet mct_copy_damiao_diag(
