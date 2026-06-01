@@ -438,3 +438,60 @@ OmBool arm_task_get_debug_snapshot(
         (grip_feedback != OM_NULL) ? grip_feedback->torque : 0.0f;
     return OM_TRUE;
 }
+/* -------------------------------------------------------------------------- */
+/* VTable 诊断回调实现                                                        */
+/* -------------------------------------------------------------------------- */
+
+void arm_task_diag_online(void* ctx, uint8_t* out_online)
+{
+    ArmTaskContext* context = (ArmTaskContext*)ctx;
+    uint8_t online = 0u;
+    uint32_t i = 0u;
+
+    if (context == OM_NULL || out_online == OM_NULL)
+    {
+        return;
+    }
+
+    for (i = 0u; i < ARM_TASK_MACHINE_COUNT; i++)
+    {
+        if (motor_is_feedback_recent(arm_task_get_motor((ArmTaskMachineAxis)i), 100u) == OM_TRUE)
+        {
+            online |= (1u << i);
+        }
+    }
+
+    *out_online = online;
+}
+
+void arm_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count)
+{
+    float machine_angle_rad[7] = {0.0f};
+
+    (void)ctx;
+
+    if (out_buf == OM_NULL || out_count == OM_NULL)
+    {
+        return;
+    }
+
+    *out_count = 0u;
+
+    if (cap < 8u)
+    {
+        return;
+    }
+
+    (void)arm_task_get_arm_motor_machine_angle_rad_snapshot(machine_angle_rad);
+
+    out_buf[0] = machine_angle_rad[0]; /* big_yaw   */
+    out_buf[1] = machine_angle_rad[1]; /* pitch1    */
+    out_buf[2] = machine_angle_rad[2]; /* pitch2    */
+    out_buf[3] = machine_angle_rad[3]; /* roll2     */
+    out_buf[4] = machine_angle_rad[4]; /* pitch3    */
+    out_buf[5] = machine_angle_rad[5]; /* roll3     */
+    out_buf[6] = machine_angle_rad[6]; /* grip      */
+    out_buf[7] = (float)arm_task_get_custom_controller_takeover_bit();
+
+    *out_count = 8u;
+}

@@ -7,7 +7,8 @@
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
-#include "task/arm_task/arm_task.h"
+#include "module/task_context_pool/task_context_pool.h"
+#include <string.h>
 
 #define VOFA_TASK_PERIOD_MS                        (10u)
 #define VOFA_CHANNEL_COUNT                         (8u)
@@ -78,6 +79,25 @@ static float vofa_task_get_can_tx_fifo_used(Device* can_device)
     return (float)(total_count - can->txHandler.txFifo.freeCount);
 }
 
+static TaskContextSlotId g_vofa_arm_task_slot = 0;
+
+static void vofa_task_find_arm_task_slot(void)
+{
+    uint32_t i = 0;
+    uint32_t count = task_context_pool_get_allocated_count();
+
+    for (i = 0; i < count; i++)
+    {
+        TaskContextSlotId slot = task_context_pool_get_slot_by_index(i);
+        const char* name = task_context_pool_get_name(slot);
+        if (name != OM_NULL && strcmp(name, "arm_task") == 0)
+        {
+            g_vofa_arm_task_slot = slot;
+            break;
+        }
+    }
+}
+
 static void vofa_task_fill_frame(
     float frame[VOFA_CHANNEL_COUNT],
     const BspDeviceRegistry* devices)
@@ -95,19 +115,21 @@ static void vofa_task_fill_frame(
         return;
     }
 
-    (void)arm_task_get_arm_motor_machine_angle_rad_snapshot(machine_angle_rad);
+    uint32_t count = 0;
 
-    /* I0-I6: 7 zhou ji gou jiao fan kui (rad), shun xu yu dong zuo biao yi zhi */
-    frame[0] = machine_angle_rad[0]; /* big_yaw   */
-    frame[1] = machine_angle_rad[1]; /* pitch1    */
-    frame[2] = machine_angle_rad[2]; /* pitch2    */
-    frame[3] = machine_angle_rad[3]; /* roll2     */
-    frame[4] = machine_angle_rad[4]; /* pitch3    */
-    frame[5] = machine_angle_rad[5]; /* roll3     */
-    frame[6] = machine_angle_rad[6]; /* grip      */
+    if (g_vofa_arm_task_slot != 0)
+    {
+        task_context_pool_call_diag_snapshot(
+            g_vofa_arm_task_slot, frame, VOFA_CHANNEL_COUNT, &count);
+    }
 
-    /* I7: custom controller takeover bit */
-    frame[7] = (float)arm_task_get_custom_controller_takeover_bit();
+    if (count < VOFA_CHANNEL_COUNT)
+    {
+        for (index = count; index < VOFA_CHANNEL_COUNT; index++)
+        {
+            frame[index] = 0.0f;
+        }
+    }
 }
 
 static void vofa_task_entry(void* arg)
@@ -144,6 +166,8 @@ OmRet vofa_task_start(const BspDeviceRegistry* devices)
     {
         return OM_ERROR;
     }
+
+    vofa_task_find_arm_task_slot();
 
     status = osal_thread_create(&vofa_task_thread, &vofa_task_attr, vofa_task_entry, (void*)devices);
     if (status != OSAL_OK)

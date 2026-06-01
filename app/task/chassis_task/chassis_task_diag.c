@@ -57,3 +57,83 @@ OmBool chassis_task_get_debug_chassis_mode(
     *chassis_mode = g_chassis_task_owner_context->latest_mode_snapshot.chassis_mode;
     return ((g_chassis_task_owner_context->flags & CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY)) ? OM_TRUE : OM_FALSE;
 }
+/* -------------------------------------------------------------------------- */
+/* VTable 诊断回调实现                                                        */
+/* -------------------------------------------------------------------------- */
+
+void chassis_task_diag_online(void* ctx, uint8_t* out_online)
+{
+    ChassisTaskContext* context = (ChassisTaskContext*)ctx;
+    uint8_t online = 0u;
+    uint32_t i = 0u;
+
+    if (context == OM_NULL || out_online == OM_NULL)
+    {
+        return;
+    }
+
+    for (i = 0u; i < CHASSIS_TASK_WHEEL_COUNT; i++)
+    {
+        if (motor_is_feedback_recent(chassis_task_get_wheel_motor(i), 100u) == OM_TRUE)
+        {
+            online |= (1u << i);
+        }
+    }
+
+    for (i = 0u; i < CHASSIS_TASK_LEG_COUNT; i++)
+    {
+        if (motor_is_feedback_recent(chassis_task_get_leg_motor(i), 100u) == OM_TRUE)
+        {
+            online |= (1u << (CHASSIS_TASK_WHEEL_COUNT + i));
+        }
+    }
+
+    *out_online = online;
+}
+
+void chassis_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count)
+{
+    float wheel_feedback_rpm[CHASSIS_TASK_WHEEL_COUNT] = {0.0f};
+    float wheel_command_current[CHASSIS_TASK_WHEEL_COUNT] = {0.0f};
+    float leg_feedback_deg[CHASSIS_TASK_LEG_COUNT] = {0.0f};
+    float leg_command_current[CHASSIS_TASK_LEG_COUNT] = {0.0f};
+    uint32_t i = 0u;
+    uint32_t idx = 0u;
+
+    (void)ctx;
+
+    if (out_buf == OM_NULL || out_count == OM_NULL)
+    {
+        return;
+    }
+
+    *out_count = 0u;
+
+    if (cap < 12u)
+    {
+        return;
+    }
+
+    (void)chassis_task_get_debug_snapshot(
+        wheel_feedback_rpm, wheel_command_current,
+        leg_feedback_deg, leg_command_current);
+
+    for (i = 0u; i < CHASSIS_TASK_WHEEL_COUNT; i++)
+    {
+        out_buf[idx++] = wheel_feedback_rpm[i];
+    }
+    for (i = 0u; i < CHASSIS_TASK_WHEEL_COUNT; i++)
+    {
+        out_buf[idx++] = wheel_command_current[i];
+    }
+    for (i = 0u; i < CHASSIS_TASK_LEG_COUNT; i++)
+    {
+        out_buf[idx++] = leg_feedback_deg[i];
+    }
+    for (i = 0u; i < CHASSIS_TASK_LEG_COUNT; i++)
+    {
+        out_buf[idx++] = leg_command_current[i];
+    }
+
+    *out_count = idx;
+}

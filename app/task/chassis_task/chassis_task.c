@@ -1102,8 +1102,8 @@ static const TaskContextVTable g_chassis_task_vtable = {
     .init = chassis_task_ctx_init,
     .reset = chassis_task_ctx_reset,
     .cleanup = chassis_task_ctx_cleanup,
-    .diag_online = OM_NULL,
-    .diag_snapshot = OM_NULL,
+    .diag_online = chassis_task_diag_online,
+    .diag_snapshot = chassis_task_diag_snapshot,
 };
 
 OmRet chassis_task_start(void)

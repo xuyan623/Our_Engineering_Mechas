@@ -105,7 +105,7 @@ static inline Motor* arm_task_get_motor(ArmTaskMachineAxis axis)
 
 /* arm_task 本地上下文：
  * - 电机句柄已外迁至模块局部缓存表，不再内嵌
- * - roll3 双环 PID 通过 motor compute_hook 绑定到电机实例
+ * - roll3 双环 PID 为模块局部静态实例，由 arm_task 直接计算电流下发
  * - 保存最近一次共享控制事实，用于动作时间窗推进
  * - pitch2 零位由 GO8010 owner 锁存，这里只读消费
  */

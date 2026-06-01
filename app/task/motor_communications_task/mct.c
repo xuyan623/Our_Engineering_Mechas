@@ -261,13 +261,70 @@ static void mct_ctx_cleanup(void* ctx)
     task_command_mailbox_deinit(&self->owner_command_mailbox);
 }
 
+static void mct_diag_online(void* ctx, uint8_t* out_online)
+{
+    MctRuntime* runtime = (MctRuntime*)ctx;
+    uint8_t online = 0u;
+    uint32_t i = 0u;
+
+    if (runtime == OM_NULL || out_online == OM_NULL)
+    {
+        return;
+    }
+
+    /* P1010B 在线状态 */
+    for (i = 0u; i < MCT_P1010B_COUNT; i++)
+    {
+        if (p1010b_is_online(&runtime->p1010b_drivers[i]) == OM_TRUE)
+        {
+            online |= (1u << i);
+        }
+    }
+
+    /* Damiao 在线状态 */
+    for (i = 0u; i < MCT_DAMIAO_COUNT; i++)
+    {
+        if (motor_is_feedback_recent(&runtime->damiao_motors[i], 100u) == OM_TRUE)
+        {
+            online |= (1u << (MCT_P1010B_COUNT + i));
+        }
+    }
+
+    *out_online = online;
+}
+
+static void mct_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count)
+{
+    MctRuntime* runtime = (MctRuntime*)ctx;
+    uint32_t idx = 0u;
+
+    if (out_buf == OM_NULL || out_count == OM_NULL)
+    {
+        return;
+    }
+
+    *out_count = 0u;
+
+    if (cap < 4u || runtime == OM_NULL)
+    {
+        return;
+    }
+
+    out_buf[idx++] = (float)(OM_LOAD_ACQ(&runtime->operational_active));
+    out_buf[idx++] = (float)(runtime->last_tx_request_sources_mask);
+    out_buf[idx++] = (float)(runtime->last_tx_request_overflowed);
+    out_buf[idx++] = (float)(runtime->last_operational_formal_transmit_ms);
+
+    *out_count = idx;
+}
+
 static const TaskContextVTable g_mct_vtable = {
     .task_name = "mct",
     .init = mct_ctx_init,
     .reset = mct_ctx_reset,
     .cleanup = mct_ctx_cleanup,
-    .diag_online = OM_NULL,
-    .diag_snapshot = OM_NULL,
+    .diag_online = mct_diag_online,
+    .diag_snapshot = mct_diag_snapshot,
 };
 
 OmRet mct_start(const BspDeviceRegistry* devices)

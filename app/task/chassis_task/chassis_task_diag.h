@@ -27,4 +27,11 @@ OmBool chassis_task_get_debug_snapshot(
 OmBool chassis_task_get_debug_chassis_mode(
     uint8_t* chassis_mode);
 
+/* VTable 诊断回调：
+ * - diag_online 返回轮/腿电机在线状态 bitmask
+ * - diag_snapshot 返回 12 个 float：4 轮反馈 rpm + 4 轮电流 + 2 腿角度 + 2 腿电流
+ */
+void chassis_task_diag_online(void* ctx, uint8_t* out_online);
+void chassis_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count);
+
 #endif

@@ -37,20 +37,9 @@ static const char* g_arm_task_roll2_name = "roll2";
 static const char* g_arm_task_pitch3_name = "pitch3";
 static const char* g_arm_task_roll3_name = "roll3";
 static const char* g_arm_task_grip_name = "grip";
-Motor* g_arm_task_motor_cache[ARM_TASK_MACHINE_COUNT] = {0};
-
 static PidController g_roll3_angle_pid = {0};
 static PidController g_roll3_speed_pid = {0};
-
-static PidController* arm_task_get_roll3_angle_pid(void)
-{
-    return &g_roll3_angle_pid;
-}
-
-static PidController* arm_task_get_roll3_speed_pid(void)
-{
-    return &g_roll3_speed_pid;
-}
+Motor* g_arm_task_motor_cache[ARM_TASK_MACHINE_COUNT] = {0};
 
 static void arm_task_bind_motor_cache(void)
 {
@@ -372,14 +361,9 @@ static OmRet arm_task_init_pid(
 }
 
 /* 当前 arm_task 只有 roll3 需要本地 PID，其余轴都直接走 motor 层 angle target。 */
-static OmRet arm_task_init_pids(ArmTaskContext* context)
+static OmRet arm_task_init_pids(void)
 {
     OmRet ret = OM_OK;
-
-    if (context == OM_NULL)
-    {
-        return OM_ERROR_NULL;
-    }
 
     ret = arm_task_init_pid(
         &g_roll3_angle_pid,
@@ -402,11 +386,6 @@ static OmRet arm_task_init_pids(ArmTaskContext* context)
         APP_ARM_ROLL3_SPEED_PID_INTEGRAL_LIMIT);
 }
 
-/* 机械臂控制 owner 绑定：
- * - 只查已经注册进 motor registry 的对象
- * - 只设定 arm_task 所需的 control mode
- * - 不碰任何物理总线初始化
- */
 static OmRet arm_task_try_bind_motors(ArmTaskContext* context)
 {
     if (context == OM_NULL)
@@ -1434,8 +1413,7 @@ static void arm_task_reset_axis_control_state(ArmTaskContext* context)
         return;
     }
 
-    pid_reset(&g_roll3_angle_pid);
-    pid_reset(&g_roll3_speed_pid);
+
     context->last_control_ms[ARM_TASK_MACHINE_BIG_YAW] = 0u;
     context->last_control_ms[ARM_TASK_MACHINE_PITCH1] = 0u;
     context->last_control_ms[ARM_TASK_MACHINE_PITCH2] = 0u;
@@ -1443,6 +1421,8 @@ static void arm_task_reset_axis_control_state(ArmTaskContext* context)
     context->last_control_ms[ARM_TASK_MACHINE_PITCH3] = 0u;
     context->last_control_ms[ARM_TASK_MACHINE_ROLL3] = 0u;
     context->last_control_ms[ARM_TASK_MACHINE_GRIP] = 0u;
+    pid_reset(&g_roll3_angle_pid);
+    pid_reset(&g_roll3_speed_pid);
 }
 
 static OmBool arm_task_should_run_big_yaw_control(
@@ -2118,8 +2098,8 @@ static const TaskContextVTable g_arm_task_vtable = {
     .init = arm_task_ctx_init,
     .reset = arm_task_ctx_reset,
     .cleanup = arm_task_ctx_cleanup,
-    .diag_online = OM_NULL,
-    .diag_snapshot = OM_NULL,
+    .diag_online = arm_task_diag_online,
+    .diag_snapshot = arm_task_diag_snapshot,
 };
 
 /* 启动入口只负责上下文初始化和任务创建。 */
@@ -2179,7 +2159,7 @@ OmRet arm_task_start(void)
         return ret;
     }
 
-    ret = arm_task_init_pids(ctx);
+    ret = arm_task_init_pids();
     if (ret != OM_OK)
     {
         task_pipe_channel_deinit(&ctx->custom_controller_channel);

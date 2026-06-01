@@ -135,4 +135,11 @@ OmBool arm_task_get_debug_snapshot(
     float* grip_target_deg,
     float* grip_force_feedback);
 
+/* VTable 诊断回调：
+ * - diag_online 返回 7 轴在线状态 bitmask
+ * - diag_snapshot 返回 8 个 float：7 个机构角(rad) + 1 个接管标志
+ */
+void arm_task_diag_online(void* ctx, uint8_t* out_online);
+void arm_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count);
+
 #endif
