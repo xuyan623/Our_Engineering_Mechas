@@ -1,6 +1,5 @@
 #include "task/mode_task/mode_task_internal.h"
 
-#include "module/data_pool/data_pool.h"
 #include "task/arm_task/arm_task.h"
 #include "task/chassis_task/chassis_task.h"
 #include "task/motor_communications_task/mct.h"
@@ -74,25 +73,6 @@ void mode_task_drain_custom_controller_snapshots(ModeTaskContext* context)
     {
         context->latest_custom_controller_snapshot = snapshot;
     }
-}
-
-void mode_task_store_shared_state(const ModeTaskSharedState* state)
-{
-    DpModeCompatSnapshot snapshot = {0};
-
-    if (state == OM_NULL)
-    {
-        return;
-    }
-
-    snapshot.global_mode = (uint8_t)state->global_mode;
-    snapshot.chassis_mode = (uint8_t)state->chassis_mode;
-    snapshot.clamp_action = (uint8_t)state->clamp_action;
-    snapshot.exchange_action = (uint8_t)state->exchange_action;
-    snapshot.primary_turn_ore_flag = state->primary_turn_ore_flag;
-    snapshot.custom_controller_force_takeover_flag =
-        state->custom_controller_force_takeover_flag;
-    dp_store_mode_compat_snapshot(&snapshot);
 }
 
 void mode_task_build_control_snapshot(
@@ -375,7 +355,7 @@ void mode_task_update_operational_system_state(
         return;
     }
 
-    if (mode_task_bootstrap_allows_compat_control(context) != OM_TRUE)
+    if (mode_task_bootstrap_allows_control(context) != OM_TRUE)
     {
         return;
     }
@@ -418,7 +398,7 @@ void mode_task_process_mct_lifecycle_requests(
         return;
     }
 
-    if (mode_task_bootstrap_allows_compat_control(context) != OM_TRUE)
+    if (mode_task_bootstrap_allows_control(context) != OM_TRUE)
     {
         return;
     }
@@ -512,7 +492,7 @@ void mode_task_update_operational_domain(
     }
 }
 
-OmBool mode_task_bootstrap_allows_compat_control(
+OmBool mode_task_bootstrap_allows_control(
     const ModeTaskContext* context)
 {
     if (context == OM_NULL)

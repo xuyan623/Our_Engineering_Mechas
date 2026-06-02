@@ -3,7 +3,6 @@
 #include "core/om_cpu.h"
 #include "driver/imu/imu.h"
 #include "module/data_pool/data_pool.h"
-#include "module/event_bus/event_bus.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
@@ -87,15 +86,6 @@ static void imu_task_entry(void* arg)
             update_attitude(IMU_TASK_UPDATE_DT_SEC);
             imu_data = get_imu_data();
             imu_task_store_to_data_pool(imu_data);
-
-            if (event_bus_publish(&g_event_bus, EVT_IMU_DATA_READY) != OSAL_OK)
-            {
-                sh_report_fatal(SH_ERR_EVT_IMU_DATA_READY_PUBLISH_FAIL, "event_bus_publish EVT_IMU_DATA_READY failed");
-                for (;;)
-                {
-                    osal_sleep_ms(1000U);
-                }
-            }
 
             g_imu_task_debug.publish_count++;
         }

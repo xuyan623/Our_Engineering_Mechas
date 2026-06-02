@@ -122,7 +122,6 @@ void mode_task_load_custom_controller_snapshot(
     const ModeTaskContext* context,
     DpCustomControllerSnapshot* snapshot);
 void mode_task_drain_custom_controller_snapshots(ModeTaskContext* context);
-void mode_task_store_shared_state(const ModeTaskSharedState* state);
 void mode_task_build_control_snapshot(
     const ModeTaskContext* context,
     const ModeTaskSharedState* state,
@@ -152,7 +151,7 @@ void mode_task_update_operational_domain(
     const ModeTaskRcSnapshot* rc_snapshot,
     const DpCustomControllerSnapshot* custom_snapshot,
     const ModeTaskSharedState* shared_state);
-OmBool mode_task_bootstrap_allows_compat_control(
+OmBool mode_task_bootstrap_allows_control(
     const ModeTaskContext* context);
 void mode_task_update_debug_state(const ModeTaskContext* context);
 void mode_task_drain_init_progress_messages(ModeTaskContext* context);

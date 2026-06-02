@@ -47,30 +47,6 @@ typedef struct
 
 typedef struct
 {
-    uint8_t global_mode;
-    uint8_t chassis_mode;
-} DpModeSnapshot;
-
-typedef struct
-{
-    uint8_t clamp_action;
-    uint8_t exchange_action;
-    uint8_t primary_turn_ore_flag;
-    uint8_t custom_controller_force_takeover_flag;
-} DpActionSnapshot;
-
-typedef struct
-{
-    uint8_t global_mode;
-    uint8_t chassis_mode;
-    uint8_t clamp_action;
-    uint8_t exchange_action;
-    uint8_t primary_turn_ore_flag;
-    uint8_t custom_controller_force_takeover_flag;
-} DpModeCompatSnapshot;
-
-typedef struct
-{
     uint8_t online;
     uint8_t work_mode;
     float angle_deg[DP_CUSTOM_CONTROLLER_ANGLE_COUNT];
@@ -80,8 +56,6 @@ typedef struct
 {
     DpImuSnapshot imu;
     DpRcSnapshot rc;
-    DpModeSnapshot mode;
-    DpActionSnapshot action;
     DpCustomControllerSnapshot custom_controller;
 } DataPool;
 
@@ -90,9 +64,6 @@ void dp_store_imu_snapshot(const DpImuSnapshot* snapshot);
 
 void dp_copy_rc_snapshot(DpRcSnapshot* snapshot);
 void dp_store_rc_snapshot(const DpRcSnapshot* snapshot);
-
-void dp_copy_mode_compat_snapshot(DpModeCompatSnapshot* snapshot);
-void dp_store_mode_compat_snapshot(const DpModeCompatSnapshot* snapshot);
 
 void dp_copy_custom_controller_snapshot(DpCustomControllerSnapshot* snapshot);
 void dp_store_custom_controller_snapshot(const DpCustomControllerSnapshot* snapshot);

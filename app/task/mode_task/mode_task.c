@@ -17,6 +17,12 @@ static uint8_t g_mode_task_custom_controller_channel_storage
 ModeTaskDebugState g_mode_task_debug = {0};
 TaskContextSlotId g_mode_task_slot_id = 0;
 
+/* mode_task 当前只维护 formal 输出：
+ * - ModeTaskControlSnapshot，通过 task_channel 发给 arm/chassis
+ *
+ * 兼容桥接已收束，不再向 DataPool 回灌旧 mode/action 共享事实。
+ */
+
 /* 当前全局/底盘状态机先只承担状态记录职责，
  * enter/execute/exit 动作仍保持为空，避免在这轮拆分里扩大行为面。
  */
@@ -183,8 +189,6 @@ OmRet mode_task_start(void)
         g_mode_task_slot_id = 0u;
         return ret;
     }
-
-    mode_task_store_shared_state(&ctx->shared_state);
 
     status = osal_thread_create(&mode_task_thread, &mode_task_attr, mode_task_entry, ctx);
     if (status != OSAL_OK)

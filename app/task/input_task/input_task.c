@@ -3,7 +3,6 @@
 #include "drivers/model/device.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "module/data_pool/data_pool.h"
-#include "module/event_bus/event_bus.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
@@ -127,7 +126,6 @@ static void input_task_entry(void* arg)
     DpCustomControllerSnapshot custom_controller_snapshot = {0};
     size_t read_len = 0u;
     uint8_t byte = 0u;
-    OmBool has_valid_rc_frame = OM_FALSE;
     OmBool custom_controller_snapshot_changed = OM_FALSE;
     uint32_t previous_custom_controller_frame_count = 0u;
     uint8_t previous_custom_controller_online = 0u;
@@ -136,7 +134,6 @@ static void input_task_entry(void* arg)
 
     while (1)
     {
-        has_valid_rc_frame = OM_FALSE;
         custom_controller_snapshot_changed = OM_FALSE;
         previous_custom_controller_frame_count =
             g_input_task_runtime.custom_controller.frame_count;
@@ -169,7 +166,6 @@ static void input_task_entry(void* arg)
                     (void)mode_task_submit_rc_snapshot(&rc_snapshot);
                     (void)chassis_task_submit_rc_snapshot(&rc_snapshot);
                     g_input_task_runtime.rc.frame_count++;
-                    has_valid_rc_frame = OM_TRUE;
                 }
             } while (read_len == INPUT_TASK_DBUS_FRAME_LEN);
 
@@ -217,20 +213,6 @@ static void input_task_entry(void* arg)
                 &custom_controller_snapshot);
             (void)arm_task_submit_custom_controller_snapshot(
                 &custom_controller_snapshot);
-        }
-
-        if (has_valid_rc_frame == OM_TRUE)
-        {
-            if (event_bus_publish(&g_event_bus, EVT_RC_DATA_READY) != OSAL_OK)
-            {
-                sh_report_fatal(
-                    SH_ERR_EVT_RC_DATA_READY_PUBLISH_FAIL,
-                    "event_bus_publish EVT_RC_DATA_READY failed");
-                for (;;)
-                {
-                    osal_sleep_ms(1000U);
-                }
-            }
         }
 
         (void)osal_delay_until(&deadline_cursor_ms, INPUT_TASK_PERIOD_MS, OM_NULL);

@@ -3,7 +3,6 @@
 #include "driver/imu/imu.h"
 #include "config/app_config.h"
 #include "module/data_pool/data_pool.h"
-#include "module/event_bus/event_bus.h"
 #include "module/system_health/system_health.h"
 #include "task/arm_task/arm_task.h"
 #include "task/chassis_task/chassis_task.h"
@@ -80,7 +79,6 @@ static void start_task(void* arg)
     OmRet motor_communications_task_ret = OM_OK;
     OmRet vofa_task_ret = OM_OK;
     uint8_t imu_init_ret = 0U;
-    OsalStatus event_bus_status = OSAL_INVALID;
     const BspDeviceRegistry* devices = OM_NULL;
 
     (void)arg;
@@ -94,13 +92,6 @@ static void start_task(void* arg)
     }
 
     devices = bsp_get_device_registry();
-
-    event_bus_status = event_bus_init(&g_event_bus);
-    if (event_bus_status != OSAL_OK)
-    {
-        sh_report_fatal(SH_ERR_EVENT_BUS_INIT_FAIL, "event_bus_init failed");
-        goto supervisor_loop;
-    }
 
     mode_task_ret = mode_task_start();
     if (mode_task_ret != OM_OK)

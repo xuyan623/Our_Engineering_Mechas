@@ -1,6 +1,13 @@
 #ifndef NEW_ROBOT_MODE_TASK_H
 #define NEW_ROBOT_MODE_TASK_H
 
+/* mode_task 的职责边界：
+ * - 它是正式全局控制状态 owner
+ * - formal 输出面是 ModeTaskControlSnapshot
+ *
+ * 下游 task 应优先消费 formal snapshot。
+ */
+
 #include "core/om_def.h"
 #include "module/data_pool/data_pool.h"
 #include <stdint.h>
@@ -136,7 +143,10 @@ typedef struct
 
 /* mode_task 的轻量调试状态：
  * - loop_count：任务循环次数
- * - publish_count：共享模式结果变化并成功发出 EVT_MODE_CHANGED 的次数
+ * - publish_count：共享模式结果变化次数
+ *
+ * 当前 event_bus 已退出正式链，因此 publish_count 只反映
+ * “共享状态发生变化并完成一次对下游发布”的调试计数，不代表事件总线行为。
  */
 typedef struct
 {

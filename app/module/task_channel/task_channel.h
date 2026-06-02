@@ -1,6 +1,16 @@
 #ifndef NEW_ROBOT_TASK_CHANNEL_H
 #define NEW_ROBOT_TASK_CHANNEL_H
 
+/* task_channel 的职责边界：
+ * - 它只统一 transport 契约：非阻塞提交、接收、统计字段
+ * - 它不拥有任何业务真源，也不保存“最新控制状态”
+ *
+ * 正确用法：
+ * - producer 只负责投递消息或命令
+ * - consumer task 把收到的数据 drain 到自己的 latest-cache
+ * - 真正的业务判断永远发生在 owner / consumer task 本地 context 中
+ */
+
 #include "core/om_def.h"
 #include "data_struct/mpsc_ringbuf.h"
 #include "ipc/pipe.h"
@@ -10,6 +20,7 @@
 
 typedef struct
 {
+    /* 这些计数只用于诊断与观测，不参与正式控制语义。 */
     volatile uint32_t submit_ok_count;
     volatile uint32_t submit_would_block_count;
     volatile uint32_t submit_drop_count;
@@ -18,6 +29,8 @@ typedef struct
     volatile uint32_t recv_would_block_count;
     volatile uint32_t error_count;
 } TaskChannelStats;
+
+#define TASK_COMMAND_MAILBOX_MAX_COMMAND_BYTES (16u)
 
 /* 固定帧长度的 SPSC pipe 包装。
  * 语义固定为：
@@ -52,6 +65,8 @@ OmRet task_pipe_channel_receive(
  * 语义固定为：
  * - 多生产者非阻塞投递
  * - 满时直接返回 would-block，不等待消费者
+ * - consumer 应在本地 context 中维护 latest-cache；
+ *   channel 自身不承担“最新状态真源”的职责
  */
 typedef struct
 {
@@ -72,10 +87,12 @@ void task_mpsc_channel_deinit(TaskMpscChannel* channel);
 OmRet task_mpsc_channel_submit_nonblocking(
     TaskMpscChannel* channel,
     const void* message);
+/* receive(timeout_ms) 适合“等待下一条消息”的消费者。 */
 OmRet task_mpsc_channel_receive(
     TaskMpscChannel* channel,
     void* message,
     uint32_t timeout_ms);
+/* receive_nonblocking() 适合任务主循环内 drain 到 latest-cache。 */
 OmRet task_mpsc_channel_receive_nonblocking(
     TaskMpscChannel* channel,
     void* message);
@@ -84,12 +101,19 @@ OmRet task_mpsc_channel_receive_nonblocking(
  * 语义固定为：
  * - 队列长度 1
  * - 非阻塞提交
- * - 已有 pending 命令时，新的同类/等价命令允许“视为已挂起成功”
+ * - 已有 pending 命令时，只有“原始命令字节完全相同”的重复提交
+ *   才视为“已经成功挂起”
+ *
+ * 注意：
+ * - 这里当前实现的“同类命令”不是业务语义等价，而是字节完全相等
+ * - 若调用方需要更宽松的“业务等价命令合并”，应在更上层先做归一化
  */
 typedef struct
 {
     OsalQueue* queue;
     uint32_t command_size_bytes;
+    uint8_t pending_command_bytes[TASK_COMMAND_MAILBOX_MAX_COMMAND_BYTES];
+    uint8_t has_pending_command;
     TaskChannelStats stats;
 } TaskCommandMailbox;
 

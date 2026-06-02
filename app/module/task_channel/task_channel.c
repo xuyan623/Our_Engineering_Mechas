@@ -1,5 +1,7 @@
 #include "module/task_channel/task_channel.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 
 static OmBool task_channel_is_power_of_two(uint32_t value)
@@ -309,7 +311,8 @@ OmRet task_command_mailbox_init(
 {
     OsalStatus status = OSAL_INVALID;
 
-    if (mailbox == OM_NULL || command_size_bytes == 0u)
+    if (mailbox == OM_NULL || command_size_bytes == 0u ||
+        command_size_bytes > TASK_COMMAND_MAILBOX_MAX_COMMAND_BYTES)
     {
         return OM_ERROR_PARAM;
     }
@@ -336,6 +339,8 @@ void task_command_mailbox_deinit(TaskCommandMailbox* mailbox)
     }
 
     mailbox->command_size_bytes = 0u;
+    mailbox->has_pending_command = 0u;
+    memset(mailbox->pending_command_bytes, 0, sizeof(mailbox->pending_command_bytes));
     task_channel_reset_stats(&mailbox->stats);
 }
 
@@ -344,6 +349,7 @@ OmRet task_command_mailbox_submit_nonblocking(
     const void* command)
 {
     OsalStatus status = OSAL_INVALID;
+    OmBool same_pending_command = OM_FALSE;
 
     if (mailbox == OM_NULL || mailbox->queue == OM_NULL || command == OM_NULL)
     {
@@ -353,14 +359,42 @@ OmRet task_command_mailbox_submit_nonblocking(
     status = osal_queue_send(mailbox->queue, command, 0u);
     if (status == OSAL_OK)
     {
+        taskENTER_CRITICAL();
+        memcpy(
+            mailbox->pending_command_bytes,
+            command,
+            (size_t)mailbox->command_size_bytes);
+        mailbox->has_pending_command = 1u;
+        taskEXIT_CRITICAL();
         mailbox->stats.submit_ok_count++;
         return OM_OK;
     }
 
     if (status == OSAL_WOULD_BLOCK)
     {
-        mailbox->stats.submit_keep_pending_count++;
-        return OM_OK;
+        /* 队列长度固定为 1：
+         * - 同类命令重复提交，视为“已经成功挂起”
+         * - 异类命令不覆盖已有 pending，由调用方下次再试
+         */
+        taskENTER_CRITICAL();
+        if (mailbox->has_pending_command != 0u &&
+            memcmp(
+                mailbox->pending_command_bytes,
+                command,
+                (size_t)mailbox->command_size_bytes) == 0)
+        {
+            same_pending_command = OM_TRUE;
+        }
+        taskEXIT_CRITICAL();
+
+        if (same_pending_command == OM_TRUE)
+        {
+            mailbox->stats.submit_keep_pending_count++;
+            return OM_OK;
+        }
+
+        mailbox->stats.submit_would_block_count++;
+        return OM_ERROR_WOULD_BLOCK;
     }
 
     mailbox->stats.error_count++;
@@ -382,6 +416,10 @@ OmRet task_command_mailbox_receive(
     status = osal_queue_recv(mailbox->queue, command, timeout_ms);
     if (status == OSAL_OK)
     {
+        taskENTER_CRITICAL();
+        mailbox->has_pending_command = 0u;
+        memset(mailbox->pending_command_bytes, 0, sizeof(mailbox->pending_command_bytes));
+        taskEXIT_CRITICAL();
         mailbox->stats.recv_ok_count++;
         return OM_OK;
     }
@@ -411,5 +449,12 @@ OmRet task_command_mailbox_reset(TaskCommandMailbox* mailbox)
     }
 
     status = osal_queue_reset(mailbox->queue);
+    if (status == OSAL_OK)
+    {
+        taskENTER_CRITICAL();
+        mailbox->has_pending_command = 0u;
+        memset(mailbox->pending_command_bytes, 0, sizeof(mailbox->pending_command_bytes));
+        taskEXIT_CRITICAL();
+    }
     return task_channel_translate_osal_status(status);
 }

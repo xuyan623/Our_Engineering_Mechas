@@ -83,23 +83,11 @@ static void mct_run_operational_formal_transmit(
 
 static OmRet mct_submit_owner_command(
     MctRuntime* runtime,
-    MctOwnerCommand command,
-    OmBool replace_pending)
+    MctOwnerCommand command)
 {
-    OmRet ret = OM_OK;
-
     if (runtime == OM_NULL || command == MCT_OWNER_COMMAND_NONE)
     {
         return OM_ERROR_PARAM;
-    }
-
-    if (replace_pending == OM_TRUE)
-    {
-        ret = task_command_mailbox_reset(&runtime->owner_command_mailbox);
-        if (ret != OM_OK)
-        {
-            return ret;
-        }
     }
 
     return task_command_mailbox_submit_nonblocking(
@@ -402,8 +390,7 @@ OmRet mct_request_enter_operational_state(void)
 
     ret = mct_submit_owner_command(
         &g_mct_runtime,
-        MCT_OWNER_COMMAND_ENTER_OPERATIONAL,
-        OM_TRUE);
+        MCT_OWNER_COMMAND_ENTER_OPERATIONAL);
     if (ret != OM_OK)
     {
         return ret;
@@ -418,8 +405,7 @@ OmRet mct_request_leave_operational_state(void)
 
     ret = mct_submit_owner_command(
         &g_mct_runtime,
-        MCT_OWNER_COMMAND_LEAVE_OPERATIONAL,
-        OM_TRUE);
+        MCT_OWNER_COMMAND_LEAVE_OPERATIONAL);
     if (ret != OM_OK)
     {
         return ret;
@@ -434,8 +420,7 @@ OmRet mct_request_reset_operational_state(void)
 
     ret = mct_submit_owner_command(
         &g_mct_runtime,
-        MCT_OWNER_COMMAND_RESET_OPERATIONAL,
-        OM_TRUE);
+        MCT_OWNER_COMMAND_RESET_OPERATIONAL);
     if (ret != OM_OK)
     {
         return ret;

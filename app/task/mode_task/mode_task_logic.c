@@ -1,6 +1,5 @@
 #include "task/mode_task/mode_task_internal.h"
 
-#include "module/event_bus/event_bus.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 
@@ -440,7 +439,7 @@ void mode_task_run_once(ModeTaskContext* context)
         &context->shared_state,
         &previous_control_snapshot);
 
-    if (mode_task_bootstrap_allows_compat_control(context) != OM_TRUE ||
+    if (mode_task_bootstrap_allows_control(context) != OM_TRUE ||
         context->hierarchy_state.system_state != MODE_TASK_SYSTEM_OPERATIONAL)
     {
         mode_task_fill_release_shared_state(&next_state);
@@ -485,10 +484,6 @@ void mode_task_run_once(ModeTaskContext* context)
     control_snapshot_changed = mode_task_control_snapshot_changed(
         &previous_control_snapshot,
         &next_control_snapshot);
-    if (state_changed == OM_TRUE)
-    {
-        mode_task_store_shared_state(&context->shared_state);
-    }
     if (control_snapshot_changed == OM_TRUE)
     {
         mode_task_publish_control_snapshot(&next_control_snapshot);
@@ -498,14 +493,6 @@ void mode_task_run_once(ModeTaskContext* context)
 
     if (state_changed == OM_TRUE)
     {
-        if (event_bus_publish(&g_event_bus, EVT_MODE_CHANGED) != OSAL_OK)
-        {
-            sh_report_fatal(SH_ERR_EVT_MODE_CHANGED_PUBLISH_FAIL, "event_bus_publish EVT_MODE_CHANGED failed");
-            for (;;)
-            {
-                osal_sleep_ms(1000U);
-            }
-        }
         g_mode_task_debug.publish_count++;
     }
 }
