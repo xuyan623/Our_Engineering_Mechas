@@ -11,27 +11,42 @@
  */
 
 const MctDjiChassisConfig g_mct_dji_chassis_configs[MCT_DJI_CHASSIS_COUNT] = {
-    {.name = "chassis_fr", .id = 1u},
-    {.name = "chassis_fl", .id = 2u},
-    {.name = "chassis_bl", .id = 3u},
-    {.name = "chassis_br", .id = 4u},
+    {.name = APP_MOTOR_NAME_CHASSIS_FR, .id = APP_MOTOR_DJI_ID_CHASSIS_FR, .profile_role = APP_MOTOR_ROLE_CHASSIS_FR},
+    {.name = APP_MOTOR_NAME_CHASSIS_FL, .id = APP_MOTOR_DJI_ID_CHASSIS_FL, .profile_role = APP_MOTOR_ROLE_CHASSIS_FL},
+    {.name = APP_MOTOR_NAME_CHASSIS_BL, .id = APP_MOTOR_DJI_ID_CHASSIS_BL, .profile_role = APP_MOTOR_ROLE_CHASSIS_BL},
+    {.name = APP_MOTOR_NAME_CHASSIS_BR, .id = APP_MOTOR_DJI_ID_CHASSIS_BR, .profile_role = APP_MOTOR_ROLE_CHASSIS_BR},
 };
 
 const MctP1010BConfig g_mct_p1010b_configs[MCT_P1010B_COUNT] = {
-    {.name = "joint_leg_r", .id = 1u},
-    {.name = "joint_leg_l", .id = 2u},
+    {.name = APP_MOTOR_NAME_JOINT_LEG_R, .id = APP_MOTOR_P1010B_ID_JOINT_LEG_R, .profile_role = APP_MOTOR_ROLE_JOINT_LEG_R},
+    {.name = APP_MOTOR_NAME_JOINT_LEG_L, .id = APP_MOTOR_P1010B_ID_JOINT_LEG_L, .profile_role = APP_MOTOR_ROLE_JOINT_LEG_L},
 };
 
 const MctDamiaoConfig g_mct_damiao_configs[MCT_DAMIAO_COUNT] = {
-    {.name = "big_yaw", .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = 0x00u, .master_id = 0x10u, .installed = OM_TRUE},
-    {.name = "pitch1", .type = DAMIAO_MOTOR_TYPE_DM10010L, .can_id = 0x01u, .master_id = 0x11u, .installed = OM_TRUE},
-    {.name = "roll1", .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = 0x02u, .master_id = 0x12u, .installed = OM_FALSE},
-    {.name = "roll2", .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = 0x03u, .master_id = 0x13u, .installed = OM_TRUE},
-    {.name = "grip", .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = 0x04u, .master_id = 0x14u, .installed = OM_TRUE},
-    {.name = "pitch3", .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = 0x05u, .master_id = 0x15u, .installed = OM_TRUE},
+    {.name = APP_MOTOR_NAME_BIG_YAW, .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = APP_MOTOR_DAMIAO_CAN_ID_BIG_YAW, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_BIG_YAW, .profile_role = APP_MOTOR_ROLE_BIG_YAW},
+    {.name = APP_MOTOR_NAME_PITCH1, .type = DAMIAO_MOTOR_TYPE_DM10010L, .can_id = APP_MOTOR_DAMIAO_CAN_ID_PITCH1, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_PITCH1, .profile_role = APP_MOTOR_ROLE_PITCH1},
+    {.name = APP_MOTOR_NAME_ROLL1, .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = APP_MOTOR_DAMIAO_CAN_ID_ROLL1, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_ROLL1, .profile_role = APP_MOTOR_ROLE_ROLL1},
+    {.name = APP_MOTOR_NAME_ROLL2, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MOTOR_DAMIAO_CAN_ID_ROLL2, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_ROLL2, .profile_role = APP_MOTOR_ROLE_ROLL2},
+    {.name = APP_MOTOR_NAME_GRIP, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MOTOR_DAMIAO_CAN_ID_GRIP, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_GRIP, .profile_role = APP_MOTOR_ROLE_GRIP},
+    {.name = APP_MOTOR_NAME_PITCH3, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MOTOR_DAMIAO_CAN_ID_PITCH3, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_PITCH3, .profile_role = APP_MOTOR_ROLE_PITCH3},
 };
 
 TaskContextSlotId g_mct_slot_id = 0;
+
+static OmBool mct_profile_role_is_present(uint8_t profile_role)
+{
+    return app_motor_profile_is_present(profile_role);
+}
+
+static OmBool mct_dji_roll3_is_present(void)
+{
+    return app_motor_profile_is_present(APP_MOTOR_ROLE_ROLL3);
+}
+
+static OmBool mct_go8010_pitch2_is_present(void)
+{
+    return app_motor_profile_is_present(APP_MOTOR_ROLE_PITCH2);
+}
 
 /* owner 侧 CAN bring-up：
  * - open
@@ -139,21 +154,39 @@ static void mct_runtime_set_all_motors_control_mode(
 
     for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
     {
+        if (mct_profile_role_is_present(g_mct_dji_chassis_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
         (void)motor_set_control_mode(&runtime->dji_chassis_motors[index], control_mode);
     }
-    (void)motor_set_control_mode(&runtime->dji_roll3_motor, control_mode);
+    if (mct_dji_roll3_is_present() == OM_TRUE)
+    {
+        (void)motor_set_control_mode(&runtime->dji_roll3_motor, control_mode);
+    }
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
+        if (mct_profile_role_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
         (void)motor_set_control_mode(&runtime->p1010b_motors[index], control_mode);
     }
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
+        if (mct_profile_role_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
         (void)motor_set_control_mode(&runtime->damiao_motors[index], control_mode);
     }
 
-    (void)motor_set_control_mode(&runtime->go8010_pitch2_motor, control_mode);
+    if (mct_go8010_pitch2_is_present() == OM_TRUE)
+    {
+        (void)motor_set_control_mode(&runtime->go8010_pitch2_motor, control_mode);
+    }
 }
 
 static OmRet mct_runtime_prepare_owner_devices(const BspDeviceRegistry* devices)
@@ -241,6 +274,11 @@ static void mct_runtime_update_non_operational_disable_confirmation(MctRuntime* 
             continue;
         }
 
+        if (mct_profile_role_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         if (runtime->p1010b_drivers[index].runtime.state == P1010B_STATE_DISABLED)
         {
             runtime->p1010b_non_operational_disable_confirmed[index] = OM_TRUE;
@@ -249,7 +287,7 @@ static void mct_runtime_update_non_operational_disable_confirmation(MctRuntime* 
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (g_mct_damiao_configs[index].installed != OM_TRUE ||
+        if (mct_profile_role_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE ||
             runtime->damiao_non_operational_disable_confirmed[index] == OM_TRUE)
         {
             continue;
@@ -287,6 +325,11 @@ static OmRet mct_runtime_observe_non_operational_p1010b(MctRuntime* runtime)
         uint32_t index =
             (uint32_t)((runtime->next_non_operational_p1010b_observation_index + attempt_index) % MCT_P1010B_COUNT);
 
+        if (mct_profile_role_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         if (runtime->p1010b_non_operational_disable_confirmed[index] != OM_TRUE)
         {
             continue;
@@ -321,6 +364,11 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
     {
+        if (mct_profile_role_is_present(g_mct_dji_chassis_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         ret = motor_control_compute(&runtime->dji_chassis_motors[index]);
         if (ret != OM_OK)
         {
@@ -332,14 +380,17 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
         }
     }
 
-    ret = motor_control_compute(&runtime->dji_roll3_motor);
-    if (ret != OM_OK)
+    if (mct_dji_roll3_is_present() == OM_TRUE)
     {
-        last_error = ret;
-    }
-    else if (dji_sync_motor == OM_NULL)
-    {
-        dji_sync_motor = &runtime->dji_roll3_motor;
+        ret = motor_control_compute(&runtime->dji_roll3_motor);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+        else if (dji_sync_motor == OM_NULL)
+        {
+            dji_sync_motor = &runtime->dji_roll3_motor;
+        }
     }
 
     if (dji_sync_motor != OM_NULL)
@@ -351,14 +402,17 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
         }
     }
 
-    ret = motor_control_compute(&runtime->go8010_pitch2_motor);
-    if (ret != OM_OK)
+    if (mct_go8010_pitch2_is_present() == OM_TRUE)
     {
-        last_error = ret;
-    }
-    else
-    {
-        go8010_sync_motor = &runtime->go8010_pitch2_motor;
+        ret = motor_control_compute(&runtime->go8010_pitch2_motor);
+        if (ret != OM_OK)
+        {
+            last_error = ret;
+        }
+        else
+        {
+            go8010_sync_motor = &runtime->go8010_pitch2_motor;
+        }
     }
 
     if (go8010_sync_motor != OM_NULL)
@@ -374,6 +428,11 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
+        if (mct_profile_role_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         if (runtime->p1010b_non_operational_disable_confirmed[index] == OM_TRUE)
         {
             continue;
@@ -394,7 +453,7 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (g_mct_damiao_configs[index].installed != OM_TRUE)
+        if (mct_profile_role_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -541,7 +600,7 @@ OmRet mct_runtime_init(
 
 void mct_capture_go8010_zero(MctRuntime* runtime)
 {
-    if (runtime == OM_NULL)
+    if (runtime == OM_NULL || mct_go8010_pitch2_is_present() != OM_TRUE)
     {
         return;
     }

@@ -29,7 +29,19 @@ OmBool chassis_task_get_debug_chassis_mode(
 
 /* VTable 诊断回调：
  * - diag_online 返回轮/腿电机在线状态 bitmask
- * - diag_snapshot 返回 12 个 float：4 轮反馈 rpm + 4 轮电流 + 2 腿角度 + 2 腿电流
+ * - diag_snapshot 返回固定 12 个 float：
+ *   [0]  wheel_fr_feedback_rpm
+ *   [1]  wheel_fl_feedback_rpm
+ *   [2]  wheel_bl_feedback_rpm
+ *   [3]  wheel_br_feedback_rpm
+ *   [4]  wheel_fr_command_current
+ *   [5]  wheel_fl_command_current
+ *   [6]  wheel_bl_command_current
+ *   [7]  wheel_br_command_current
+ *   [8]  joint_leg_r_feedback_deg
+ *   [9]  joint_leg_l_feedback_deg
+ *   [10] joint_leg_r_command_current
+ *   [11] joint_leg_l_command_current
  */
 void chassis_task_diag_online(void* ctx, uint8_t* out_online);
 void chassis_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count);

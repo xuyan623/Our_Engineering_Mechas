@@ -17,6 +17,11 @@ static OmRet mct_register_dji(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
     {
+        if (app_motor_profile_is_present(g_mct_dji_chassis_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         ret = motor_attach_dji(
             &runtime->dji_chassis_motors[index],
             g_mct_dji_chassis_configs[index].name,
@@ -39,9 +44,14 @@ static OmRet mct_register_dji(MctRuntime* runtime)
         }
     }
 
+    if (app_motor_profile_is_present(APP_MOTOR_ROLE_ROLL3) != OM_TRUE)
+    {
+        return OM_OK;
+    }
+
     ret = motor_attach_dji(
         &runtime->dji_roll3_motor,
-        "roll3",
+        APP_MOTOR_NAME_ROLL3,
         &runtime->dji_bus,
         &runtime->dji_roll3_driver,
         DJI_MOTOR_TYPE_GM6020,
@@ -53,8 +63,7 @@ static OmRet mct_register_dji(MctRuntime* runtime)
         return ret;
     }
 
-    return motor_recovery_register_entry(
-        &runtime->dji_roll3_motor);
+    return motor_recovery_register_entry(&runtime->dji_roll3_motor);
 }
 
 /* P1010B 注册阶段只完成：
@@ -77,6 +86,11 @@ static OmRet mct_register_p1010b(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
+        if (app_motor_profile_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         ret = motor_attach_p1010b(
             &runtime->p1010b_motors[index],
             g_mct_p1010b_configs[index].name,
@@ -104,7 +118,8 @@ static OmRet mct_register_p1010b(MctRuntime* runtime)
 }
 
 /* Damiao 注册阶段默认保持 disabled。
- * 是否 installed 只影响：
+ * profile_role 只影响：
+ * - 是否正式接入当前应用
  * - 是否加入 recovery
  * - 是否参与启动期 enable
  */
@@ -120,6 +135,11 @@ static OmRet mct_register_damiao(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
+        if (app_motor_profile_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         ret = motor_attach_damiao(
             &runtime->damiao_motors[index],
             g_mct_damiao_configs[index].name,
@@ -132,11 +152,6 @@ static OmRet mct_register_damiao(MctRuntime* runtime)
         if (ret != OM_OK)
         {
             return ret;
-        }
-
-        if (g_mct_damiao_configs[index].installed != OM_TRUE)
-        {
-            continue;
         }
 
         ret = motor_recovery_register_entry(
@@ -160,9 +175,14 @@ static OmRet mct_register_go8010(MctRuntime* runtime)
         return OM_ERROR_NULL;
     }
 
+    if (app_motor_profile_is_present(APP_MOTOR_ROLE_PITCH2) != OM_TRUE)
+    {
+        return OM_OK;
+    }
+
     ret = motor_attach_go8010(
         &runtime->go8010_pitch2_motor,
-        "pitch2",
+        APP_MOTOR_NAME_PITCH2,
         &runtime->go8010_bus,
         &runtime->go8010_pitch2_driver,
         MCT_GO8010_PITCH2_ID,
@@ -172,8 +192,7 @@ static OmRet mct_register_go8010(MctRuntime* runtime)
         return ret;
     }
 
-    return motor_recovery_register_entry(
-        &runtime->go8010_pitch2_motor);
+    return motor_recovery_register_entry(&runtime->go8010_pitch2_motor);
 }
 
 /* P1010B 启动期固定四步：
@@ -239,6 +258,11 @@ static OmRet mct_prepare_p1010b(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
+        if (app_motor_profile_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        {
+            continue;
+        }
+
         OmRet ret = mct_prepare_p1010b_motor(&runtime->p1010b_motors[index]);
         if (ret != OM_OK)
         {
@@ -266,7 +290,7 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (g_mct_damiao_configs[index].installed != OM_TRUE)
+        if (app_motor_profile_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -286,7 +310,7 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (g_mct_damiao_configs[index].installed != OM_TRUE)
+        if (app_motor_profile_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }

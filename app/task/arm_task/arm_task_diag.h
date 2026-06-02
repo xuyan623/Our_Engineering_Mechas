@@ -137,7 +137,15 @@ OmBool arm_task_get_debug_snapshot(
 
 /* VTable 诊断回调：
  * - diag_online 返回 7 轴在线状态 bitmask
- * - diag_snapshot 返回 8 个 float：7 个机构角(rad) + 1 个接管标志
+ * - diag_snapshot 返回固定 8 个 float：
+ *   [0] big_yaw   (rad)
+ *   [1] pitch1    (rad)
+ *   [2] pitch2    (rad)
+ *   [3] roll2     (rad)
+ *   [4] pitch3    (rad)
+ *   [5] roll3     (rad)
+ *   [6] grip      (rad)
+ *   [7] custom_controller_takeover_bit (bit)
  */
 void arm_task_diag_online(void* ctx, uint8_t* out_online);
 void arm_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count);

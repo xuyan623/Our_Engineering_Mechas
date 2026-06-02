@@ -7,6 +7,7 @@
  * 对外不暴露，调用方应使用 arm_task.h 或 arm_task_diag.h。
  */
 
+#include "config/app_config.h"
 #include "core/algorithm/controller/pid.h"
 #include "driver/motor/motor.h"
 #include "function/math_utils/math_utils.h"
@@ -17,6 +18,21 @@
 #include "module/task_context_pool/task_context_pool.h"
 #include <atomic/atomic.h>
 #include <stdint.h>
+
+#define ARM_TASK_PERIOD_MS                           APP_ARM_TASK_PERIOD_MS
+#define ARM_TASK_BIG_YAW_CONTROL_PERIOD_MS           APP_ARM_BIG_YAW_CONTROL_PERIOD_MS
+#define ARM_TASK_PITCH1_CONTROL_PERIOD_MS            APP_ARM_PITCH1_CONTROL_PERIOD_MS
+#define ARM_TASK_PITCH2_CONTROL_PERIOD_MS            APP_ARM_PITCH2_CONTROL_PERIOD_MS
+#define ARM_TASK_ROLL2_CONTROL_PERIOD_MS             APP_ARM_ROLL2_CONTROL_PERIOD_MS
+#define ARM_TASK_PITCH3_CONTROL_PERIOD_MS            APP_ARM_PITCH3_CONTROL_PERIOD_MS
+#define ARM_TASK_ROLL3_CONTROL_PERIOD_MS             APP_ARM_ROLL3_CONTROL_PERIOD_MS
+#define ARM_TASK_GRIP_CONTROL_PERIOD_MS              APP_ARM_GRIP_CONTROL_PERIOD_MS
+#define ARM_TASK_TX_REQUEST_PERIOD_MS                APP_ARM_TX_REQUEST_PERIOD_MS
+#define ARM_TASK_STACK_BYTES                         (1024u * OSAL_STACK_WORD_BYTES)
+#define ARM_TASK_PRIORITY                            (4u)
+#define ARM_TASK_POSE_MACHINE_COUNT                  (7u)
+#define ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD      (0.08f)
+#define ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES (256u)
 
 /* 机构角轴数量（big_yaw / pitch1 / pitch2 / roll2 / pitch3 / roll3 / grip）。 */
 #define ARM_TASK_MACHINE_COUNT                   (7u)
@@ -162,6 +178,7 @@ typedef struct
 
 /* arm_task 运行时上下文单例，由 arm_task.c 定义。 */
 extern TaskContextSlotId g_arm_task_slot_id;
+extern Motor* g_arm_task_motor_cache[ARM_TASK_MACHINE_COUNT];
 static inline ArmTaskContext* arm_task_get_owner_context(void)
 {
     return (ArmTaskContext*)task_context_pool_get_ptr(g_arm_task_slot_id);
@@ -182,7 +199,74 @@ OmBool arm_task_get_roll3_feedback_angle_rad(
     float* angle_rad);
 
 
-/* 机构角常驻基础姿态表，供逆向映射使用。 */
+/* 机构角姿态表常量，供跨文件姿态推进与逆向映射使用。 */
+extern const ArmTaskMachinePose g_arm_pose_zero;
 extern const ArmTaskMachinePose g_arm_pose_normal;
+
+OmBool arm_task_load_snapshot(
+    const ArmTaskContext* context,
+    ArmTaskSnapshot* snapshot);
+void arm_task_load_custom_controller_snapshot(
+    const ArmTaskContext* context,
+    ArmTaskCustomControllerSnapshot* snapshot);
+void arm_task_drain_mode_snapshots(ArmTaskContext* context);
+void arm_task_drain_custom_controller_snapshots(ArmTaskContext* context);
+OmBool arm_task_snapshot_changed(const ArmTaskSnapshot* lhs, const ArmTaskSnapshot* rhs);
+OmBool arm_task_custom_controller_takeover_active(
+    const ArmTaskContext* context,
+    const ArmTaskSnapshot* arm_snapshot,
+    const ArmTaskCustomControllerSnapshot* custom_controller_snapshot);
+OmBool arm_task_feedback_online(const MotorFeedback* feedback);
+OmBool arm_task_motor_online(const Motor* motor);
+OmBool arm_task_roll3_online(const ArmTaskContext* context);
+OmRet arm_task_init_pids(void);
+OmRet arm_task_try_bind_motors(ArmTaskContext* context);
+OmRet arm_task_restore_control_modes(ArmTaskContext* context);
+OmBool arm_task_get_pitch2_joint_feedback_rad(
+    const ArmTaskContext* context,
+    float* pitch2_joint_feedback_rad);
+void arm_task_refresh_smoothed_targets_from_feedback(ArmTaskContext* context);
+void arm_task_clear_smoothed_targets(ArmTaskContext* context);
+void arm_task_reset_custom_controller_state(ArmTaskContext* context);
+void arm_task_preprocess_custom_controller_delta_deg(
+    ArmTaskContext* context,
+    const ArmTaskCustomControllerSnapshot* input_snapshot,
+    float output_delta_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT]);
+void arm_task_apply_custom_controller_alignment_pose(
+    ArmTaskContext* context,
+    ArmTaskMachinePose* pose);
+OmBool arm_task_custom_controller_alignment_reached(ArmTaskContext* context);
+void arm_task_capture_custom_controller_reference(
+    ArmTaskContext* context,
+    const ArmTaskCustomControllerSnapshot* custom_controller_snapshot);
+void arm_task_update_custom_controller_reference_state(
+    ArmTaskContext* context,
+    OmBool custom_controller_mode_selected,
+    OmBool custom_controller_active,
+    const ArmTaskCustomControllerSnapshot* custom_controller_snapshot);
+void arm_task_assign_pose(ArmTaskMachinePose* target, const ArmTaskMachinePose* source);
+void arm_task_apply_custom_controller_pose(
+    ArmTaskContext* context,
+    const ArmTaskCustomControllerSnapshot* custom_controller_snapshot,
+    ArmTaskMachinePose* pose);
+void clamp_angle_handle(
+    const ArmTaskSnapshot* snapshot,
+    OsalTimeMs elapsed_ms,
+    ArmTaskMachinePose* pose);
+void arm_task_resolve_motor_targets(
+    const ArmTaskContext* context,
+    const ArmTaskMachinePose* pose,
+    ArmTaskMotorTargets* targets);
+void arm_task_compute_gravity_feedforward(
+    ArmTaskContext* context,
+    float* pitch1_torque_ff,
+    float* pitch2_torque_ff,
+    float* roll2_torque_ff,
+    float* pitch3_torque_ff);
+void arm_task_update_smoothed_targets(
+    ArmTaskContext* context,
+    const ArmTaskMotorTargets* desired_targets,
+    float current_tick_s);
+void arm_task_run_once(ArmTaskContext* context);
 
 #endif

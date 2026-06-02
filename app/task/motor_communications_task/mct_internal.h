@@ -1,6 +1,7 @@
 #ifndef NEW_ROBOT_MCT_INTERNAL_H
 #define NEW_ROBOT_MCT_INTERNAL_H
 
+#include "config/app_config.h"
 #include "driver/motor/motor.h"
 #include "module/task_channel/task_channel.h"
 #include "task/motor_communications_task/mct.h"
@@ -11,18 +12,18 @@
  * 这里集中放 owner 任务节拍、设备数量和 vendor 常量，
  * 供 runtime/vendor/diag 三个实现文件共享。
  */
-#define MCT_LOOP_PERIOD_MS                 (5u)
-#define MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS    (10u)
-#define MCT_OPERATIONAL_OBSERVATION_PERIOD_MS       (50u)
-#define MCT_NON_OPERATIONAL_PERIOD_MS               (50u)
-#define MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS (50u)
+#define MCT_LOOP_PERIOD_MS                              APP_MCT_LOOP_PERIOD_MS
+#define MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS      APP_MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS
+#define MCT_OPERATIONAL_OBSERVATION_PERIOD_MS          APP_MCT_OPERATIONAL_OBSERVATION_PERIOD_MS
+#define MCT_NON_OPERATIONAL_PERIOD_MS                  APP_MCT_NON_OPERATIONAL_PERIOD_MS
+#define MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS   APP_MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS
 #define MCT_STACK_WORDS                             (1024u)
 #define MCT_PRIORITY                                (4u)
 #define MCT_DJI_CHASSIS_COUNT                       (4u)
 #define MCT_P1010B_COUNT                            (2u)
 #define MCT_DAMIAO_COUNT                            (6u)
-#define MCT_DJI_ROLL3_ID                            (5u)
-#define MCT_GO8010_PITCH2_ID                        (1u)
+#define MCT_DJI_ROLL3_ID                            APP_MOTOR_DJI_ID_ROLL3
+#define MCT_GO8010_PITCH2_ID                        APP_MOTOR_GO8010_ID_PITCH2
 #define MCT_DAMIAO_MODE_SETTLE_MS                   (10u)
 
 /* 下列配置表只描述“正式电机命名 -> vendor 内部 id”的静态事实，
@@ -32,12 +33,14 @@ typedef struct
 {
     const char* name;
     uint8_t id;
+    uint8_t profile_role;
 } MctDjiChassisConfig;
 
 typedef struct
 {
     const char* name;
     uint8_t id;
+    uint8_t profile_role;
 } MctP1010BConfig;
 
 typedef struct
@@ -46,7 +49,7 @@ typedef struct
     DamiaoMotorType type;
     uint16_t can_id;
     uint16_t master_id;
-    OmBool installed;
+    uint8_t profile_role;
 } MctDamiaoConfig;
 
 /* 只允许在 mct owner 线程里执行的低频生命周期命令。 */

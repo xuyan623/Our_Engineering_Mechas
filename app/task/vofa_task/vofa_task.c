@@ -1,24 +1,46 @@
 #include "task/vofa_task/vofa_task.h"
 
 #include "bsp/bsp_init.h"
+#include "config/app_config.h"
 #include "drivers/peripheral/can/pal_can_dev.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "function/vofa/vofa.h"
+#include "task/vofa_task/vofa_layout.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
 #include "module/task_context_pool/task_context_pool.h"
 #include <string.h>
 
-#define VOFA_TASK_PERIOD_MS                        (10u)
-#define VOFA_CHANNEL_COUNT                         (8u)
+/* 当前 VOFA 任务仍是纯观察链：
+ * - 上游数据来自 task_context_pool 的 diag_snapshot
+ * - 下游只做 UART7 输出
+ *
+ * 它不能：
+ * - 写回正式控制链
+ * - 维护任何控制真源
+ * - 越过 owner task 直接读取驱动内部状态
+ */
+
+#define VOFA_TASK_PERIOD_MS                        APP_VOFA_TASK_PERIOD_MS
 #define VOFA_TASK_UART7_BAUDRATE                   (115200u)
 #define VOFA_TASK_UART7_TX_BUFSIZE                 (128u)
 #define VOFA_TASK_UART7_RX_BUFSIZE                 (64u)
 #define VOFA_TASK_UART7_RX_DRAIN_BUDGET            (32u)
 #define VOFA_TASK_STACK_BYTES                      (512u * OSAL_STACK_WORD_BYTES)
 
-static float g_vofa_frame[VOFA_CHANNEL_COUNT] = {0.0f};
+typedef struct
+{
+    const char* task_name;
+    TaskContextSlotId slot_id;
+    float snapshot[VOFA_LAYOUT_MAX_CHANNELS];
+    uint32_t snapshot_count;
+} VofaResolvedTask;
+
+static float g_vofa_frame[VOFA_LAYOUT_MAX_CHANNELS] = {0.0f};
+static const VofaLayoutDef* g_vofa_layout = OM_NULL;
+static VofaResolvedTask g_vofa_resolved_tasks[VOFA_LAYOUT_MAX_CHANNELS] = {0};
+static uint32_t g_vofa_resolved_task_count = 0u;
 
 static OmRet vofa_task_prepare_uart7(Device* uart7_device)
 {
@@ -79,69 +101,194 @@ static float vofa_task_get_can_tx_fifo_used(Device* can_device)
     return (float)(total_count - can->txHandler.txFifo.freeCount);
 }
 
-static TaskContextSlotId g_vofa_arm_task_slot = 0;
-
-static void vofa_task_find_arm_task_slot(void)
+static TaskContextSlotId vofa_task_find_slot_by_name(const char* task_name)
 {
     uint32_t i = 0;
     uint32_t count = task_context_pool_get_allocated_count();
+
+    if (task_name == OM_NULL)
+    {
+        return 0u;
+    }
 
     for (i = 0; i < count; i++)
     {
         TaskContextSlotId slot = task_context_pool_get_slot_by_index(i);
         const char* name = task_context_pool_get_name(slot);
-        if (name != OM_NULL && strcmp(name, "arm_task") == 0)
+        if (name != OM_NULL && strcmp(name, task_name) == 0)
         {
-            g_vofa_arm_task_slot = slot;
-            break;
+            return slot;
+        }
+    }
+
+    return 0u;
+}
+
+static VofaResolvedTask* vofa_task_find_resolved_task(const char* task_name)
+{
+    uint32_t index = 0u;
+
+    if (task_name == OM_NULL)
+    {
+        return OM_NULL;
+    }
+
+    for (index = 0u; index < g_vofa_resolved_task_count; index++)
+    {
+        if (g_vofa_resolved_tasks[index].task_name != OM_NULL &&
+            strcmp(g_vofa_resolved_tasks[index].task_name, task_name) == 0)
+        {
+            return &g_vofa_resolved_tasks[index];
+        }
+    }
+
+    return OM_NULL;
+}
+
+static OmRet vofa_task_prepare_layout(void)
+{
+    uint32_t channel_index = 0u;
+
+    g_vofa_layout = vofa_layout_get_default();
+    if (g_vofa_layout == OM_NULL || g_vofa_layout->channels == OM_NULL ||
+        g_vofa_layout->channel_count == 0u ||
+        g_vofa_layout->channel_count > VOFA_LAYOUT_MAX_CHANNELS)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    memset(g_vofa_resolved_tasks, 0, sizeof(g_vofa_resolved_tasks));
+    g_vofa_resolved_task_count = 0u;
+
+    for (channel_index = 0u; channel_index < g_vofa_layout->channel_count; channel_index++)
+    {
+        const VofaChannelDescriptor* descriptor = &g_vofa_layout->channels[channel_index];
+        TaskContextSlotId slot_id = 0u;
+
+        if (descriptor->source_kind != VOFA_LAYOUT_SOURCE_TASK_SNAPSHOT ||
+            descriptor->task_name == OM_NULL)
+        {
+            continue;
+        }
+
+        if (vofa_task_find_resolved_task(descriptor->task_name) != OM_NULL)
+        {
+            continue;
+        }
+
+        if (g_vofa_resolved_task_count >= VOFA_LAYOUT_MAX_CHANNELS)
+        {
+            return OM_ERROR;
+        }
+
+        slot_id = vofa_task_find_slot_by_name(descriptor->task_name);
+        if (slot_id == 0u)
+        {
+            return OM_ERROR;
+        }
+
+        g_vofa_resolved_tasks[g_vofa_resolved_task_count].task_name = descriptor->task_name;
+        g_vofa_resolved_tasks[g_vofa_resolved_task_count].slot_id = slot_id;
+        g_vofa_resolved_tasks[g_vofa_resolved_task_count].snapshot_count = 0u;
+        g_vofa_resolved_task_count++;
+    }
+
+    return OM_OK;
+}
+
+static void vofa_task_refresh_resolved_snapshots(void)
+{
+    uint32_t index = 0u;
+
+    for (index = 0u; index < g_vofa_resolved_task_count; index++)
+    {
+        memset(g_vofa_resolved_tasks[index].snapshot, 0, sizeof(g_vofa_resolved_tasks[index].snapshot));
+        g_vofa_resolved_tasks[index].snapshot_count = 0u;
+        if (g_vofa_resolved_tasks[index].slot_id != 0u)
+        {
+            task_context_pool_call_diag_snapshot(
+                g_vofa_resolved_tasks[index].slot_id,
+                g_vofa_resolved_tasks[index].snapshot,
+                VOFA_LAYOUT_MAX_CHANNELS,
+                &g_vofa_resolved_tasks[index].snapshot_count);
         }
     }
 }
 
 static void vofa_task_fill_frame(
-    float frame[VOFA_CHANNEL_COUNT],
+    float frame[VOFA_LAYOUT_MAX_CHANNELS],
+    uint32_t* frame_count,
     const BspDeviceRegistry* devices)
 {
-    float machine_angle_rad[7] = {0.0f};
-    uint32_t index = 0u;
+    uint32_t channel_index = 0u;
 
-    for (index = 0u; index < VOFA_CHANNEL_COUNT; index++)
-    {
-        frame[index] = 0.0f;
-    }
-
-    if (devices == OM_NULL)
+    if (frame == OM_NULL || frame_count == OM_NULL)
     {
         return;
     }
 
-    uint32_t count = 0;
+    *frame_count = 0u;
+    memset(frame, 0, sizeof(float) * VOFA_LAYOUT_MAX_CHANNELS);
 
-    if (g_vofa_arm_task_slot != 0)
+    if (devices == OM_NULL || g_vofa_layout == OM_NULL)
     {
-        task_context_pool_call_diag_snapshot(
-            g_vofa_arm_task_slot, frame, VOFA_CHANNEL_COUNT, &count);
+        return;
     }
 
-    if (count < VOFA_CHANNEL_COUNT)
+    vofa_task_refresh_resolved_snapshots();
+
+    for (channel_index = 0u; channel_index < g_vofa_layout->channel_count; channel_index++)
     {
-        for (index = count; index < VOFA_CHANNEL_COUNT; index++)
+        const VofaChannelDescriptor* descriptor = &g_vofa_layout->channels[channel_index];
+        float value = 0.0f;
+
+        switch (descriptor->source_kind)
         {
-            frame[index] = 0.0f;
+        case VOFA_LAYOUT_SOURCE_TASK_SNAPSHOT:
+        {
+            VofaResolvedTask* resolved_task = vofa_task_find_resolved_task(descriptor->task_name);
+            if (resolved_task != OM_NULL &&
+                descriptor->snapshot_index < resolved_task->snapshot_count)
+            {
+                value = resolved_task->snapshot[descriptor->snapshot_index];
+            }
+            break;
         }
+
+        case VOFA_LAYOUT_SOURCE_CAN1_TX_FIFO_USED:
+            value = vofa_task_get_can_tx_fifo_used(devices->can1);
+            break;
+
+        case VOFA_LAYOUT_SOURCE_CAN2_TX_FIFO_USED:
+            value = vofa_task_get_can_tx_fifo_used(devices->can2);
+            break;
+
+        case VOFA_LAYOUT_SOURCE_CONST_ZERO:
+        default:
+            value = 0.0f;
+            break;
+        }
+
+        frame[channel_index] = value;
     }
+
+    *frame_count = g_vofa_layout->channel_count;
 }
 
 static void vofa_task_entry(void* arg)
 {
     const BspDeviceRegistry* devices = (const BspDeviceRegistry*)arg;
     OsalTimeMs deadline_cursor_ms = 0u;
+    uint32_t frame_count = 0u;
 
     while (1)
     {
         vofa_task_drain_uart7_rx(devices->uart7);
-        vofa_task_fill_frame(g_vofa_frame, devices);
-        vofa_justfloat_send(devices->uart7, g_vofa_frame, VOFA_CHANNEL_COUNT);
+        vofa_task_fill_frame(g_vofa_frame, &frame_count, devices);
+        if (frame_count != 0u)
+        {
+            vofa_justfloat_send(devices->uart7, g_vofa_frame, (uint16_t)frame_count);
+        }
         (void)osal_delay_until(&deadline_cursor_ms, VOFA_TASK_PERIOD_MS, OM_NULL);
     }
 }
@@ -167,7 +314,10 @@ OmRet vofa_task_start(const BspDeviceRegistry* devices)
         return OM_ERROR;
     }
 
-    vofa_task_find_arm_task_slot();
+    if (vofa_task_prepare_layout() != OM_OK)
+    {
+        return OM_ERROR;
+    }
 
     status = osal_thread_create(&vofa_task_thread, &vofa_task_attr, vofa_task_entry, (void*)devices);
     if (status != OSAL_OK)
