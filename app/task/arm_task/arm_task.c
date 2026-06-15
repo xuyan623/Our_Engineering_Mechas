@@ -9,8 +9,9 @@
 #include <string.h>
 
 TaskContextSlotId g_arm_task_slot_id = 0;
-uint8_t g_arm_task_mode_channel_storage[sizeof(ModeTaskControlSnapshot) * ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
+uint8_t g_arm_task_mode_channel_storage[sizeof(ArmTaskModeSnapshot) * ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
 OmAtomicU8 g_arm_task_mode_channel_ready_flags[ARM_TASK_MODE_CHANNEL_CAPACITY] = {0};
+uint8_t g_arm_task_rc_channel_storage[ARM_TASK_RC_CHANNEL_CAPACITY_BYTES] = {0};
 uint8_t g_arm_task_custom_controller_channel_storage[ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES] = {0};
 
 static void arm_task_entry(void* arg)
@@ -48,7 +49,9 @@ static void arm_task_ctx_reset(void* ctx)
     memset(&self->last_snapshot, 0, sizeof(self->last_snapshot));
     memset(&self->smoothed_targets, 0, sizeof(self->smoothed_targets));
     memset(&self->latest_mode_snapshot, 0, sizeof(self->latest_mode_snapshot));
+    memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
     memset(&self->latest_custom_controller_snapshot, 0, sizeof(self->latest_custom_controller_snapshot));
+    memset(&self->ik_target_pose, 0, sizeof(self->ik_target_pose));
     self->command_since_ms = 0u;
     self->last_tx_request_ms = 0u;
     memset(self->last_control_ms, 0, sizeof(self->last_control_ms));
@@ -98,7 +101,7 @@ OmRet arm_task_start(void)
         &ctx->mode_channel,
         g_arm_task_mode_channel_storage,
         g_arm_task_mode_channel_ready_flags,
-        sizeof(ModeTaskControlSnapshot),
+        sizeof(ArmTaskModeSnapshot),
         ARM_TASK_MODE_CHANNEL_CAPACITY);
     if (ret != OM_OK)
     {
@@ -107,18 +110,32 @@ OmRet arm_task_start(void)
         return ret;
     }
 
-    if (mode_task_copy_control_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
+    if (mode_task_copy_arm_mode_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
     {
         ctx->flags |= ARM_TASK_FLAG_MODE_SNAPSHOT_READY;
+    }
+
+    ret = task_pipe_channel_init(
+        &ctx->rc_channel,
+        g_arm_task_rc_channel_storage,
+        ARM_TASK_RC_CHANNEL_CAPACITY_BYTES,
+        sizeof(InputRcSnapshot));
+    if (ret != OM_OK)
+    {
+        task_mpsc_channel_deinit(&ctx->mode_channel);
+        task_context_pool_free(g_arm_task_slot_id);
+        g_arm_task_slot_id = 0u;
+        return ret;
     }
 
     ret = task_pipe_channel_init(
         &ctx->custom_controller_channel,
         g_arm_task_custom_controller_channel_storage,
         ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES,
-        sizeof(DpCustomControllerSnapshot));
+        sizeof(InputCustomControllerSnapshot));
     if (ret != OM_OK)
     {
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&ctx->mode_channel);
         task_context_pool_free(g_arm_task_slot_id);
         g_arm_task_slot_id = 0u;
@@ -129,6 +146,7 @@ OmRet arm_task_start(void)
     if (ret != OM_OK)
     {
         task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&ctx->mode_channel);
         task_context_pool_free(g_arm_task_slot_id);
         g_arm_task_slot_id = 0u;
@@ -143,6 +161,7 @@ OmRet arm_task_start(void)
     if (status != OSAL_OK)
     {
         task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&ctx->mode_channel);
         task_context_pool_free(g_arm_task_slot_id);
         g_arm_task_slot_id = 0u;
@@ -154,7 +173,7 @@ OmRet arm_task_start(void)
 }
 
 OmRet arm_task_submit_mode_control_snapshot(
-    const ModeTaskControlSnapshot* snapshot)
+    const ArmTaskModeSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_arm_task_owner_context == OM_NULL)
     {
@@ -166,8 +185,22 @@ OmRet arm_task_submit_mode_control_snapshot(
         snapshot);
 }
 
+OmRet arm_task_submit_rc_snapshot(
+    const InputRcSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL || g_arm_task_owner_context == OM_NULL)
+    {
+        return OM_ERROR_PARAM;
+    }
+
+    return task_pipe_channel_submit_nonblocking(
+        &g_arm_task_owner_context->rc_channel,
+        snapshot,
+        OM_TRUE);
+}
+
 OmRet arm_task_submit_custom_controller_snapshot(
-    const DpCustomControllerSnapshot* snapshot)
+    const InputCustomControllerSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_arm_task_owner_context == OM_NULL)
     {

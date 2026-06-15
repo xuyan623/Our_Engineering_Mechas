@@ -11,9 +11,10 @@
 #include "algorithm/kinematics/kinematics.h"
 #include "core/algorithm/controller/pid.h"
 #include "driver/motor/motor.h"
-#include "module/data_pool/data_pool.h"
 #include "module/task_channel/task_channel.h"
 #include "osal/osal_time.h"
+#include "task/input_task/input_task_snapshot.h"
+#include "task/imu_task/imu_task_snapshot.h"
 #include "task/mode_task/mode_task.h"
 #include "module/task_context_pool/task_context_pool.h"
 #include <atomic/atomic.h>
@@ -52,10 +53,13 @@ typedef struct
     int16_t ch4;
     int16_t mouse_x;
     uint16_t keyboard_bits;
-    ModeTaskSystemState system_state;
-    ModeTaskControlDomainState control_domain_state;
-    GlobalMode global_mode;
-    ChassisMode chassis_mode;
+    uint8_t sw1;
+    uint8_t sw2;
+    uint16_t iw;
+    ModeTaskOperationalPhaseState operational_phase;
+    uint8_t wheel_enable;
+    uint8_t leg_enable;
+    uint8_t allow_rc_drive;
     float imu_pitch_deg;
 } ChassisTaskInputSnapshot;
 
@@ -70,9 +74,9 @@ typedef struct
     TaskMpscChannel mode_channel;
     TaskPipeChannel rc_channel;
     TaskPipeChannel imu_channel;
-    ModeTaskControlSnapshot latest_mode_snapshot;
-    DpRcSnapshot latest_rc_snapshot;
-    DpImuSnapshot latest_imu_snapshot;
+    ChassisTaskModeSnapshot latest_mode_snapshot;
+    InputRcSnapshot latest_rc_snapshot;
+    ImuTaskSnapshot latest_imu_snapshot;
     float last_wheel_speed_ref_rpm[CHASSIS_TASK_WHEEL_COUNT];
     float pit_leg_cmd_deg;
     float big_yaw_hold_angle_rad;
@@ -158,7 +162,7 @@ OmRet chassis_task_restore_control_modes(ChassisTaskContext* context);
 void chassis_task_apply_zero_output(ChassisTaskContext* context);
 OmBool chassis_task_should_submit_tx_request(
     ChassisTaskContext* context,
-    ChassisMode chassis_mode,
+    ModeTaskOperationalPhaseState operational_phase,
     OsalTimeMs now_ms);
 void chassis_task_run_once(ChassisTaskContext* context);
 

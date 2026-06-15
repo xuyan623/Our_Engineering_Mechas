@@ -27,7 +27,8 @@ void mecanum_calc_three_wheel(
     MecanumWheelId offline_wheel_id,
     int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT]);
 
-/* 输出的是电机参考角：
+/* legacy 2 连杆逆解 helper，当前不参与 6 轴机械臂实时 IK。
+ * 输出的是电机参考角：
  * - pitch1_motor_angle_rad：Pitch1 电机参考角（rad）
  * - pitch2_motor_angle_rad：Pitch2 电机参考角（rad），已乘减速比
  */

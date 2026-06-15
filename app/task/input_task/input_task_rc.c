@@ -1,8 +1,9 @@
 #include "task/input_task/input_task_rc.h"
 
-#include "module/data_pool/data_pool.h"
 #include <stdlib.h>
 #include <string.h>
+
+static InputRcSnapshot g_input_task_rc_snapshot = {0};
 
 /* 旧 DBUS 中位附近的小抖动直接压到 0，
  * 避免 mode_task / chassis_task 每轮都看到噪声输入。
@@ -26,6 +27,11 @@ void input_task_rc_reset_runtime(InputTaskRcDebugState* runtime)
     }
 
     memset((void*)runtime, 0, sizeof(*runtime));
+}
+
+void input_task_rc_reset_latest_snapshot(void)
+{
+    memset(&g_input_task_rc_snapshot, 0, sizeof(g_input_task_rc_snapshot));
 }
 
 OmBool input_task_rc_decode_frame(
@@ -93,22 +99,9 @@ OmBool input_task_rc_decode_frame(
     return OM_TRUE;
 }
 
-void input_task_rc_store_to_data_pool(const InputTaskRcFrame* frame)
-{
-    DpRcSnapshot snapshot = {0};
-
-    if (frame == OM_NULL)
-    {
-        return;
-    }
-
-    input_task_rc_fill_snapshot(frame, &snapshot);
-    dp_store_rc_snapshot(&snapshot);
-}
-
 void input_task_rc_fill_snapshot(
     const InputTaskRcFrame* frame,
-    DpRcSnapshot* snapshot)
+    InputRcSnapshot* snapshot)
 {
     if (frame == OM_NULL || snapshot == OM_NULL)
     {
@@ -132,31 +125,48 @@ void input_task_rc_fill_snapshot(
     snapshot->keyboard_bits = frame->keyboard_bits;
 }
 
-void input_task_rc_update_online_state(
-    InputTaskRcDebugState* runtime,
-    OsalTimeMs now_ms)
+void input_task_rc_commit_snapshot(const InputRcSnapshot* snapshot)
 {
-    DpRcSnapshot snapshot = {0};
-
-    if (runtime == OM_NULL)
+    if (snapshot == OM_NULL)
     {
         return;
     }
 
-    dp_copy_rc_snapshot(&snapshot);
+    g_input_task_rc_snapshot = *snapshot;
+}
+
+void input_task_rc_copy_snapshot(InputRcSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL)
+    {
+        return;
+    }
+
+    *snapshot = g_input_task_rc_snapshot;
+}
+
+OmBool input_task_rc_update_online_state(
+    InputTaskRcDebugState* runtime,
+    OsalTimeMs now_ms)
+{
+    const uint8_t previous_online = g_input_task_rc_snapshot.online;
+
+    if (runtime == OM_NULL)
+    {
+        return OM_FALSE;
+    }
 
     if (runtime->last_frame_ms == 0u)
     {
         runtime->last_frame_age_ms = 0u;
         runtime->online = 0u;
-        snapshot.online = 0u;
-        dp_store_rc_snapshot(&snapshot);
-        return;
+        g_input_task_rc_snapshot.online = 0u;
+        return (previous_online != g_input_task_rc_snapshot.online) ? OM_TRUE : OM_FALSE;
     }
 
     runtime->last_frame_age_ms = (uint32_t)(now_ms - runtime->last_frame_ms);
     runtime->online =
         (runtime->last_frame_age_ms <= INPUT_TASK_DBUS_FRAME_TIMEOUT_MS) ? 1u : 0u;
-    snapshot.online = runtime->online;
-    dp_store_rc_snapshot(&snapshot);
+    g_input_task_rc_snapshot.online = runtime->online;
+    return (previous_online != g_input_task_rc_snapshot.online) ? OM_TRUE : OM_FALSE;
 }

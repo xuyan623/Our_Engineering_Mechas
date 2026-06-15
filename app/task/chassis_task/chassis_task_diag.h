@@ -20,8 +20,8 @@ OmBool chassis_task_get_debug_snapshot(
     float leg_feedback_deg[2],
     float leg_command_current[2]);
 
-/* 读取当前底盘模式。
- * - chassis_mode：输出当前 ChassisMode 枚举值
+/* 读取当前底盘正式控制相位。
+ * - chassis_mode：输出当前 operational phase（0=release,1=selection,2=formal）
  * - 返回 OM_TRUE 表示模式快照已就绪，OM_FALSE 表示尚未收到首帧
  */
 OmBool chassis_task_get_debug_chassis_mode(

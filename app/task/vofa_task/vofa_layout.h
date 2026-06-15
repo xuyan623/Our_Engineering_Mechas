@@ -22,6 +22,10 @@ typedef enum
     VOFA_LAYOUT_SOURCE_TASK_SNAPSHOT = 0u,
     VOFA_LAYOUT_SOURCE_CAN1_TX_FIFO_USED,
     VOFA_LAYOUT_SOURCE_CAN2_TX_FIFO_USED,
+    VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT,
+    VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT,
+    VOFA_LAYOUT_SOURCE_ARM_MODE,
+    VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT,
     VOFA_LAYOUT_SOURCE_CONST_ZERO,
 } VofaLayoutSourceKind;
 
@@ -46,10 +50,14 @@ typedef struct
  * - 0：机械臂 7 轴机构角 + 接管标志
  * - 1：底盘 4 轮反馈/电流 + 2 腿角度/电流
  * - 2：mct owner 运行态 + CAN1/CAN2 FIFO used
+ * - 3：机械臂当前 FK pose + 当前 arm_mode + IK 目标 xyz
+ * - 4：机械臂当前 IK joint（big_yaw/pitch1/pitch2/roll2/pitch3/roll3）
  */
 #define VOFA_LAYOUT_ID_ARM_MACHINE_ANGLES   (0u)
 #define VOFA_LAYOUT_ID_CHASSIS_DEBUG        (1u)
 #define VOFA_LAYOUT_ID_MCT_RUNTIME          (2u)
+#define VOFA_LAYOUT_ID_ARM_FK_POSE          (3u)
+#define VOFA_LAYOUT_ID_ARM_IK_JOINTS        (4u)
 
 /* 返回编译期默认布局。 */
 const VofaLayoutDef* vofa_layout_get_default(void);

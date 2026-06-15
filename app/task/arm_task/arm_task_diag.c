@@ -29,9 +29,8 @@ uint8_t arm_task_get_custom_controller_takeover_bit(void)
         return 0u;
     }
 
-    return (g_arm_task_owner_context->latest_mode_snapshot.chassis_mode ==
-                MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL &&
-            (g_arm_task_owner_context->flags & ARM_TASK_FLAG_CUSTOM_ALIGNMENT_DONE) &&
+    return (g_arm_task_owner_context->latest_mode_snapshot.arm_mode ==
+                ARM_TASK_MODE_CUSTOM_TAKEOVER &&
             g_arm_task_owner_context->latest_custom_controller_snapshot.online != 0u &&
             g_arm_task_owner_context->latest_custom_controller_snapshot.work_mode ==
                 ARM_TASK_CUSTOM_CONTROLLER_WORK_MODE_ENCODER)
@@ -64,7 +63,7 @@ OmBool arm_task_get_pitch2_debug_snapshot(
 
     export_targets =
         (mct_is_operational_active() == OM_TRUE &&
-         g_arm_task_owner_context->latest_mode_snapshot.chassis_mode != MODE_CHASSIS_RELEASE)
+         g_arm_task_owner_context->latest_mode_snapshot.arm_mode != ARM_TASK_MODE_RELEASE)
             ? OM_TRUE
             : OM_FALSE;
 
@@ -128,79 +127,118 @@ OmBool arm_task_get_custom_controller_pitch_axis_feedback(float* pitch_axis_feed
 OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
     float machine_angle_rad[7])
 {
-    const MotorFeedback* fb = OM_NULL;
-    float pitch2_zero_rad = 0.0f;
+    ArmIkJointVector joint_vector = {0};
+    const MotorFeedback* grip_feedback = OM_NULL;
 
     if (g_arm_task_owner_context == OM_NULL || machine_angle_rad == OM_NULL)
     {
         return OM_FALSE;
     }
 
-    /* big_yaw: 直接逆向 */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_BIG_YAW));
-    machine_angle_rad[0] = (fb != OM_NULL) ?
-        (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_BIG_YAW]) : 0.0f;
+    (void)arm_task_get_ik_joint_vector(g_arm_task_owner_context, &joint_vector);
 
-    /* pitch1: 先除以 ratio 再减 normal */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH1));
-    machine_angle_rad[1] = (fb != OM_NULL) ?
-        (fb->angle / APP_ARM_PITCH1_TARGET_RATIO -
-         g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH1]) : 0.0f;
+    machine_angle_rad[0] =
+        joint_vector.joint_rad[ARM_TASK_MACHINE_BIG_YAW] -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_BIG_YAW];
+    machine_angle_rad[1] =
+        joint_vector.joint_rad[ARM_TASK_MACHINE_PITCH1] -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH1];
+    machine_angle_rad[2] =
+        joint_vector.joint_rad[ARM_TASK_MACHINE_PITCH2] -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH2];
+    machine_angle_rad[3] =
+        joint_vector.joint_rad[ARM_TASK_MACHINE_ROLL2] -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_ROLL2];
+    machine_angle_rad[4] =
+        joint_vector.joint_rad[ARM_TASK_MACHINE_PITCH3] -
+        g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH3];
+    machine_angle_rad[5] = joint_vector.joint_rad[ARM_TASK_MACHINE_ROLL3];
 
-    /* pitch2: 先减 zero, 再除以 -gear_ratio, 再减 normal */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH2));
-    if (fb != OM_NULL)
+    grip_feedback = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_GRIP));
+    machine_angle_rad[6] = (grip_feedback != OM_NULL) ?
+        (grip_feedback->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP]) : 0.0f;
+
+    return OM_TRUE;
+}
+
+OmBool arm_task_get_ik_joint_snapshot(
+    ArmIkJointVector* joint_vector)
+{
+    if (g_arm_task_owner_context == OM_NULL || joint_vector == OM_NULL)
     {
-        if (arm_task_get_pitch2_zero_angle_rad(g_arm_task_owner_context, &pitch2_zero_rad) != OM_TRUE)
-        {
-            pitch2_zero_rad = fb->angle;
-        }
-        machine_angle_rad[2] =
-            (fb->angle - pitch2_zero_rad) / (-APP_ARM_PITCH2_GEAR_RATIO) -
-            g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH2];
-    }
-    else
-    {
-        machine_angle_rad[2] = 0.0f;
-    }
-
-    /* roll2: 直接逆向 */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_ROLL2));
-    machine_angle_rad[3] = (fb != OM_NULL) ?
-        (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_ROLL2]) : 0.0f;
-
-    /* pitch3: 直接逆向 */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_PITCH3));
-    machine_angle_rad[4] = (fb != OM_NULL) ?
-        (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_PITCH3]) : 0.0f;
-
-    /* roll3: GM6020 编码器范围 [-pi, pi), 姿态表用 [0, 2*pi).
-     * 逆向是透传，但要做 [0, 2*pi) unwrap 才能与动作表完全对齐。
-     */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_ROLL3));
-    if (fb != OM_NULL)
-    {
-        float roll3_unwrapped = fb->angle;
-        while (roll3_unwrapped < 0.0f)
-        {
-            roll3_unwrapped += 2.0f * 3.14159265358979323846f;
-        }
-        while (roll3_unwrapped >= 2.0f * 3.14159265358979323846f)
-        {
-            roll3_unwrapped -= 2.0f * 3.14159265358979323846f;
-        }
-        machine_angle_rad[5] = roll3_unwrapped;
-    }
-    else
-    {
-        machine_angle_rad[5] = 0.0f;
+        return OM_FALSE;
     }
 
-    /* grip: 直接逆向 */
-    fb = motor_get_feedback(arm_task_get_motor(ARM_TASK_MACHINE_GRIP));
-    machine_angle_rad[6] = (fb != OM_NULL) ?
-        (fb->angle - g_arm_pose_normal.machine_values[ARM_TASK_MACHINE_GRIP]) : 0.0f;
+    return arm_task_get_ik_joint_vector(g_arm_task_owner_context, joint_vector);
+}
 
+OmBool arm_task_get_ik_forward_pose_snapshot(
+    ArmIkPose* pose)
+{
+    ArmIkJointVector joint_vector = {0};
+
+    if (pose == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (arm_task_get_ik_joint_snapshot(&joint_vector) != OM_TRUE)
+    {
+        return OM_FALSE;
+    }
+
+    return (arm_kinematics_forward(&joint_vector, pose) == OM_OK) ? OM_TRUE : OM_FALSE;
+}
+
+OmBool arm_task_get_ik_target_pose_snapshot(
+    ArmIkPose* pose)
+{
+    if (g_arm_task_owner_context == OM_NULL || pose == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (g_arm_task_owner_context->latest_mode_snapshot.arm_mode != ARM_TASK_MODE_RC_IK ||
+        !(g_arm_task_owner_context->flags & ARM_TASK_FLAG_IK_TARGET_POSE_READY))
+    {
+        return OM_FALSE;
+    }
+
+    *pose = g_arm_task_owner_context->ik_target_pose;
+    return OM_TRUE;
+}
+
+OmBool arm_task_get_ik_pose_feature_snapshot(
+    ArmIkPoseFeatureSnapshot* pose_feature_snapshot)
+{
+    ArmIkJointVector joint_vector = {0};
+
+    if (pose_feature_snapshot == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    if (arm_task_get_ik_joint_snapshot(&joint_vector) != OM_TRUE)
+    {
+        return OM_FALSE;
+    }
+
+    return (arm_kinematics_classify_pose_features(
+                &joint_vector,
+                pose_feature_snapshot) == OM_OK)
+               ? OM_TRUE
+               : OM_FALSE;
+}
+
+OmBool arm_task_get_arm_mode_snapshot(
+    uint8_t* arm_mode)
+{
+    if (g_arm_task_owner_context == OM_NULL || arm_mode == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    *arm_mode = g_arm_task_owner_context->latest_mode_snapshot.arm_mode;
     return OM_TRUE;
 }
 
@@ -260,7 +298,7 @@ OmBool arm_task_get_pitch1_debug_snapshot(
 
     export_targets =
         (mct_is_operational_active() == OM_TRUE &&
-         g_arm_task_owner_context->latest_mode_snapshot.chassis_mode != MODE_CHASSIS_RELEASE)
+         g_arm_task_owner_context->latest_mode_snapshot.arm_mode != ARM_TASK_MODE_RELEASE)
             ? OM_TRUE
             : OM_FALSE;
 
@@ -307,7 +345,7 @@ OmBool arm_task_get_pitch3_debug_snapshot(
 
     export_targets =
         (mct_is_operational_active() == OM_TRUE &&
-         g_arm_task_owner_context->latest_mode_snapshot.chassis_mode != MODE_CHASSIS_RELEASE)
+         g_arm_task_owner_context->latest_mode_snapshot.arm_mode != ARM_TASK_MODE_RELEASE)
             ? OM_TRUE
             : OM_FALSE;
 
@@ -378,7 +416,7 @@ OmBool arm_task_get_debug_snapshot(
 
     export_targets =
         (mct_is_operational_active() == OM_TRUE &&
-         g_arm_task_owner_context->latest_mode_snapshot.chassis_mode != MODE_CHASSIS_RELEASE)
+         g_arm_task_owner_context->latest_mode_snapshot.arm_mode != ARM_TASK_MODE_RELEASE)
             ? OM_TRUE
             : OM_FALSE;
 
@@ -492,6 +530,5 @@ void arm_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* o
     out_buf[5] = machine_angle_rad[5]; /* roll3     */
     out_buf[6] = machine_angle_rad[6]; /* grip      */
     out_buf[7] = (float)arm_task_get_custom_controller_takeover_bit();
-
     *out_count = 8u;
 }

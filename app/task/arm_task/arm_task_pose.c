@@ -41,12 +41,12 @@ const ArmTaskMachinePose g_arm_pose_normal = {
 //     {0.0f, 1.24218f, 1.19447f, 0.0f, 0.0f, 3.7306414f, -1.8f}};
 const ArmTaskMachinePose g_arm_pose_get_energy = {
     {0.0f, 0.64218f, 1.0447f, 0.8f, 1.3f, 3.7306414f, 0.0f}};
-/* sw2=MI + sw1=UP + iw下边沿 -> GET_ENERGY_UNIT1 */
+/* sw2=MI + sw1=DN + iw上边沿：与 GET_ENERGY_UNIT2 交替切换 */
 // static const ArmTaskMachinePose g_arm_pose_get_energy1 = {
 //     {-0.00667f, 1.035f, (5.53f / 6.33f) + 0.34f + 0.1f, 0.6178f, -0.194f, 2.1530383f, -1.8f}};
 const ArmTaskMachinePose g_arm_pose_get_energy1 = {
     {0.0f, 0.64218f, 1.0447f, -0.8f, 1.3f, 3.7306414f, 0.0f}};
-/* sw2=MI + sw1=MI + iw下边沿 -> GET_ENERGY_UNIT2 */
+/* 保留旧的 GET_ENERGY_UNIT2 姿态定义；当前 formal 触发链不再直接在 1/2 间交替。 */
 const ArmTaskMachinePose g_arm_pose_get_energy2 = {
     {0.148584366f, 0.99088f, 1.04010f + 0.1f, 0.093270302f, 0.07834f, 2.7812520f, -1.8f}};
 /* GET_ENERGY_UNIT 三段动作之第三段 / EXCHANGE PICK_ACTION1 中间态 */
@@ -371,12 +371,11 @@ void clamp_angle_handle(
         return;
     }
 
-    /* 这是 C6 计划里要求承接的 clamp_angle_handle() 语义入口。
-     * 输入是当前共享控制事实，输出是本轮机械臂机构角姿态表。
-     */
-
     switch (snapshot->chassis_mode)
     {
+    case MODE_CHASSIS_EXCHANGE:
+        arm_task_apply_exchange(pose, snapshot->exchange_action, elapsed_ms);
+        break;
     case MODE_CHASSIS_GET_ENERGY_UNIT:
         arm_task_apply_get_energy_unit(pose, snapshot->clamp_action, elapsed_ms);
         break;
@@ -386,21 +385,16 @@ void clamp_angle_handle(
     case MODE_CHASSIS_GET_ENERGY_UNIT2:
         arm_task_apply_get_energy_unit2(pose, snapshot->clamp_action, elapsed_ms);
         break;
-    case MODE_CHASSIS_EXCHANGE:
-        arm_task_apply_exchange(pose, snapshot->exchange_action, elapsed_ms);
-        break;
     case MODE_CHASSIS_PRIMARY:
-        arm_task_apply_primary(pose, snapshot->clamp_action, snapshot->primary_turn_ore_flag);
+        arm_task_apply_primary(
+            pose,
+            snapshot->clamp_action,
+            snapshot->primary_turn_ore_flag);
         break;
     case MODE_CHASSIS_SECONDARY_ORE:
         arm_task_apply_secondary_ore(pose, snapshot->clamp_action, elapsed_ms);
         break;
-    case MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL:
-    case MODE_CHASSIS_PITCH3_TORQUE_COLLECTION:
-    case MODE_CHASSIS_URGENT_MEASURE:
-    case MODE_CHASSIS_CHECK:
     case MODE_CHASSIS_NORMAL:
-    case MODE_CHASSIS_RELEASE:
     default:
         arm_task_assign_pose(pose, &g_arm_pose_zero);
         break;
@@ -487,6 +481,7 @@ void arm_task_compute_gravity_feedforward(
     float pitch2_angle_rad = 0.0f;
     float roll2_angle_rad = 0.0f;
     float pitch3_angle_rad = 0.0f;
+    GravityCompTorqueSnapshot gravity_snapshot = {0};
 
     if (context == OM_NULL || pitch1_torque_ff == OM_NULL || pitch2_torque_ff == OM_NULL ||
         roll2_torque_ff == OM_NULL || pitch3_torque_ff == OM_NULL)
@@ -514,12 +509,14 @@ void arm_task_compute_gravity_feedforward(
     roll2_angle_rad = (roll2_feedback != OM_NULL) ? roll2_feedback->angle : 0.0f;
     pitch3_angle_rad = (pitch3_feedback != OM_NULL) ? pitch3_feedback->angle : 0.0f;
 
-    *pitch2_torque_ff = pitch2_grav_torque_calculate(
+    (void)gravity_comp_compute_torque_snapshot(
         pitch1_angle_rad,
         pitch2_angle_rad,
         pitch2_zero_angle_rad,
         pitch3_angle_rad,
-        roll2_angle_rad);
+        roll2_angle_rad,
+        &gravity_snapshot);
+    *pitch2_torque_ff = gravity_snapshot.pitch2_torque_nm;
     *pitch2_torque_ff = math_utils_clamp_float(
         *pitch2_torque_ff,
         APP_ARM_PITCH2_GRAVITY_FF_MIN,
@@ -531,21 +528,11 @@ void arm_task_compute_gravity_feedforward(
      */
     *pitch1_torque_ff = 0.0f;
 
-    *pitch3_torque_ff = pitch3_grav_torque_calcuate(
-        pitch1_angle_rad,
-        pitch2_angle_rad,
-        pitch2_zero_angle_rad,
-        pitch3_angle_rad,
-        roll2_angle_rad);
+    *pitch3_torque_ff = gravity_snapshot.pitch3_torque_nm;
 #if (APP_ARM_PITCH3_ENABLE_GRAVITY_FF == 0u)
     *pitch3_torque_ff = 0.0f;
 #endif
-    *roll2_torque_ff = roll2_grav_torque_calculate(
-        pitch1_angle_rad,
-        pitch2_angle_rad,
-        pitch2_zero_angle_rad,
-        pitch3_angle_rad,
-        roll2_angle_rad);
+    *roll2_torque_ff = gravity_snapshot.roll2_torque_nm;
 }
 
 /**

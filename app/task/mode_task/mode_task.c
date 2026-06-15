@@ -17,38 +17,40 @@ static uint8_t g_mode_task_custom_controller_channel_storage
 ModeTaskDebugState g_mode_task_debug = {0};
 TaskContextSlotId g_mode_task_slot_id = 0;
 
-/* mode_task 当前只维护 formal 输出：
- * - ModeTaskControlSnapshot，通过 task_channel 发给 arm/chassis
- *
- * 兼容桥接已收束，不再向 DataPool 回灌旧 mode/action 共享事实。
- */
-
-/* 当前全局/底盘状态机先只承担状态记录职责，
- * enter/execute/exit 动作仍保持为空，避免在这轮拆分里扩大行为面。
- */
-static const State g_mode_global_states[] = {
-    {.id = (StateId)MODE_GLOBAL_RELEASE_CTRL, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "release"},
-    {.id = (StateId)MODE_GLOBAL_MANUAL_CTRL, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "manual"},
-    {.id = (StateId)MODE_GLOBAL_ENGINEER_CTRL, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "engineer"},
-};
-
-static const State g_mode_chassis_states[] = {
-    {.id = (StateId)MODE_CHASSIS_RELEASE, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "release"},
-    {.id = (StateId)MODE_CHASSIS_NORMAL, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "normal"},
-    {.id = (StateId)MODE_CHASSIS_PITCH3_TORQUE_COLLECTION, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "pitch3"},
-    {.id = (StateId)MODE_CHASSIS_URGENT_MEASURE, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "urgent"},
-    {.id = (StateId)MODE_CHASSIS_EXCHANGE, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "exchange"},
-    {.id = (StateId)MODE_CHASSIS_PRIMARY, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "primary"},
-    {.id = (StateId)MODE_CHASSIS_GET_ENERGY_UNIT, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "get_energy"},
-    {.id = (StateId)MODE_CHASSIS_GET_ENERGY_UNIT1, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "get_energy1"},
-    {.id = (StateId)MODE_CHASSIS_GET_ENERGY_UNIT2, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "get_energy2"},
-    {.id = (StateId)MODE_CHASSIS_SECONDARY_ORE, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "secondary_ore"},
-    {.id = (StateId)MODE_CHASSIS_CHECK, .on_enter = OM_NULL, .on_execute = OM_NULL, .on_exit = OM_NULL, .name = "check"},
-    {.id = (StateId)MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL,
-     .on_enter = OM_NULL,
+static const State g_mode_operational_phase_states[] = {
+    {.id = (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE,
+     .on_enter = mode_task_enter_release,
      .on_execute = OM_NULL,
      .on_exit = OM_NULL,
-     .name = "custom_controller_normal"},
+     .name = "release"},
+    {.id = (StateId)MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION,
+     .on_enter = mode_task_enter_mode_selection,
+     .on_execute = OM_NULL,
+     .on_exit = OM_NULL,
+     .name = "mode_selection"},
+    {.id = (StateId)MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL,
+     .on_enter = mode_task_enter_formal_control,
+     .on_execute = OM_NULL,
+     .on_exit = OM_NULL,
+     .name = "formal_control"},
+};
+
+static const State g_mode_motion_mode_states[] = {
+    {.id = (StateId)MODE_TASK_MOTION_MODE_PRESET_ACTION,
+     .on_enter = mode_task_enter_preset_action,
+     .on_execute = OM_NULL,
+     .on_exit = mode_task_exit_preset_action,
+     .name = "preset_action"},
+    {.id = (StateId)MODE_TASK_MOTION_MODE_CUSTOM_TAKEOVER,
+     .on_enter = mode_task_enter_custom_takeover,
+     .on_execute = OM_NULL,
+     .on_exit = mode_task_exit_custom_takeover,
+     .name = "custom_takeover"},
+    {.id = (StateId)MODE_TASK_MOTION_MODE_RC_IK,
+     .on_enter = mode_task_enter_rc_ik,
+     .on_execute = OM_NULL,
+     .on_exit = mode_task_exit_rc_ik,
+     .name = "rc_ik"},
 };
 
 static void mode_task_entry(void* arg)
@@ -98,21 +100,15 @@ OmRet mode_task_start(void)
     }
 
     ctx = mode_task_get_owner_context();
-
-    ctx->shared_state.global_mode = MODE_GLOBAL_RELEASE_CTRL;
-    ctx->shared_state.chassis_mode = MODE_CHASSIS_RELEASE;
-    ctx->shared_state.clamp_action = MODE_CLAMP_UN_CMD;
-    ctx->shared_state.exchange_action = MODE_EXCHANGE_UN_CMD;
-    ctx->shared_state.primary_turn_ore_flag = 0u;
-    ctx->shared_state.custom_controller_force_takeover_flag = 0u;
-    ctx->last_global_mode = MODE_GLOBAL_RELEASE_CTRL;
-    ctx->last_chassis_mode = MODE_CHASSIS_RELEASE;
+    ctx->confirmed_motion_mode_id = MODE_TASK_MOTION_MODE_PRESET_ACTION;
+    mode_task_reset_mode_selection_runtime(ctx);
+    mode_task_reset_preset_action_runtime(ctx);
+    mode_task_reset_rc_ik_runtime(ctx);
+    mode_task_reset_grip_runtime(ctx);
     ctx->hierarchy_state.system_state = MODE_TASK_SYSTEM_UNINITIALIZED;
     mode_task_board_init_context_reset(&ctx->hierarchy_state.board_init);
     mode_task_motor_init_context_reset(&ctx->hierarchy_state.motor_init);
     mode_task_operational_context_reset(&ctx->hierarchy_state.operational);
-    ctx->flags = 0u;
-    mode_task_update_debug_state(ctx);
 
     ret = task_mpsc_channel_init(
         &g_mode_task_init_progress_channel,
@@ -131,7 +127,7 @@ OmRet mode_task_start(void)
         &ctx->rc_channel,
         g_mode_task_rc_channel_storage,
         MODE_TASK_RC_CHANNEL_CAPACITY_BYTES,
-        sizeof(DpRcSnapshot));
+        sizeof(InputRcSnapshot));
     if (ret != OM_OK)
     {
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
@@ -144,7 +140,7 @@ OmRet mode_task_start(void)
         &ctx->custom_controller_channel,
         g_mode_task_custom_controller_channel_storage,
         MODE_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES,
-        sizeof(DpCustomControllerSnapshot));
+        sizeof(InputCustomControllerSnapshot));
     if (ret != OM_OK)
     {
         task_pipe_channel_deinit(&ctx->rc_channel);
@@ -155,12 +151,12 @@ OmRet mode_task_start(void)
     }
 
     ret = sm_init(
-        &ctx->global_machine,
-        g_mode_global_states,
-        (uint8_t)(sizeof(g_mode_global_states) / sizeof(g_mode_global_states[0])),
+        &ctx->operational_phase_machine,
+        g_mode_operational_phase_states,
+        (uint8_t)(sizeof(g_mode_operational_phase_states) / sizeof(g_mode_operational_phase_states[0])),
         OM_NULL,
         0u,
-        (StateId)MODE_GLOBAL_RELEASE_CTRL,
+        (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE,
         ctx);
     if (ret != OM_OK)
     {
@@ -173,12 +169,12 @@ OmRet mode_task_start(void)
     }
 
     ret = sm_init(
-        &ctx->chassis_machine,
-        g_mode_chassis_states,
-        (uint8_t)(sizeof(g_mode_chassis_states) / sizeof(g_mode_chassis_states[0])),
+        &ctx->motion_mode_machine,
+        g_mode_motion_mode_states,
+        (uint8_t)(sizeof(g_mode_motion_mode_states) / sizeof(g_mode_motion_mode_states[0])),
         OM_NULL,
         0u,
-        (StateId)MODE_CHASSIS_RELEASE,
+        (StateId)MODE_TASK_MOTION_MODE_PRESET_ACTION,
         ctx);
     if (ret != OM_OK)
     {
@@ -189,6 +185,9 @@ OmRet mode_task_start(void)
         g_mode_task_slot_id = 0u;
         return ret;
     }
+
+    mode_task_refresh_output_snapshots(ctx);
+    mode_task_update_debug_state(ctx);
 
     status = osal_thread_create(&mode_task_thread, &mode_task_attr, mode_task_entry, ctx);
     if (status != OSAL_OK)
@@ -219,7 +218,7 @@ OmRet mode_task_submit_init_progress(
 }
 
 OmRet mode_task_submit_rc_snapshot(
-    const DpRcSnapshot* snapshot)
+    const InputRcSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
     {
@@ -233,7 +232,7 @@ OmRet mode_task_submit_rc_snapshot(
 }
 
 OmRet mode_task_submit_custom_controller_snapshot(
-    const DpCustomControllerSnapshot* snapshot)
+    const InputCustomControllerSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
     {
@@ -246,8 +245,8 @@ OmRet mode_task_submit_custom_controller_snapshot(
         OM_TRUE);
 }
 
-OmBool mode_task_copy_control_snapshot(
-    ModeTaskControlSnapshot* snapshot)
+OmBool mode_task_copy_system_snapshot(
+    ModeTaskSystemSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
     {
@@ -255,10 +254,35 @@ OmBool mode_task_copy_control_snapshot(
     }
 
     taskENTER_CRITICAL();
-    mode_task_build_control_snapshot(
-        g_mode_task_owner_context,
-        &g_mode_task_owner_context->shared_state,
-        snapshot);
+    mode_task_build_system_snapshot(g_mode_task_owner_context, snapshot);
+    taskEXIT_CRITICAL();
+    return OM_TRUE;
+}
+
+OmBool mode_task_copy_arm_mode_snapshot(
+    ArmTaskModeSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    taskENTER_CRITICAL();
+    mode_task_build_arm_mode_snapshot(g_mode_task_owner_context, snapshot);
+    taskEXIT_CRITICAL();
+    return OM_TRUE;
+}
+
+OmBool mode_task_copy_chassis_mode_snapshot(
+    ChassisTaskModeSnapshot* snapshot)
+{
+    if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
+    {
+        return OM_FALSE;
+    }
+
+    taskENTER_CRITICAL();
+    mode_task_build_chassis_mode_snapshot(g_mode_task_owner_context, snapshot);
     taskEXIT_CRITICAL();
     return OM_TRUE;
 }

@@ -1,13 +1,10 @@
 #include "core/om_cpu.h"
 #include "bsp/bsp_init.h"
-#include "driver/imu/imu.h"
 #include "config/app_config.h"
-#include "module/data_pool/data_pool.h"
 #include "module/system_health/system_health.h"
 #include "task/arm_task/arm_task.h"
 #include "task/chassis_task/chassis_task.h"
 #include "task/input_task/input_task.h"
-#include "task/imu_task/imu_task.h"
 #include "task/mode_task/mode_task.h"
 #include "task/motor_communications_task/mct.h"
 #include "task/vofa_task/vofa_task.h"
@@ -15,7 +12,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-DataPool g_data_pool = {0};
 volatile const char* g_rtos_fault_task_name = OM_NULL;
 volatile uint32_t g_rtos_fault_type = 0u;
 
@@ -72,17 +68,16 @@ static void start_task(void* arg)
 {
     OmRet init_ret = OM_OK;
     OmRet input_task_ret = OM_OK;
-    OmRet imu_task_ret = OM_OK;
     OmRet mode_task_ret = OM_OK;
     OmRet chassis_task_ret = OM_OK;
     OmRet arm_task_ret = OM_OK;
     OmRet motor_communications_task_ret = OM_OK;
     OmRet vofa_task_ret = OM_OK;
-    uint8_t imu_init_ret = 0U;
     const BspDeviceRegistry* devices = OM_NULL;
 
     (void)arg;
     (void)sh_init();
+    sh_set_running();
 
     init_ret = bsp_register_all();
     if (init_ret != OM_OK)
@@ -100,18 +95,14 @@ static void start_task(void* arg)
         goto supervisor_loop;
     }
 
-    // imu_init_ret = mpu_device_init(9.8f);
-    // if (imu_init_ret != 0U)
-    // {
-    //     sh_report_fatal(SH_ERR_MPU_DEVICE_INIT_FAIL, "mpu_device_init failed");
-    //     goto supervisor_loop;
-    // }
-
-    imu_task_ret = imu_task_start();
-    if (imu_task_ret != OM_OK)
+    /* 当前构建临时禁用整条 IMU 编译与运行链。
+     * 为避免 mode_task 卡在 bootstrap，这里直接上报 IMU ready。
+     */
     {
-        sh_report_fatal(SH_ERR_IMU_TASK_START_FAIL, "imu_task_start failed");
-        goto supervisor_loop;
+        const ModeTaskInitProgressMessage init_progress = {
+            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_IMU_READY,
+            .value = 1u};
+        (void)mode_task_submit_init_progress(&init_progress);
     }
 
     input_task_ret = input_task_start(devices);

@@ -2,7 +2,6 @@
 
 #include "drivers/model/device.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
-#include "module/data_pool/data_pool.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
@@ -22,7 +21,7 @@
  * - UART8：自定义控制器
  * - USART3：本轮只保留 stub 位，不正式接线
  *
- * mode_task / arm_task / vofa_task 后续都只消费共享输入事实，
+ * mode_task / arm_task / chassis_task 后续都只消费 formal input snapshot，
  * 不再直接拥有这些输入串口。
  */
 InputTaskDebugState g_input_task_runtime = {0};
@@ -122,23 +121,23 @@ static void input_task_entry(void* arg)
     uint8_t raw_frame[INPUT_TASK_DBUS_FRAME_LEN] = {0};
     InputTaskRcFrame parsed_frame = {0};
     InputTaskCustomControllerParser custom_controller_parser = {0};
-    DpRcSnapshot rc_snapshot = {0};
-    DpCustomControllerSnapshot custom_controller_snapshot = {0};
+    InputRcSnapshot rc_snapshot = {0};
+    InputCustomControllerSnapshot custom_controller_snapshot = {0};
     size_t read_len = 0u;
     uint8_t byte = 0u;
+    OmBool rc_online_changed = OM_FALSE;
     OmBool custom_controller_snapshot_changed = OM_FALSE;
     uint32_t previous_custom_controller_frame_count = 0u;
-    uint8_t previous_custom_controller_online = 0u;
 
     input_task_custom_controller_reset_parser(&custom_controller_parser, 0u);
 
     while (1)
     {
+        rc_online_changed = OM_FALSE;
         custom_controller_snapshot_changed = OM_FALSE;
         previous_custom_controller_frame_count =
             g_input_task_runtime.custom_controller.frame_count;
         input_task_custom_controller_copy_snapshot(&custom_controller_snapshot);
-        previous_custom_controller_online = custom_controller_snapshot.online;
 
         if (g_input_task_runtime.rc.rx_available_hint >= INPUT_TASK_DBUS_FRAME_LEN)
         {
@@ -162,9 +161,10 @@ static void input_task_entry(void* arg)
                     now_ms = osal_time_now_monotonic();
                     g_input_task_runtime.rc.last_frame_ms = (uint32_t)now_ms;
                     g_input_task_runtime.rc.online = 1u;
-                    input_task_rc_store_to_data_pool(&parsed_frame);
+                    input_task_rc_commit_snapshot(&rc_snapshot);
                     (void)mode_task_submit_rc_snapshot(&rc_snapshot);
                     (void)chassis_task_submit_rc_snapshot(&rc_snapshot);
+                    (void)arm_task_submit_rc_snapshot(&rc_snapshot);
                     g_input_task_runtime.rc.frame_count++;
                 }
             } while (read_len == INPUT_TASK_DBUS_FRAME_LEN);
@@ -194,15 +194,26 @@ static void input_task_entry(void* arg)
         }
 
         now_ms = osal_time_now_monotonic();
-        input_task_rc_update_online_state(&g_input_task_runtime.rc, now_ms);
-        input_task_custom_controller_update_online_state(
+        rc_online_changed =
+            input_task_rc_update_online_state(&g_input_task_runtime.rc, now_ms);
+        if (rc_online_changed == OM_TRUE)
+        {
+            input_task_rc_copy_snapshot(&rc_snapshot);
+            (void)mode_task_submit_rc_snapshot(&rc_snapshot);
+            (void)chassis_task_submit_rc_snapshot(&rc_snapshot);
+            (void)arm_task_submit_rc_snapshot(&rc_snapshot);
+        }
+
+        custom_controller_snapshot_changed =
+            input_task_custom_controller_update_online_state(
             &g_input_task_runtime.custom_controller,
             &custom_controller_parser,
             now_ms);
 
         input_task_custom_controller_copy_snapshot(&custom_controller_snapshot);
-        if (g_input_task_runtime.custom_controller.frame_count != previous_custom_controller_frame_count ||
-            custom_controller_snapshot.online != previous_custom_controller_online)
+        if (g_input_task_runtime.custom_controller.frame_count !=
+                previous_custom_controller_frame_count ||
+            custom_controller_snapshot_changed == OM_TRUE)
         {
             custom_controller_snapshot_changed = OM_TRUE;
         }
@@ -237,10 +248,11 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
     }
 
     input_task_rc_reset_runtime(&g_input_task_runtime.rc);
+    input_task_rc_reset_latest_snapshot();
     input_task_custom_controller_reset_runtime(
         &g_input_task_runtime.custom_controller);
     input_task_judge_stub_reset_runtime(&g_input_task_runtime.judge);
-    input_task_custom_controller_reset_shared_state();
+    input_task_custom_controller_reset_latest_snapshot();
 
     /* USART1 是本轮唯一必选输入源：它失败时 input_task 整体启动失败。 */
     if (input_task_prepare_usart1(devices->usart1) != OM_OK)
@@ -250,12 +262,12 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
 
     /* UART8 采用降级启动：
      * - 能打开就正式接入自定义控制器
-     * - 打不开就把控制器共享事实钳成离线，不影响 DBUS 和整机其余链路
+     * - 打不开就把控制器 formal snapshot 钳成离线，不影响 DBUS 和整机其余链路
      */
     if (devices->uart8 == OM_NULL || input_task_prepare_uart8(devices->uart8) != OM_OK)
     {
         g_input_task_runtime.custom_controller.degraded_start = 1u;
-        input_task_custom_controller_reset_shared_state();
+        input_task_custom_controller_reset_latest_snapshot();
     }
 
     status = osal_thread_create(

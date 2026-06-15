@@ -152,9 +152,86 @@
 #define APP_ARM_ROLL3_SPEED_PID_INTEGRAL_LIMIT (500.0f)
 
 /* -------------------------------------------------------------------------- */
+/* 6轴机械臂 IK / FK 参数                                                     */
+/* -------------------------------------------------------------------------- */
+
+/* URDF FK 末端工具偏置，直接对齐 simulation/kinematics_common.py::_TOOL_OFFSET。 */
+#define APP_ARM_IK_URDF_TOOL_OFFSET_M (0.12322f)
+
+/* 理想控制模型参数，直接对齐 simulation/ideal_control_model.json。 */
+#define APP_ARM_IK_SHOULDER_HEIGHT_M (0.09000004f)
+#define APP_ARM_IK_SHOULDER_OFFSET_M (0.06950139f)
+#define APP_ARM_IK_UPPER_ARM_LENGTH_M (0.25872970f)
+#define APP_ARM_IK_FOREARM_LENGTH_M (0.27005011f)
+#define APP_ARM_IK_TOOL_LENGTH_M (0.17122f)
+
+/* 仿真/URDF 的 solver 零位是“机械臂竖直拉直”。
+ * 真实电机当前以 normal 姿态为零位，因此需要一组 solver 侧 home offset：
+ * - 当 machine joint vector = 0（真实 normal 姿态）时
+ * - 映射到仿真 Joint1~6 = [0, -66.5, -154.7, 0, 0, 0] deg
+ */
+#define APP_ARM_IK_HOME_BIG_YAW_RAD (0.0f)
+#define APP_ARM_IK_HOME_PITCH1_RAD (-1.16064395f)
+#define APP_ARM_IK_HOME_PITCH2_RAD (-2.69995069f)
+#define APP_ARM_IK_HOME_ROLL2_RAD (0.0f)
+#define APP_ARM_IK_HOME_PITCH3_RAD (0.0f)
+#define APP_ARM_IK_HOME_ROLL3_RAD (0.0f)
+
+/* 公开 machine pose 语义对应的 6 轴限位。 */
+#define APP_ARM_IK_BIG_YAW_MIN_RAD (-3.14f)
+#define APP_ARM_IK_BIG_YAW_MAX_RAD (3.14f)
+#define APP_ARM_IK_PITCH1_MIN_RAD (-1.16f)
+#define APP_ARM_IK_PITCH1_MAX_RAD (1.69f)
+#define APP_ARM_IK_PITCH2_MIN_RAD (0.0f)
+#define APP_ARM_IK_PITCH2_MAX_RAD (2.70f)
+#define APP_ARM_IK_ROLL2_MIN_RAD (-3.14f)
+#define APP_ARM_IK_ROLL2_MAX_RAD (3.14f)
+#define APP_ARM_IK_PITCH3_MIN_RAD (-1.57f)
+#define APP_ARM_IK_PITCH3_MAX_RAD (1.57f)
+
+/* 内部 URDF joint 语义对应的限位。 */
+#define APP_ARM_IK_URDF_PITCH2_MIN_RAD (-2.70f)
+#define APP_ARM_IK_URDF_PITCH2_MAX_RAD (0.0f)
+#define APP_ARM_IK_URDF_ROLL3_MIN_RAD (-3.14f)
+#define APP_ARM_IK_URDF_ROLL3_MAX_RAD (3.14f)
+
+/* realtime full-pose solver 参数。 */
+#define APP_ARM_IK_FULL_POSE_MAX_ITERATIONS (200u)
+#define APP_ARM_IK_FULL_POSE_POSITION_TOLERANCE_M (1e-5f)
+#define APP_ARM_IK_FULL_POSE_ORIENTATION_TOLERANCE_RAD (1e-4f)
+#define APP_ARM_IK_FULL_POSE_ACCEPT_POSITION_ERROR_M (1e-4f)
+#define APP_ARM_IK_FULL_POSE_ACCEPT_ORIENTATION_ERROR_RAD (2e-3f)
+#define APP_ARM_IK_FULL_POSE_DAMPING (5e-3f)
+#define APP_ARM_IK_FULL_POSE_STEP_LIMIT_RAD (0.25f)
+#define APP_ARM_IK_FULL_POSE_EPSILON_RAD (1e-5f)
+
+/* realtime position-priority solver 参数。 */
+#define APP_ARM_IK_POSITION_PRIORITY_MAX_ITERATIONS (200u)
+#define APP_ARM_IK_POSITION_PRIORITY_TOLERANCE_M (1e-5f)
+#define APP_ARM_IK_POSITION_PRIORITY_ACCEPT_POSITION_ERROR_M (1e-4f)
+#define APP_ARM_IK_POSITION_PRIORITY_DAMPING (5e-3f)
+#define APP_ARM_IK_POSITION_PRIORITY_STEP_LIMIT_RAD (0.25f)
+#define APP_ARM_IK_POSITION_PRIORITY_EPSILON_RAD (1e-5f)
+
+/* 遥控器 IK 模式：满杆对应的目标 pose 速度。
+ * 位置单位 mm/s，姿态单位 deg/s；arm_task 内部会换算到 m/s 与 rad/s。
+ */
+#define APP_ARM_RC_IK_POS_X_MM_PER_S (120.0f)
+#define APP_ARM_RC_IK_POS_Y_MM_PER_S (120.0f)
+#define APP_ARM_RC_IK_POS_Z_MM_PER_S (120.0f)
+#define APP_ARM_RC_IK_ROLL_DEG_PER_S (35.0f)
+#define APP_ARM_RC_IK_PITCH_DEG_PER_S (35.0f)
+#define APP_ARM_RC_IK_YAW_DEG_PER_S (35.0f)
+
+/* 夹爪两态目标。OPEN 对齐当前普通姿态，CLOSED 对齐当前闭合目标。 */
+#define APP_ARM_GRIP_OPEN_TARGET_RAD (1.8f)
+#define APP_ARM_GRIP_CLOSED_TARGET_RAD (0.0f)
+
+/* -------------------------------------------------------------------------- */
 /* 机械臂逆运动学几何参数                                                     */
 /* -------------------------------------------------------------------------- */
 
+/* 旧的 2 连杆几何 helper，当前仅保留给 legacy Change_Position_to_Motor_Angle()。 */
 #define APP_ARM_LINK_D2_MM (78.0f)
 #define APP_ARM_LINK_A1_MM (400.0f)
 #define APP_ARM_LINK_D3_MM (404.0f)

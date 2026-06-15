@@ -24,6 +24,9 @@ float math_utils_rad_to_deg(float angle_rad);
 /* 角度转弧度。 */
 float math_utils_deg_to_rad(float angle_deg);
 
+/* 将弧度角包装到 (-pi, pi]。 */
+float math_utils_wrap_pi_f32(float angle_rad);
+
 /* 角度归一化到 (-180, 180] 区间。 */
 float math_utils_normalize_deg(float angle_deg);
 

@@ -85,7 +85,7 @@ typedef struct
 } SHFatalLatch;
 
 /* system_health 全局上下文。
- * 这是当前项目唯一的健康监督事实，不进 DataPool，也不并入 mode_task。
+ * 这是当前项目唯一的健康监督事实，不并入 mode_task，也不混入控制快照。
  */
 typedef struct
 {

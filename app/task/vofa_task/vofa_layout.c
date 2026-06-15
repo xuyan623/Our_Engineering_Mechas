@@ -49,6 +49,37 @@ static const VofaChannelDescriptor g_vofa_layout_mct_runtime[] = {
     {.source_kind = VOFA_LAYOUT_SOURCE_CAN2_TX_FIFO_USED, .task_name = OM_NULL, .snapshot_index = 0u, .label = "can2_tx_fifo_used", .unit = "slot"},
 };
 
+/* 当前内置布局 3：
+ * - 前 6 路：当前反馈做 FK 得到的末端 pose
+ * - 第 7 路：当前 arm_mode
+ * - 最后 3 路：当前 IK 目标 xyz，仅在 RC_IK 模式且 target 已初始化时有效
+ */
+static const VofaChannelDescriptor g_vofa_layout_arm_fk_pose[] = {
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT, .task_name = OM_NULL, .snapshot_index = 0u, .label = "fk_x", .unit = "m"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT, .task_name = OM_NULL, .snapshot_index = 1u, .label = "fk_y", .unit = "m"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT, .task_name = OM_NULL, .snapshot_index = 2u, .label = "fk_z", .unit = "m"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT, .task_name = OM_NULL, .snapshot_index = 3u, .label = "fk_roll", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT, .task_name = OM_NULL, .snapshot_index = 4u, .label = "fk_pitch", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT, .task_name = OM_NULL, .snapshot_index = 5u, .label = "fk_yaw", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_MODE, .task_name = OM_NULL, .snapshot_index = 0u, .label = "arm_mode", .unit = "enum"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT, .task_name = OM_NULL, .snapshot_index = 0u, .label = "target_x", .unit = "m"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT, .task_name = OM_NULL, .snapshot_index = 1u, .label = "target_y", .unit = "m"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT, .task_name = OM_NULL, .snapshot_index = 2u, .label = "target_z", .unit = "m"},
+};
+
+/* 当前内置布局 4：
+ * - 直接调用 arm_task IK joint 只读接口
+ * - 直接对应当前反馈逆映射得到的 IK joint vector
+ */
+static const VofaChannelDescriptor g_vofa_layout_arm_ik_joints[] = {
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT, .task_name = OM_NULL, .snapshot_index = 0u, .label = "ik_big_yaw", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT, .task_name = OM_NULL, .snapshot_index = 1u, .label = "ik_pitch1", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT, .task_name = OM_NULL, .snapshot_index = 2u, .label = "ik_pitch2", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT, .task_name = OM_NULL, .snapshot_index = 3u, .label = "ik_roll2", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT, .task_name = OM_NULL, .snapshot_index = 4u, .label = "ik_pitch3", .unit = "rad"},
+    {.source_kind = VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT, .task_name = OM_NULL, .snapshot_index = 5u, .label = "ik_roll3", .unit = "rad"},
+};
+
 /* 所有预置布局都集中注册在这里。
  * 后续若增加新布局，优先补一个新的 descriptor 数组和一个新的 VofaLayoutDef，
  * 而不是在 vofa_task.c 里重新写硬编码拼帧逻辑。
@@ -71,6 +102,18 @@ static const VofaLayoutDef g_vofa_layout_defs[] = {
         .name = "mct_runtime",
         .channel_count = (uint32_t)(sizeof(g_vofa_layout_mct_runtime) / sizeof(g_vofa_layout_mct_runtime[0])),
         .channels = g_vofa_layout_mct_runtime,
+    },
+    {
+        .id = VOFA_LAYOUT_ID_ARM_FK_POSE,
+        .name = "arm_fk_pose",
+        .channel_count = (uint32_t)(sizeof(g_vofa_layout_arm_fk_pose) / sizeof(g_vofa_layout_arm_fk_pose[0])),
+        .channels = g_vofa_layout_arm_fk_pose,
+    },
+    {
+        .id = VOFA_LAYOUT_ID_ARM_IK_JOINTS,
+        .name = "arm_ik_joints",
+        .channel_count = (uint32_t)(sizeof(g_vofa_layout_arm_ik_joints) / sizeof(g_vofa_layout_arm_ik_joints[0])),
+        .channels = g_vofa_layout_arm_ik_joints,
     },
 };
 

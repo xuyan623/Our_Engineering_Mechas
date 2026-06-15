@@ -48,8 +48,10 @@
  * - 0：arm_machine_angles
  * - 1：chassis_debug
  * - 2：mct_runtime
+ * - 3：arm_fk_pose
+ * - 4：arm_ik_joints
  */
 #define APP_VOFA_TASK_PERIOD_MS (10u)
-#define APP_VOFA_DEFAULT_LAYOUT_ID (0u)
+#define APP_VOFA_DEFAULT_LAYOUT_ID (3u)
 
 #endif

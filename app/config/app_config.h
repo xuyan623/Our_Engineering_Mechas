@@ -4,5 +4,6 @@
 #include "config/app_control_config.h"
 #include "config/app_hw_profile_config.h"
 #include "config/app_debug_config.h"
+#include "config/app_math_config.h"
 
 #endif

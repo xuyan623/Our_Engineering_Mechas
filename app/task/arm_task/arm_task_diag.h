@@ -6,6 +6,7 @@
  * 这些接口不参与正式控制，仅用于调试与状态展示。
  */
 
+#include "algorithm/arm_kinematics/arm_kinematics.h"
 #include "core/om_def.h"
 #include <stdint.h>
 
@@ -68,6 +69,38 @@ OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
 
 OmBool arm_task_get_arm_motor_feedback_rad_snapshot(
     float arm_feedback_rad[7]);
+
+/* 采集当前反馈对应的 6 轴 IK joint snapshot。
+ * 顺序固定为：
+ * [0] big_yaw
+ * [1] pitch1
+ * [2] pitch2
+ * [3] roll2
+ * [4] pitch3
+ * [5] roll3
+ *
+ * 单位均为 rad，语义固定为“真实电机 normal 姿态 = 0”。
+ */
+OmBool arm_task_get_ik_joint_snapshot(
+    ArmIkJointVector* joint_vector);
+
+/* 对当前反馈做 FK，导出末端位姿快照。 */
+OmBool arm_task_get_ik_forward_pose_snapshot(
+    ArmIkPose* pose);
+
+/* 导出当前 IK 目标 pose 快照。
+ * 当前只在 RC_IK 模式且目标已初始化时返回 OM_TRUE。
+ */
+OmBool arm_task_get_ik_target_pose_snapshot(
+    ArmIkPose* pose);
+
+/* 对当前反馈做姿态特征分类，导出 shoulder/elbow/wrist 分支。 */
+OmBool arm_task_get_ik_pose_feature_snapshot(
+    ArmIkPoseFeatureSnapshot* pose_feature_snapshot);
+
+/* 导出当前 arm_task 正式控制模式枚举值。 */
+OmBool arm_task_get_arm_mode_snapshot(
+    uint8_t* arm_mode);
 
 
 
@@ -137,7 +170,7 @@ OmBool arm_task_get_debug_snapshot(
 
 /* VTable 诊断回调：
  * - diag_online 返回 7 轴在线状态 bitmask
- * - diag_snapshot 返回固定 8 个 float：
+ * - diag_snapshot 保持原有固定 8 个 float：
  *   [0] big_yaw   (rad)
  *   [1] pitch1    (rad)
  *   [2] pitch2    (rad)

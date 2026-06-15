@@ -1,25 +1,14 @@
 #include "algorithm/kinematics/kinematics.h"
 
 #include "config/app_config.h"
+#include "dsp/fast_math_functions.h"
 #include "function/math_utils/math_utils.h"
 #include <math.h>
 #include <string.h>
 
 static float kinematics_normalize_angle(float angle_rad)
 {
-    const float two_pi = 2.0f * APP_PI;
-
-    angle_rad = fmodf(angle_rad, two_pi);
-    if (angle_rad > APP_PI)
-    {
-        angle_rad -= two_pi;
-    }
-    else if (angle_rad < -APP_PI)
-    {
-        angle_rad += two_pi;
-    }
-
-    return angle_rad;
+    return math_utils_wrap_pi_f32(angle_rad);
 }
 
 static void kinematics_clamp_chassis_velocity(
@@ -27,9 +16,9 @@ static void kinematics_clamp_chassis_velocity(
     float* vy_mm_per_s,
     float* vw_deg_per_s)
 {
-    float linear_speed = 0.0f;
+    float linear_speed_sq = 0.0f;
     float vw_linear_mm_per_s = 0.0f;
-    float total_speed = 0.0f;
+    float total_speed_sq = 0.0f;
     float scale = 1.0f;
 
     if (vx_mm_per_s == OM_NULL || vy_mm_per_s == OM_NULL || vw_deg_per_s == OM_NULL)
@@ -45,12 +34,18 @@ static void kinematics_clamp_chassis_velocity(
     {
         const float equivalent_radius_mm = (APP_CHASSIS_WHEEL_TRACK_MM + APP_CHASSIS_WHEEL_BASE_MM) / 2.0f;
 
-        linear_speed = sqrtf((*vx_mm_per_s) * (*vx_mm_per_s) + (*vy_mm_per_s) * (*vy_mm_per_s));
-        vw_linear_mm_per_s = (*vw_deg_per_s / APP_RADIAN_COEF) * equivalent_radius_mm;
-        total_speed = sqrtf(linear_speed * linear_speed + vw_linear_mm_per_s * vw_linear_mm_per_s);
+        const float max_total_speed_sq =
+            APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S * APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S;
 
-        if (total_speed > APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S)
+        linear_speed_sq = (*vx_mm_per_s) * (*vx_mm_per_s) + (*vy_mm_per_s) * (*vy_mm_per_s);
+        vw_linear_mm_per_s = (*vw_deg_per_s / APP_RADIAN_COEF) * equivalent_radius_mm;
+        total_speed_sq = linear_speed_sq + vw_linear_mm_per_s * vw_linear_mm_per_s;
+
+        if (total_speed_sq > max_total_speed_sq)
         {
+            float total_speed = 0.0f;
+
+            (void)arm_sqrt_f32(total_speed_sq, &total_speed);
             scale = APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S / total_speed;
             *vx_mm_per_s *= scale;
             *vy_mm_per_s *= scale;
@@ -223,7 +218,7 @@ void mecanum_calc_three_wheel(
 }
 
 /**
- * @brief 机械臂逆运动学解算 - 将末端位置转换为关节电机角度
+ * @brief legacy 2 连杆逆运动学解算 - 将末端位置转换为关节电机角度
  * 
  * @details 根据给定的机械臂末端在XZ平面的笛卡尔坐标，计算两个俯仰关节（pitch1和pitch2）
  *          的目标电机角度。该函数实现了二连杆机械臂的几何逆解，采用解析法求解。
@@ -258,30 +253,40 @@ OmRet Change_Position_to_Motor_Angle(float x_mm, float z_mm, float* pitch1_motor
     const float arm_coefficient_c =
         APP_ARM_LINK_A1_MM * APP_ARM_LINK_A1_MM -
         (z_mm * z_mm + x_mm * x_mm + APP_ARM_LINK_A2_MM * APP_ARM_LINK_A2_MM + APP_ARM_LINK_D3_MM * APP_ARM_LINK_D3_MM);
-    const float denominator = sqrtf(arm_coefficient_a * arm_coefficient_a + arm_coefficient_b * arm_coefficient_b);
+    float denominator = 0.0f;
     float phi = 0.0f;
     float elbow_angle = 0.0f;
     float pitch1_angle = 0.0f;
     float pitch2_angle = 0.0f;
     float asin_input = 0.0f;
+    float elbow_sin = 0.0f;
+    float elbow_cos = 0.0f;
+    float pitch1_angle_y = 0.0f;
+    float pitch1_angle_x = 0.0f;
 
     if (pitch1_motor_angle_rad == OM_NULL || pitch2_motor_angle_rad == OM_NULL)
     {
         return OM_ERROR_NULL;
     }
 
+    (void)arm_sqrt_f32(
+        arm_coefficient_a * arm_coefficient_a + arm_coefficient_b * arm_coefficient_b,
+        &denominator);
     if (denominator <= 0.0f)
     {
         return OM_ERROR_PARAM;
     }
 
     asin_input = math_utils_clamp_float(arm_coefficient_c / denominator, -1.0f, 1.0f);
-    phi = atan2f(arm_coefficient_b, arm_coefficient_a);
+    (void)arm_atan2_f32(arm_coefficient_b, arm_coefficient_a, &phi);
 
     /* 保持与旧工程一致，选择“肘关节在下”的解。 */
     elbow_angle = asinf(asin_input) - phi;
-    pitch1_angle = atan2f(z_mm - APP_ARM_LINK_A2_MM * sinf(elbow_angle) + APP_ARM_LINK_D3_MM * cosf(elbow_angle),
-                          x_mm - APP_ARM_LINK_D3_MM * sinf(elbow_angle) - APP_ARM_LINK_A2_MM * cosf(elbow_angle));
+    elbow_sin = arm_sin_f32(elbow_angle);
+    elbow_cos = arm_cos_f32(elbow_angle);
+    pitch1_angle_y = z_mm - APP_ARM_LINK_A2_MM * elbow_sin + APP_ARM_LINK_D3_MM * elbow_cos;
+    pitch1_angle_x = x_mm - APP_ARM_LINK_D3_MM * elbow_sin - APP_ARM_LINK_A2_MM * elbow_cos;
+    (void)arm_atan2_f32(pitch1_angle_y, pitch1_angle_x, &pitch1_angle);
     pitch2_angle = elbow_angle - pitch1_angle;
 
     pitch1_angle = -kinematics_normalize_angle(pitch1_angle) + APP_ARM_PITCH1_ZERO_OFFSET_RAD;

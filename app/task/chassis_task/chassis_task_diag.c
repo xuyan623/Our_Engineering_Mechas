@@ -54,7 +54,7 @@ OmBool chassis_task_get_debug_chassis_mode(
         return OM_FALSE;
     }
 
-    *chassis_mode = g_chassis_task_owner_context->latest_mode_snapshot.chassis_mode;
+    *chassis_mode = g_chassis_task_owner_context->latest_mode_snapshot.operational_phase;
     return ((g_chassis_task_owner_context->flags & CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY)) ? OM_TRUE : OM_FALSE;
 }
 /* -------------------------------------------------------------------------- */

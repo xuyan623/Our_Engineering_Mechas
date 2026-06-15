@@ -98,7 +98,7 @@ OmBool chassis_task_key_is_down(uint16_t keyboard_bits, uint16_t mask)
 
 void chassis_task_drain_mode_snapshots(ChassisTaskContext* context)
 {
-    ModeTaskControlSnapshot snapshot = {0};
+    ChassisTaskModeSnapshot snapshot = {0};
 
     if (context == OM_NULL)
     {
@@ -114,7 +114,7 @@ void chassis_task_drain_mode_snapshots(ChassisTaskContext* context)
 
 void chassis_task_drain_rc_snapshots(ChassisTaskContext* context)
 {
-    DpRcSnapshot snapshot = {0};
+    InputRcSnapshot snapshot = {0};
 
     if (context == OM_NULL)
     {
@@ -130,7 +130,7 @@ void chassis_task_drain_rc_snapshots(ChassisTaskContext* context)
 
 void chassis_task_drain_imu_snapshots(ChassisTaskContext* context)
 {
-    DpImuSnapshot snapshot = {0};
+    ImuTaskSnapshot snapshot = {0};
 
     if (context == OM_NULL)
     {
@@ -159,13 +159,16 @@ OmBool chassis_task_load_snapshot(
     snapshot->ch2 = context->latest_rc_snapshot.ch2;
     snapshot->ch3 = context->latest_rc_snapshot.ch3;
     snapshot->ch4 = context->latest_rc_snapshot.ch4;
+    snapshot->sw1 = context->latest_rc_snapshot.sw1;
+    snapshot->sw2 = context->latest_rc_snapshot.sw2;
+    snapshot->iw = context->latest_rc_snapshot.iw;
     snapshot->mouse_x = context->latest_rc_snapshot.mouse.x;
     snapshot->keyboard_bits = context->latest_rc_snapshot.keyboard_bits;
-    snapshot->system_state = (ModeTaskSystemState)context->latest_mode_snapshot.system_state;
-    snapshot->control_domain_state =
-        (ModeTaskControlDomainState)context->latest_mode_snapshot.control_domain_state;
-    snapshot->global_mode = (GlobalMode)context->latest_mode_snapshot.global_mode;
-    snapshot->chassis_mode = (ChassisMode)context->latest_mode_snapshot.chassis_mode;
+    snapshot->operational_phase =
+        (ModeTaskOperationalPhaseState)context->latest_mode_snapshot.operational_phase;
+    snapshot->wheel_enable = context->latest_mode_snapshot.wheel_enable;
+    snapshot->leg_enable = context->latest_mode_snapshot.leg_enable;
+    snapshot->allow_rc_drive = context->latest_mode_snapshot.allow_rc_drive;
     snapshot->imu_pitch_deg =
         ((context->flags & CHASSIS_TASK_FLAG_IMU_SNAPSHOT_READY)) ? context->latest_imu_snapshot.pitch : 0.0f;
     return OM_TRUE;

@@ -8,12 +8,13 @@
  */
 
 #include "config/app_config.h"
+#include "algorithm/arm_kinematics/arm_kinematics.h"
 #include "core/algorithm/controller/pid.h"
 #include "driver/motor/motor.h"
 #include "function/math_utils/math_utils.h"
-#include "module/data_pool/data_pool.h"
 #include "module/task_channel/task_channel.h"
 #include "osal/osal_time.h"
+#include "task/input_task/input_task_snapshot.h"
 #include "task/mode_task/mode_task.h"
 #include "module/task_context_pool/task_context_pool.h"
 #include <atomic/atomic.h>
@@ -33,6 +34,7 @@
 #define ARM_TASK_POSE_MACHINE_COUNT                  (7u)
 #define ARM_TASK_CUSTOM_ALIGNMENT_RAD_THRESHOLD      (0.08f)
 #define ARM_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES (256u)
+#define ARM_TASK_RC_CHANNEL_CAPACITY_BYTES               (256u)
 
 /* 机构角轴数量（big_yaw / pitch1 / pitch2 / roll2 / pitch3 / roll3 / grip）。 */
 #define ARM_TASK_MACHINE_COUNT                   (7u)
@@ -63,11 +65,14 @@ typedef enum
 /* 来自 mode_task 的共享控制事实快照。 */
 typedef struct
 {
+    ArmTaskMode arm_mode;
+    uint8_t grip_state;
+    uint8_t ik_solver_mode;
+    uint8_t ik_control_bank;
     ChassisMode chassis_mode;
     ClampAction clamp_action;
     ExchangeAction exchange_action;
     uint8_t primary_turn_ore_flag;
-    uint8_t custom_controller_force_takeover_flag;
 } ArmTaskSnapshot;
 
 /* 自定义控制器原始输入快照。 */
@@ -78,11 +83,19 @@ typedef struct
     float angle_deg[ARM_TASK_CUSTOM_CONTROLLER_AXIS_COUNT];
 } ArmTaskCustomControllerSnapshot;
 
-/* 机械臂姿态使用当前正式链的"机构角"定义：
- * - big_yaw / pitch1 / pitch2 / roll2 / pitch3 / roll3 / grip：单位 rad
- * - roll3 仍保持 GM6020 单圈物理角语义，但在 arm_task 内部统一存成 rad
+/* 机械臂动作姿态表使用当前正式链的"机构角增量"定义：
+ * - 前 5 轴最终目标会与 g_arm_pose_normal 相加
+ * - roll3 仍直接保存 GM6020 单圈物理角语义
+ * - grip 当前仍沿用动作表本地语义，不并入本轮 IK
  *
- * 后续统一在一个地方映射到当前 motor 抽象层的绝对目标值。
+ * 本轮 arm_kinematics 的 6 轴 joint vector 语义固定为：
+ * - 真实电机 normal 姿态 = 0
+ * - 也就是前 5 轴与动作表增量语义同号
+ * - roll3 额外以 normal 姿态为零位
+ *
+ * 这与动作表的 roll3 绝对角不同；
+ * 两者之间的适配统一通过 arm_task_get_ik_joint_vector /
+ * arm_task_fill_pose_from_ik_joint_vector 处理。
  */
 typedef struct
 {
@@ -129,12 +142,16 @@ typedef struct
 {
     /* 通信通道 */
     TaskMpscChannel mode_channel;
+    TaskPipeChannel rc_channel;
     TaskPipeChannel custom_controller_channel;
 
     /* 输入快照 */
-    ModeTaskControlSnapshot latest_mode_snapshot;
-    DpCustomControllerSnapshot latest_custom_controller_snapshot;
+    ArmTaskModeSnapshot latest_mode_snapshot;
+    InputRcSnapshot latest_rc_snapshot;
+    InputCustomControllerSnapshot latest_custom_controller_snapshot;
     ArmTaskSnapshot last_snapshot;
+    ArmIkPose ik_target_pose;
+    ArmIkJointVector last_ik_solved_joint_vector;
 
     /* 平滑目标值 */
     ArmTaskMotorTargets smoothed_targets;
@@ -142,6 +159,7 @@ typedef struct
     /* 时间戳：command + tx_request + 各轴控制 */
     OsalTimeMs command_since_ms;
     OsalTimeMs last_tx_request_ms;
+    OsalTimeMs last_ik_solve_ms;
     OsalTimeMs last_control_ms[ARM_TASK_MACHINE_COUNT];
 
     /* 自定义控制器状态 */
@@ -163,6 +181,9 @@ typedef struct
     /* bit 7: custom_controller_was_active */
     /* bit 8: custom_controller_filter_initialized */
     /* bit 9: mode_snapshot_ready */
+    /* bit 10: rc_snapshot_ready */
+    /* bit 11: ik_target_pose_initialized */
+    /* bit 12: ik_last_solution_ready */
 } ArmTaskContext;
 
 #define ARM_TASK_FLAG_MOTORS_BOUND               (1u << 0u)
@@ -175,6 +196,9 @@ typedef struct
 #define ARM_TASK_FLAG_CUSTOM_WAS_ACTIVE          (1u << 7u)
 #define ARM_TASK_FLAG_CUSTOM_FILTER_INIT         (1u << 8u)
 #define ARM_TASK_FLAG_MODE_SNAPSHOT_READY       (1u << 9u)
+#define ARM_TASK_FLAG_RC_SNAPSHOT_READY         (1u << 10u)
+#define ARM_TASK_FLAG_IK_TARGET_POSE_READY      (1u << 11u)
+#define ARM_TASK_FLAG_IK_LAST_SOLUTION_READY    (1u << 12u)
 
 /* arm_task 运行时上下文单例，由 arm_task.c 定义。 */
 extern TaskContextSlotId g_arm_task_slot_id;
@@ -209,7 +233,11 @@ OmBool arm_task_load_snapshot(
 void arm_task_load_custom_controller_snapshot(
     const ArmTaskContext* context,
     ArmTaskCustomControllerSnapshot* snapshot);
+void arm_task_load_rc_snapshot(
+    const ArmTaskContext* context,
+    InputRcSnapshot* snapshot);
 void arm_task_drain_mode_snapshots(ArmTaskContext* context);
+void arm_task_drain_rc_snapshots(ArmTaskContext* context);
 void arm_task_drain_custom_controller_snapshots(ArmTaskContext* context);
 OmBool arm_task_snapshot_changed(const ArmTaskSnapshot* lhs, const ArmTaskSnapshot* rhs);
 OmBool arm_task_custom_controller_takeover_active(
@@ -245,6 +273,12 @@ void arm_task_update_custom_controller_reference_state(
     OmBool custom_controller_active,
     const ArmTaskCustomControllerSnapshot* custom_controller_snapshot);
 void arm_task_assign_pose(ArmTaskMachinePose* target, const ArmTaskMachinePose* source);
+OmBool arm_task_get_ik_joint_vector(
+    const ArmTaskContext* context,
+    ArmIkJointVector* joint_vector);
+void arm_task_fill_pose_from_ik_joint_vector(
+    const ArmIkJointVector* joint_vector,
+    ArmTaskMachinePose* pose);
 void arm_task_apply_custom_controller_pose(
     ArmTaskContext* context,
     const ArmTaskCustomControllerSnapshot* custom_controller_snapshot,

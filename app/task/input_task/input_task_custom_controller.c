@@ -1,7 +1,6 @@
 #include "task/input_task/input_task_custom_controller.h"
 
 #include "core/algorithm/protocol/crc.h"
-#include "module/data_pool/data_pool.h"
 #include <string.h>
 
 typedef struct
@@ -11,17 +10,17 @@ typedef struct
     uint8_t reserved[INPUT_TASK_CUSTOM_CONTROLLER_PAYLOAD_LEN - sizeof(uint8_t) - sizeof(float) * INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT];
 } __attribute__((__packed__)) InputTaskCustomControllerPayload;
 
-static DpCustomControllerSnapshot g_input_task_custom_controller_snapshot = {0};
+static InputCustomControllerSnapshot g_input_task_custom_controller_snapshot = {0};
 
-/* 只有整帧 CRC16 和 cmd_id 都通过后，才把控制器事实写回共享池。
- * 这保证 arm_task / vofa_task 看到的始终是一份"最近一次合法帧"快照。
+/* 只有整帧 CRC16 和 cmd_id 都通过后，才刷新 owner 持有的 latest-cache。
+ * 这保证 arm_task / mode_task 看到的始终是一份“最近一次合法帧”快照。
  */
 
 /**
- * @brief 处理并验证接收到的自定义控制器数据帧，将有效数据写入共享数据池
+ * @brief 处理并验证接收到的自定义控制器数据帧，将有效数据写入 latest-cache
  * 
  * 该函数对接收到的完整数据帧进行多层验证（空指针检查、帧长度检查、CRC16校验、命令ID匹配），
- * 只有通过所有验证的帧才会被解析并将其中的工作模式和角度数据更新到全局数据池。
+ * 只有通过所有验证的帧才会被解析并将其中的工作模式和角度数据更新到 owner latest-cache。
  * 同时更新解析器状态和运行时统计信息。
  * 
  * @param runtime 运行时调试状态指针，用于记录统计信息和序列号等
@@ -33,7 +32,7 @@ static DpCustomControllerSnapshot g_input_task_custom_controller_snapshot = {0};
  * @return 无返回值，失败时直接返回，成功时更新数据池和统计信息
  * 
  * @note 函数采用快速失败策略，任何验证失败都会立即返回并递增相应的错误计数
- * @note 只有在CRC16校验和命令ID都通过的情况下，才会更新共享数据池中的控制器状态
+ * @note 只有在CRC16校验和命令ID都通过的情况下，才会更新控制器正式快照
  */
 static void input_task_custom_controller_consume_frame(
     InputTaskCustomControllerDebugState* runtime,
@@ -44,7 +43,7 @@ static void input_task_custom_controller_consume_frame(
 {
     uint16_t cmd_id = 0u;
     InputTaskCustomControllerPayload payload = {0};
-    DpCustomControllerSnapshot snapshot = {0};
+    InputCustomControllerSnapshot snapshot = {0};
     uint32_t angle_index = 0u;
 
     /* 参数有效性检查：确保所有必需指针非空 */
@@ -91,9 +90,8 @@ static void input_task_custom_controller_consume_frame(
         snapshot.angle_deg[angle_index] = payload.angle_deg[angle_index];
     }
 
-    /* 标记控制器在线状态，更新解析器时间戳和运行时统计信息 */
+    /* 标记控制器在线状态，更新解析器时间戳和运行时统计信息。 */
     g_input_task_custom_controller_snapshot = snapshot;
-    dp_store_custom_controller_snapshot(&snapshot);
     parser->last_frame_ms = now_ms;
     runtime->frame_count++;
     runtime->last_seq = frame[3];
@@ -111,12 +109,12 @@ void input_task_custom_controller_reset_runtime(
     memset((void*)runtime, 0, sizeof(*runtime));
 }
 
-void input_task_custom_controller_reset_shared_state(void)
+void input_task_custom_controller_reset_latest_snapshot(void)
 {
-    DpCustomControllerSnapshot snapshot = {0};
+    InputCustomControllerSnapshot snapshot = {0};
     uint32_t angle_index = 0u;
 
-    /* 降级启动或控制器掉线时，统一把共享事实收回到“离线 + 0 值”。
+    /* 降级启动或控制器掉线时，统一把 owner latest-cache 收回到“离线 + 0 值”。
      * 这样其它任务不需要再区分“从没启动成功”和“运行时断开”。
      */
     for (angle_index = 0u; angle_index < INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT;
@@ -125,7 +123,6 @@ void input_task_custom_controller_reset_shared_state(void)
         snapshot.angle_deg[angle_index] = 0.0f;
     }
     g_input_task_custom_controller_snapshot = snapshot;
-    dp_store_custom_controller_snapshot(&snapshot);
 }
 
 void input_task_custom_controller_reset_parser(
@@ -270,22 +267,23 @@ OmRet input_task_custom_controller_accept_byte(
     }
 }
 
-void input_task_custom_controller_update_online_state(
+OmBool input_task_custom_controller_update_online_state(
     InputTaskCustomControllerDebugState* runtime,
     const InputTaskCustomControllerParser* parser,
     OsalTimeMs now_ms)
 {
+    const uint8_t previous_online = g_input_task_custom_controller_snapshot.online;
+
     if (runtime == OM_NULL || parser == OM_NULL)
     {
-        return;
+        return OM_FALSE;
     }
 
     if (parser->last_frame_ms == 0u)
     {
         g_input_task_custom_controller_snapshot.online = 0u;
-        dp_store_custom_controller_snapshot(&g_input_task_custom_controller_snapshot);
         runtime->last_frame_age_ms = 0u;
-        return;
+        return (previous_online != g_input_task_custom_controller_snapshot.online) ? OM_TRUE : OM_FALSE;
     }
 
     /* 控制器 online 只由“最近是否收到合法帧”决定，
@@ -302,11 +300,11 @@ void input_task_custom_controller_update_online_state(
         g_input_task_custom_controller_snapshot.online = 1u;
     }
 
-    dp_store_custom_controller_snapshot(&g_input_task_custom_controller_snapshot);
+    return (previous_online != g_input_task_custom_controller_snapshot.online) ? OM_TRUE : OM_FALSE;
 }
 
 void input_task_custom_controller_copy_snapshot(
-    DpCustomControllerSnapshot* snapshot)
+    InputCustomControllerSnapshot* snapshot)
 {
     if (snapshot == OM_NULL)
     {

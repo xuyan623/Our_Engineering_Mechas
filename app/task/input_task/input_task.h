@@ -44,7 +44,7 @@ typedef struct
 
 /* input_task 当前是外部控制输入的唯一 owner。
  * 所有来自 USART1/UART8 的控制输入调试状态都统一收进这一个 runtime，
- * 其它任务只消费 DataPool，不再直接拥有输入串口。
+ * 其它任务只消费 formal input snapshot，不再直接拥有输入串口。
  */
 typedef struct
 {

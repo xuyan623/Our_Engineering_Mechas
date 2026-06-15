@@ -3,14 +3,19 @@
 
 /* mode_task 的职责边界：
  * - 它是正式全局控制状态 owner
- * - formal 输出面是 ModeTaskControlSnapshot
- *
- * 下游 task 应优先消费 formal snapshot。
+ * - formal 输出面拆成：
+ *   - ModeTaskSystemSnapshot
+ *   - ArmTaskModeSnapshot
+ *   - ChassisTaskModeSnapshot
  */
 
 #include "core/om_def.h"
-#include "module/data_pool/data_pool.h"
+#include "task/input_task/input_task_snapshot.h"
 #include <stdint.h>
+
+#define RC_SWITCH_UP  (1u)
+#define RC_SWITCH_DN  (2u)
+#define RC_SWITCH_MI  (3u)
 
 /* 全局控制模式：
  * - RELEASE：总控释放，控制输出应进入安全态
@@ -100,6 +105,50 @@ typedef enum
     MODE_TASK_CONTROL_DOMAIN_CUSTOM,
 } ModeTaskControlDomainState;
 
+/* 整车 operational 相位。 */
+typedef enum
+{
+    MODE_TASK_OPERATIONAL_PHASE_RELEASE = 0u,
+    MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION,
+    MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL,
+} ModeTaskOperationalPhaseState;
+
+/* 已确认或待确认的运动模式编号。 */
+typedef enum
+{
+    MODE_TASK_MOTION_MODE_NONE = 0u,
+    MODE_TASK_MOTION_MODE_PRESET_ACTION = 1u,
+    MODE_TASK_MOTION_MODE_CUSTOM_TAKEOVER = 2u,
+    MODE_TASK_MOTION_MODE_RC_IK = 3u,
+} ModeTaskMotionModeId;
+
+typedef enum
+{
+    MODE_TASK_IK_SOLVER_FULL_POSE = 0u,
+    MODE_TASK_IK_SOLVER_POSITION_PRIORITY,
+} ModeTaskIkSolverMode;
+
+typedef enum
+{
+    MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ = 0u,
+    MODE_TASK_IK_CONTROL_BANK_ORIENTATION_RPY,
+} ModeTaskIkControlBank;
+
+typedef enum
+{
+    MODE_TASK_GRIP_OPEN = 0u,
+    MODE_TASK_GRIP_CLOSED,
+} ModeTaskGripState;
+
+typedef enum
+{
+    ARM_TASK_MODE_RELEASE = 0u,
+    ARM_TASK_MODE_NORMAL,
+    ARM_TASK_MODE_PRESET_ACTION,
+    ARM_TASK_MODE_CUSTOM_TAKEOVER,
+    ARM_TASK_MODE_RC_IK,
+} ArmTaskMode;
+
 /* 第三层：控制链在线状态。 */
 typedef enum
 {
@@ -131,15 +180,35 @@ typedef struct
 
 typedef struct
 {
-    uint8_t system_state;
-    uint8_t control_domain_state;
-    uint8_t global_mode;
+    uint8_t operational_phase;
+    uint8_t selected_motion_mode_id;
+    uint8_t confirmed_motion_mode_id;
+} ModeTaskSystemSnapshot;
+
+typedef struct
+{
     uint8_t chassis_mode;
     uint8_t clamp_action;
     uint8_t exchange_action;
     uint8_t primary_turn_ore_flag;
-    uint8_t custom_controller_force_takeover_flag;
-} ModeTaskControlSnapshot;
+} ArmTaskPresetActionRuntimeSnapshot;
+
+typedef struct
+{
+    uint8_t arm_mode;
+    uint8_t grip_state;
+    uint8_t ik_solver_mode;
+    uint8_t ik_control_bank;
+    ArmTaskPresetActionRuntimeSnapshot preset_action;
+} ArmTaskModeSnapshot;
+
+typedef struct
+{
+    uint8_t operational_phase;
+    uint8_t wheel_enable;
+    uint8_t leg_enable;
+    uint8_t allow_rc_drive;
+} ChassisTaskModeSnapshot;
 
 /* mode_task 的轻量调试状态：
  * - loop_count：任务循环次数
@@ -155,10 +224,16 @@ typedef struct
     volatile uint8_t system_state;
     volatile uint8_t board_init_state;
     volatile uint8_t motor_init_state;
+    volatile uint8_t operational_phase;
     volatile uint8_t control_domain_state;
     volatile uint8_t rc_link_state;
     volatile uint8_t custom_link_state;
     volatile uint8_t custom_control_state;
+    volatile uint8_t selected_motion_mode_id;
+    volatile uint8_t confirmed_motion_mode_id;
+    volatile uint8_t ik_solver_mode;
+    volatile uint8_t ik_control_bank;
+    volatile uint8_t grip_state;
 } ModeTaskDebugState;
 
 extern ModeTaskDebugState g_mode_task_debug;
@@ -173,12 +248,16 @@ OmRet mode_task_submit_init_progress(
     const ModeTaskInitProgressMessage* message);
 
 OmRet mode_task_submit_rc_snapshot(
-    const DpRcSnapshot* snapshot);
+    const InputRcSnapshot* snapshot);
 
 OmRet mode_task_submit_custom_controller_snapshot(
-    const DpCustomControllerSnapshot* snapshot);
+    const InputCustomControllerSnapshot* snapshot);
 
-OmBool mode_task_copy_control_snapshot(
-    ModeTaskControlSnapshot* snapshot);
+OmBool mode_task_copy_system_snapshot(
+    ModeTaskSystemSnapshot* snapshot);
+OmBool mode_task_copy_arm_mode_snapshot(
+    ArmTaskModeSnapshot* snapshot);
+OmBool mode_task_copy_chassis_mode_snapshot(
+    ChassisTaskModeSnapshot* snapshot);
 
 #endif

@@ -2,16 +2,7 @@
 
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
-
-static OmBool mode_task_is_iw_up_edge(
-    const ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot)
-{
-    return (context->last_iw > RC_IW_UP_THRESHOLD &&
-            snapshot->iw <= RC_IW_UP_THRESHOLD)
-               ? OM_TRUE
-               : OM_FALSE;
-}
+#include "task/motor_communications_task/mct.h"
 
 static OmBool mode_task_is_iw_dn_edge(
     const ModeTaskContext* context,
@@ -19,6 +10,16 @@ static OmBool mode_task_is_iw_dn_edge(
 {
     return (context->last_iw < RC_IW_DN_THRESHOLD &&
             snapshot->iw >= RC_IW_DN_THRESHOLD)
+               ? OM_TRUE
+               : OM_FALSE;
+}
+
+static OmBool mode_task_is_iw_up_edge(
+    const ModeTaskContext* context,
+    const ModeTaskRcSnapshot* snapshot)
+{
+    return (context->last_iw > RC_IW_UP_THRESHOLD &&
+            snapshot->iw <= RC_IW_UP_THRESHOLD)
                ? OM_TRUE
                : OM_FALSE;
 }
@@ -41,336 +42,223 @@ static OmBool mode_task_is_sw1_to_up_edge(
                : OM_FALSE;
 }
 
-static GlobalMode mode_task_resolve_global_mode(
+static OmBool mode_task_is_sw2_to_dn_edge(
     const ModeTaskContext* context,
     const ModeTaskRcSnapshot* snapshot)
 {
-    if (context == OM_NULL || snapshot == OM_NULL)
-    {
-        return MODE_GLOBAL_RELEASE_CTRL;
-    }
-
-    if (context->shared_state.chassis_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
-    {
-        return (context->hierarchy_state.operational.action_enabled == OM_TRUE)
-                   ? MODE_GLOBAL_MANUAL_CTRL
-                   : MODE_GLOBAL_RELEASE_CTRL;
-    }
-
-    if (context->hierarchy_state.operational.action_enabled != OM_TRUE)
-    {
-        return MODE_GLOBAL_RELEASE_CTRL;
-    }
-
-    switch (snapshot->sw2)
-    {
-    case RC_SWITCH_UP:
-        return MODE_GLOBAL_MANUAL_CTRL;
-    case RC_SWITCH_MI:
-        return MODE_GLOBAL_ENGINEER_CTRL;
-    case RC_SWITCH_DN:
-    default:
-        return MODE_GLOBAL_RELEASE_CTRL;
-    }
+    return (context->last_sw2 != RC_SWITCH_DN && snapshot->sw2 == RC_SWITCH_DN)
+               ? OM_TRUE
+               : OM_FALSE;
 }
 
-static ChassisMode mode_task_resolve_manual_chassis_mode(
-    const ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot,
-    OmBool custom_controller_online)
-{
-    ChassisMode current_mode = context->shared_state.chassis_mode;
-
-    if (current_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
-    {
-        if (custom_controller_online != OM_TRUE)
-        {
-            return MODE_CHASSIS_NORMAL;
-        }
-
-        if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
-            snapshot->sw2 == RC_SWITCH_UP &&
-            snapshot->sw1 == RC_SWITCH_MI)
-        {
-            return MODE_CHASSIS_NORMAL;
-        }
-
-        return current_mode;
-    }
-
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw1 == RC_SWITCH_UP)
-    {
-        return MODE_CHASSIS_PITCH3_TORQUE_COLLECTION;
-    }
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw1 == RC_SWITCH_DN)
-    {
-        return MODE_CHASSIS_CHECK;
-    }
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_UP &&
-        snapshot->sw1 == RC_SWITCH_MI &&
-        current_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
-    {
-        return MODE_CHASSIS_SECONDARY_ORE;
-    }
-    if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_UP &&
-        snapshot->sw1 == RC_SWITCH_MI &&
-        custom_controller_online == OM_TRUE &&
-        current_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
-    {
-        return MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL;
-    }
-
-    if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
-        (current_mode == MODE_CHASSIS_PITCH3_TORQUE_COLLECTION ||
-         current_mode == MODE_CHASSIS_URGENT_MEASURE ||
-         current_mode == MODE_CHASSIS_SECONDARY_ORE))
-    {
-        return MODE_CHASSIS_NORMAL;
-    }
-
-    if (current_mode != MODE_CHASSIS_PITCH3_TORQUE_COLLECTION &&
-        current_mode != MODE_CHASSIS_SECONDARY_ORE &&
-        current_mode != MODE_CHASSIS_URGENT_MEASURE &&
-        current_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
-    {
-        return MODE_CHASSIS_NORMAL;
-    }
-
-    return current_mode;
-}
-
-static ChassisMode mode_task_resolve_engineer_chassis_mode(
+static OmBool mode_task_is_sw2_to_up_from_mi_edge(
     const ModeTaskContext* context,
     const ModeTaskRcSnapshot* snapshot)
 {
-    const ChassisMode current_mode = context->shared_state.chassis_mode;
-
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_MI &&
-        snapshot->sw1 == RC_SWITCH_UP)
-    {
-        return MODE_CHASSIS_GET_ENERGY_UNIT;
-    }
-    if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_MI &&
-        snapshot->sw1 == RC_SWITCH_UP)
-    {
-        return MODE_CHASSIS_GET_ENERGY_UNIT1;
-    }
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_MI &&
-        snapshot->sw1 == RC_SWITCH_MI)
-    {
-        return MODE_CHASSIS_EXCHANGE;
-    }
-    if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_MI &&
-        snapshot->sw1 == RC_SWITCH_MI)
-    {
-        return MODE_CHASSIS_GET_ENERGY_UNIT2;
-    }
-    if (mode_task_is_iw_up_edge(context, snapshot) == OM_TRUE &&
-        snapshot->sw2 == RC_SWITCH_MI &&
-        snapshot->sw1 == RC_SWITCH_DN)
-    {
-        return MODE_CHASSIS_PRIMARY;
-    }
-
-    switch (current_mode)
-    {
-    case MODE_CHASSIS_GET_ENERGY_UNIT:
-    case MODE_CHASSIS_GET_ENERGY_UNIT1:
-    case MODE_CHASSIS_GET_ENERGY_UNIT2:
-    case MODE_CHASSIS_EXCHANGE:
-    case MODE_CHASSIS_PRIMARY:
-        return current_mode;
-    default:
-        return MODE_CHASSIS_NORMAL;
-    }
+    return (context->last_sw2 == RC_SWITCH_MI && snapshot->sw2 == RC_SWITCH_UP)
+               ? OM_TRUE
+               : OM_FALSE;
 }
 
-static ChassisMode mode_task_resolve_chassis_mode(
+static OmBool mode_task_is_sw2_to_mi_from_up_edge(
     const ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot,
-    const DpCustomControllerSnapshot* custom_snapshot,
-    GlobalMode global_mode)
+    const ModeTaskRcSnapshot* snapshot)
 {
-    const OmBool custom_controller_online =
-        (custom_snapshot != OM_NULL && custom_snapshot->online != 0u)
-            ? OM_TRUE
-            : OM_FALSE;
-
-    switch (global_mode)
-    {
-    case MODE_GLOBAL_RELEASE_CTRL:
-        return MODE_CHASSIS_RELEASE;
-    case MODE_GLOBAL_MANUAL_CTRL:
-        return mode_task_resolve_manual_chassis_mode(
-            context,
-            snapshot,
-            custom_controller_online);
-    case MODE_GLOBAL_ENGINEER_CTRL:
-        return mode_task_resolve_engineer_chassis_mode(context, snapshot);
-    default:
-        return MODE_CHASSIS_RELEASE;
-    }
+    return (context->last_sw2 == RC_SWITCH_UP && snapshot->sw2 == RC_SWITCH_MI)
+               ? OM_TRUE
+               : OM_FALSE;
 }
 
-static OmBool mode_task_is_clamp_related_mode(ChassisMode chassis_mode)
+static uint8_t mode_task_cycle_motion_mode(uint8_t current, int32_t delta)
 {
-    switch (chassis_mode)
+    int32_t next = (int32_t)current;
+
+    if (next < (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION ||
+        next > (int32_t)MODE_TASK_MOTION_MODE_RC_IK)
     {
-    case MODE_CHASSIS_GET_ENERGY_UNIT:
-    case MODE_CHASSIS_GET_ENERGY_UNIT1:
-    case MODE_CHASSIS_GET_ENERGY_UNIT2:
-    case MODE_CHASSIS_PRIMARY:
-    case MODE_CHASSIS_SECONDARY_ORE:
-        return OM_TRUE;
-    default:
-        return OM_FALSE;
+        next = (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION;
     }
+
+    next += delta;
+    if (next > (int32_t)MODE_TASK_MOTION_MODE_RC_IK)
+    {
+        next = (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION;
+    }
+    else if (next < (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION)
+    {
+        next = (int32_t)MODE_TASK_MOTION_MODE_RC_IK;
+    }
+
+    return (uint8_t)next;
 }
 
-static void mode_task_update_clamp_action(
+static void mode_task_update_preset_action_runtime(
     ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot,
-    ModeTaskSharedState* state)
+    const ModeTaskRcSnapshot* rc_snapshot)
 {
-    if (mode_task_is_clamp_related_mode(state->chassis_mode) == OM_FALSE)
-    {
-        state->clamp_action = MODE_CLAMP_UN_CMD;
-        context->flags &= ~MODE_TASK_FLAG_CLAMP_READY;
-        return;
-    }
+    const ModeTaskOperationalPhaseState phase =
+        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskMotionModeId motion_mode =
+        (ModeTaskMotionModeId)sm_get_current(&context->motion_mode_machine);
 
-    if (snapshot->sw1 == RC_SWITCH_MI)
-    {
-        context->flags |= MODE_TASK_FLAG_CLAMP_READY;
-    }
-
-    if (!(context->flags & MODE_TASK_FLAG_CLAMP_READY))
+    if (context == OM_NULL || rc_snapshot == OM_NULL)
     {
         return;
     }
 
-    if (mode_task_is_sw1_to_dn_edge(context, snapshot) == OM_TRUE)
+    if (phase != MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL ||
+        motion_mode != MODE_TASK_MOTION_MODE_PRESET_ACTION ||
+        mode_task_is_iw_up_edge(context, rc_snapshot) != OM_TRUE)
     {
-        if (state->clamp_action < MODE_CLAMP_ACTION_TWO)
-        {
-            state->clamp_action = (ClampAction)((uint8_t)state->clamp_action + 1u);
-        }
-        context->flags &= ~MODE_TASK_FLAG_CLAMP_READY;
+        return;
     }
-    else if (mode_task_is_sw1_to_up_edge(context, snapshot) == OM_TRUE)
+
+    if (rc_snapshot->sw1 == RC_SWITCH_MI)
     {
-        if (state->clamp_action > MODE_CLAMP_UN_CMD)
-        {
-            state->clamp_action = (ClampAction)((uint8_t)state->clamp_action - 1u);
-        }
-        context->flags &= ~MODE_TASK_FLAG_CLAMP_READY;
+        context->preset_action_runtime.chassis_mode = MODE_CHASSIS_EXCHANGE;
+        context->preset_action_runtime.clamp_action = MODE_CLAMP_UN_CMD;
+        context->preset_action_runtime.exchange_action = MODE_EXCHANGE_UN_CMD;
+        context->preset_action_runtime.primary_turn_ore_flag = 0u;
+    }
+    else if (rc_snapshot->sw1 == RC_SWITCH_DN)
+    {
+        context->preset_action_runtime.chassis_mode =
+            (context->preset_action_runtime.chassis_mode == MODE_CHASSIS_GET_ENERGY_UNIT1)
+                ? MODE_CHASSIS_GET_ENERGY_UNIT
+                : MODE_CHASSIS_GET_ENERGY_UNIT1;
+        context->preset_action_runtime.clamp_action = MODE_CLAMP_UN_CMD;
+        context->preset_action_runtime.exchange_action = MODE_EXCHANGE_UN_CMD;
+        context->preset_action_runtime.primary_turn_ore_flag = 0u;
     }
 }
 
-static void mode_task_update_exchange_action(
+void mode_task_update_phase_state_from_rc(
     ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot,
-    ModeTaskSharedState* state)
+    const ModeTaskRcSnapshot* rc_snapshot)
 {
-    if (state->chassis_mode != MODE_CHASSIS_EXCHANGE)
-    {
-        state->exchange_action = MODE_EXCHANGE_UN_CMD;
-        context->flags &= ~MODE_TASK_FLAG_EXCHANGE_READY;
-        return;
-    }
+    const OmBool operational_active = mct_is_operational_active();
+    const ModeTaskOperationalPhaseState current_phase =
+        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
 
-    if (snapshot->sw1 == RC_SWITCH_MI)
-    {
-        context->flags |= MODE_TASK_FLAG_EXCHANGE_READY;
-        state->exchange_action = MODE_EXCHANGE_UN_CMD;
-    }
-
-    if (!(context->flags & MODE_TASK_FLAG_EXCHANGE_READY))
+    if (context == OM_NULL || rc_snapshot == OM_NULL)
     {
         return;
     }
 
-    if (mode_task_is_sw1_to_dn_edge(context, snapshot) == OM_TRUE)
+    if (mode_task_is_sw2_to_dn_edge(context, rc_snapshot) == OM_TRUE)
     {
-        state->exchange_action = MODE_EXCHANGE_PICK_ACTION1;
-        context->flags &= ~MODE_TASK_FLAG_EXCHANGE_READY;
-    }
-    else if (mode_task_is_sw1_to_up_edge(context, snapshot) == OM_TRUE)
-    {
-        state->exchange_action = MODE_EXCHANGE_PICK_ACTION2;
-        context->flags &= ~MODE_TASK_FLAG_EXCHANGE_READY;
-    }
-}
-
-static void mode_task_update_primary_flag(
-    ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot,
-    ModeTaskSharedState* state)
-{
-    if (state->chassis_mode == MODE_CHASSIS_PRIMARY)
-    {
-        if (mode_task_is_iw_dn_edge(context, snapshot) == OM_TRUE)
-        {
-            state->primary_turn_ore_flag = 1u;
-        }
-    }
-    else
-    {
-        state->primary_turn_ore_flag = 0u;
-    }
-}
-
-static void mode_task_update_custom_controller_force_takeover(
-    ModeTaskContext* context,
-    const ModeTaskRcSnapshot* snapshot,
-    ModeTaskSharedState* state)
-{
-    if (context == OM_NULL || snapshot == OM_NULL || state == OM_NULL)
-    {
-        return;
-    }
-
-    if (state->chassis_mode != MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL)
-    {
-        state->custom_controller_force_takeover_flag = 0u;
-        return;
-    }
-
-    if (snapshot->sw1 == RC_SWITCH_MI)
-    {
-        state->custom_controller_force_takeover_flag = 0u;
-    }
-
-    if (mode_task_is_sw1_to_dn_edge(context, snapshot) == OM_TRUE)
-    {
-        state->custom_controller_force_takeover_flag = 1u;
-    }
-}
-
-static void mode_task_notify_custom_controller_transition(
-    ChassisMode previous_mode,
-    ChassisMode next_mode)
-{
-    OmBool previous_custom =
-        (previous_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL) ? OM_TRUE : OM_FALSE;
-    OmBool next_custom =
-        (next_mode == MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL) ? OM_TRUE : OM_FALSE;
-
-    if (previous_custom != OM_TRUE && next_custom == OM_TRUE)
-    {
-        sh_set_custom_controller_calibration_pending();
-    }
-    else if (previous_custom == OM_TRUE && next_custom != OM_TRUE)
-    {
+        (void)sm_force_transition(
+            &context->operational_phase_machine,
+            (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE);
         sh_clear_custom_controller_calibration_indicator();
+        return;
+    }
+
+    if (mode_task_is_sw2_to_up_from_mi_edge(context, rc_snapshot) == OM_TRUE &&
+        operational_active == OM_TRUE)
+    {
+        (void)sm_force_transition(
+            &context->operational_phase_machine,
+            (StateId)MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION);
+        return;
+    }
+
+    if (current_phase == MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION)
+    {
+        if (mode_task_is_sw1_to_up_edge(context, rc_snapshot) == OM_TRUE)
+        {
+            context->mode_selection_runtime.selected_motion_mode_id =
+                mode_task_cycle_motion_mode(
+                    context->mode_selection_runtime.selected_motion_mode_id,
+                    1);
+        }
+        else if (mode_task_is_sw1_to_dn_edge(context, rc_snapshot) == OM_TRUE)
+        {
+            context->mode_selection_runtime.selected_motion_mode_id =
+                mode_task_cycle_motion_mode(
+                    context->mode_selection_runtime.selected_motion_mode_id,
+                    -1);
+        }
+
+        if (mode_task_is_sw2_to_mi_from_up_edge(context, rc_snapshot) == OM_TRUE)
+        {
+            (void)sm_force_transition(
+                &context->operational_phase_machine,
+                (StateId)MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL);
+            sh_clear_custom_controller_calibration_indicator();
+        }
+    }
+}
+
+static void mode_task_update_grip_runtime(
+    ModeTaskContext* context,
+    const ModeTaskRcSnapshot* rc_snapshot)
+{
+    const ModeTaskOperationalPhaseState phase =
+        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+
+    if (context == OM_NULL || rc_snapshot == OM_NULL)
+    {
+        return;
+    }
+
+    if (phase != MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL)
+    {
+        return;
+    }
+
+    if (mode_task_is_iw_dn_edge(context, rc_snapshot) == OM_TRUE)
+    {
+        context->grip_runtime.grip_state =
+            (context->grip_runtime.grip_state == MODE_TASK_GRIP_OPEN)
+                ? MODE_TASK_GRIP_CLOSED
+                : MODE_TASK_GRIP_OPEN;
+    }
+}
+
+static void mode_task_update_rc_ik_runtime(
+    ModeTaskContext* context,
+    const ModeTaskRcSnapshot* rc_snapshot)
+{
+    const ModeTaskOperationalPhaseState phase =
+        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskMotionModeId motion_mode =
+        (ModeTaskMotionModeId)sm_get_current(&context->motion_mode_machine);
+
+    if (context == OM_NULL || rc_snapshot == OM_NULL)
+    {
+        return;
+    }
+
+    if (phase != MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL ||
+        motion_mode != MODE_TASK_MOTION_MODE_RC_IK)
+    {
+        return;
+    }
+
+    if (mode_task_is_sw1_to_up_edge(context, rc_snapshot) == OM_TRUE)
+    {
+        context->rc_ik_runtime.ik_solver_mode =
+            (context->rc_ik_runtime.ik_solver_mode == MODE_TASK_IK_SOLVER_FULL_POSE)
+                ? MODE_TASK_IK_SOLVER_POSITION_PRIORITY
+                : MODE_TASK_IK_SOLVER_FULL_POSE;
+
+        if (context->rc_ik_runtime.ik_solver_mode ==
+            MODE_TASK_IK_SOLVER_POSITION_PRIORITY)
+        {
+            context->rc_ik_runtime.ik_control_bank =
+                MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ;
+        }
+    }
+    else if (mode_task_is_sw1_to_dn_edge(context, rc_snapshot) == OM_TRUE &&
+             context->rc_ik_runtime.ik_solver_mode ==
+                 MODE_TASK_IK_SOLVER_FULL_POSE)
+    {
+        context->rc_ik_runtime.ik_control_bank =
+            (context->rc_ik_runtime.ik_control_bank ==
+             MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ)
+                ? MODE_TASK_IK_CONTROL_BANK_ORIENTATION_RPY
+                : MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ;
     }
 }
 
@@ -395,20 +283,26 @@ static void mode_task_sync_context_history(
     }
 
     context->last_iw = snapshot->iw;
-    context->last_global_mode = context->shared_state.global_mode;
-    context->last_chassis_mode = context->shared_state.chassis_mode;
 }
 
 void mode_task_run_once(ModeTaskContext* context)
 {
     ModeTaskRcSnapshot rc_snapshot = {0};
-    DpCustomControllerSnapshot custom_controller_snapshot = {0};
-    ModeTaskSharedState next_state = {0};
-    OmBool state_changed = OM_FALSE;
-    ModeTaskControlSnapshot previous_control_snapshot = {0};
-    ModeTaskControlSnapshot next_control_snapshot = {0};
-    OmBool control_snapshot_changed = OM_FALSE;
-    ChassisMode previous_chassis_mode = MODE_CHASSIS_RELEASE;
+    InputCustomControllerSnapshot custom_controller_snapshot = {0};
+    ModeTaskSystemSnapshot previous_system_snapshot = {0};
+    ArmTaskModeSnapshot previous_arm_mode_snapshot = {0};
+    ChassisTaskModeSnapshot previous_chassis_mode_snapshot = {0};
+    ModeTaskSystemSnapshot next_system_snapshot = {0};
+    ArmTaskModeSnapshot next_arm_mode_snapshot = {0};
+    ChassisTaskModeSnapshot next_chassis_mode_snapshot = {0};
+    OmBool system_snapshot_changed = OM_FALSE;
+    OmBool arm_mode_snapshot_changed = OM_FALSE;
+    OmBool chassis_mode_snapshot_changed = OM_FALSE;
+
+    if (context == OM_NULL)
+    {
+        return;
+    }
 
     mode_task_drain_rc_snapshots(context);
     mode_task_drain_custom_controller_snapshots(context);
@@ -424,74 +318,78 @@ void mode_task_run_once(ModeTaskContext* context)
         context->flags |= MODE_TASK_FLAG_INITIALIZED;
     }
 
+    mode_task_build_system_snapshot(context, &previous_system_snapshot);
+    mode_task_build_arm_mode_snapshot(context, &previous_arm_mode_snapshot);
+    mode_task_build_chassis_mode_snapshot(context, &previous_chassis_mode_snapshot);
+
     mode_task_drain_init_progress_messages(context);
     mode_task_update_bootstrap_state_from_progress(context);
     mode_task_process_mct_lifecycle_requests(context, &rc_snapshot);
+
+    if (mode_task_bootstrap_allows_control(context) == OM_TRUE)
+    {
+        mode_task_update_phase_state_from_rc(context, &rc_snapshot);
+    }
+
+    if ((ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine) ==
+        MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL)
+    {
+        (void)sm_force_transition(
+            &context->motion_mode_machine,
+            (StateId)context->confirmed_motion_mode_id);
+    }
+
+    mode_task_update_preset_action_runtime(context, &rc_snapshot);
+    mode_task_update_rc_ik_runtime(context, &rc_snapshot);
+    mode_task_update_grip_runtime(context, &rc_snapshot);
     mode_task_update_operational_system_state(
         context,
         &rc_snapshot,
         &custom_controller_snapshot);
 
-    next_state = context->shared_state;
-    previous_chassis_mode = context->shared_state.chassis_mode;
-    mode_task_build_control_snapshot(
-        context,
-        &context->shared_state,
-        &previous_control_snapshot);
-
-    if (mode_task_bootstrap_allows_control(context) != OM_TRUE ||
-        context->hierarchy_state.system_state != MODE_TASK_SYSTEM_OPERATIONAL)
+    if (context->hierarchy_state.system_state != MODE_TASK_SYSTEM_OPERATIONAL &&
+        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine) !=
+            MODE_TASK_OPERATIONAL_PHASE_RELEASE)
     {
-        mode_task_fill_release_shared_state(&next_state);
-    }
-    else
-    {
-        next_state.global_mode = mode_task_resolve_global_mode(context, &rc_snapshot);
-        next_state.chassis_mode = mode_task_resolve_chassis_mode(
-            context,
-            &rc_snapshot,
-            &custom_controller_snapshot,
-            next_state.global_mode);
-
-        mode_task_update_clamp_action(context, &rc_snapshot, &next_state);
-        mode_task_update_exchange_action(context, &rc_snapshot, &next_state);
-        mode_task_update_primary_flag(context, &rc_snapshot, &next_state);
-        mode_task_update_custom_controller_force_takeover(context, &rc_snapshot, &next_state);
+        (void)sm_force_transition(
+            &context->operational_phase_machine,
+            (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE);
     }
 
     mode_task_update_operational_domain(
         context,
         &rc_snapshot,
-        &custom_controller_snapshot,
-        &next_state);
+        &custom_controller_snapshot);
+    mode_task_refresh_output_snapshots(context);
 
-    if (sm_get_current(&context->global_machine) != (StateId)next_state.global_mode)
+    mode_task_build_system_snapshot(context, &next_system_snapshot);
+    mode_task_build_arm_mode_snapshot(context, &next_arm_mode_snapshot);
+    mode_task_build_chassis_mode_snapshot(context, &next_chassis_mode_snapshot);
+
+    system_snapshot_changed = mode_task_system_snapshot_changed(
+        &previous_system_snapshot,
+        &next_system_snapshot);
+    arm_mode_snapshot_changed = mode_task_arm_mode_snapshot_changed(
+        &previous_arm_mode_snapshot,
+        &next_arm_mode_snapshot);
+    chassis_mode_snapshot_changed = mode_task_chassis_mode_snapshot_changed(
+        &previous_chassis_mode_snapshot,
+        &next_chassis_mode_snapshot);
+
+    if (arm_mode_snapshot_changed == OM_TRUE ||
+        chassis_mode_snapshot_changed == OM_TRUE)
     {
-        (void)sm_force_transition(&context->global_machine, (StateId)next_state.global_mode);
-    }
-    if (sm_get_current(&context->chassis_machine) != (StateId)next_state.chassis_mode)
-    {
-        (void)sm_force_transition(&context->chassis_machine, (StateId)next_state.chassis_mode);
+        mode_task_publish_control_snapshots(
+            &next_arm_mode_snapshot,
+            &next_chassis_mode_snapshot);
     }
 
-    state_changed = mode_task_shared_state_changed(&context->shared_state, &next_state);
-    mode_task_notify_custom_controller_transition(previous_chassis_mode, next_state.chassis_mode);
-    context->shared_state = next_state;
-    mode_task_build_control_snapshot(
-        context,
-        &context->shared_state,
-        &next_control_snapshot);
-    control_snapshot_changed = mode_task_control_snapshot_changed(
-        &previous_control_snapshot,
-        &next_control_snapshot);
-    if (control_snapshot_changed == OM_TRUE)
-    {
-        mode_task_publish_control_snapshot(&next_control_snapshot);
-    }
     mode_task_sync_context_history(context, &rc_snapshot);
     mode_task_update_debug_state(context);
 
-    if (state_changed == OM_TRUE)
+    if (system_snapshot_changed == OM_TRUE ||
+        arm_mode_snapshot_changed == OM_TRUE ||
+        chassis_mode_snapshot_changed == OM_TRUE)
     {
         g_mode_task_debug.publish_count++;
     }

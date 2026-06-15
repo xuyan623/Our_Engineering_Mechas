@@ -4,6 +4,7 @@
 
 #include "function/math_utils/math_utils.h"
 #include "config/app_config.h"
+#include <math.h>
 
 float math_utils_clamp_float(float value, float min_value, float max_value)
 {
@@ -31,6 +32,43 @@ float math_utils_rad_to_deg(float angle_rad)
 float math_utils_deg_to_rad(float angle_deg)
 {
     return angle_deg * (APP_PI / 180.0f);
+}
+
+float math_utils_wrap_pi_f32(float angle_rad)
+{
+    const float two_pi = 2.0f * APP_PI;
+
+    if (angle_rad > APP_PI)
+    {
+        if (angle_rad <= 3.0f * APP_PI)
+        {
+            return angle_rad - two_pi;
+        }
+
+        angle_rad = fmodf(angle_rad + APP_PI, two_pi);
+        if (angle_rad < 0.0f)
+        {
+            angle_rad += two_pi;
+        }
+        return angle_rad - APP_PI;
+    }
+
+    if (angle_rad <= -APP_PI)
+    {
+        if (angle_rad > -3.0f * APP_PI)
+        {
+            return angle_rad + two_pi;
+        }
+
+        angle_rad = fmodf(angle_rad - APP_PI, two_pi);
+        if (angle_rad > 0.0f)
+        {
+            angle_rad -= two_pi;
+        }
+        return angle_rad + APP_PI;
+    }
+
+    return angle_rad;
 }
 
 float math_utils_normalize_deg(float angle_deg)
@@ -68,10 +106,7 @@ float math_utils_resolve_nearest_equivalent_deg(float target_deg, float referenc
 
 float math_utils_resolve_nearest_equivalent_rad(float target_rad, float reference_rad)
 {
-    return math_utils_deg_to_rad(
-        math_utils_resolve_nearest_equivalent_deg(
-            math_utils_rad_to_deg(target_rad),
-            math_utils_rad_to_deg(reference_rad)));
+    return reference_rad + math_utils_wrap_pi_f32(target_rad - reference_rad);
 }
 
 float math_utils_slew_value(

@@ -5,6 +5,7 @@
 #include "drivers/peripheral/can/pal_can_dev.h"
 #include "drivers/peripheral/serial/pal_serial_dev.h"
 #include "function/vofa/vofa.h"
+#include "task/arm_task/arm_task_diag.h"
 #include "task/vofa_task/vofa_layout.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
@@ -221,6 +222,14 @@ static void vofa_task_fill_frame(
     const BspDeviceRegistry* devices)
 {
     uint32_t channel_index = 0u;
+    ArmIkPose arm_fk_pose = {0};
+    ArmIkPose arm_ik_target_pose = {0};
+    ArmIkJointVector arm_ik_joint_vector = {0};
+    OmBool arm_fk_pose_ready = OM_FALSE;
+    OmBool arm_ik_target_pose_ready = OM_FALSE;
+    OmBool arm_ik_joint_ready = OM_FALSE;
+    uint8_t arm_mode = 0u;
+    OmBool arm_mode_ready = OM_FALSE;
 
     if (frame == OM_NULL || frame_count == OM_NULL)
     {
@@ -261,6 +270,57 @@ static void vofa_task_fill_frame(
 
         case VOFA_LAYOUT_SOURCE_CAN2_TX_FIFO_USED:
             value = vofa_task_get_can_tx_fifo_used(devices->can2);
+            break;
+
+        case VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT:
+            if (arm_fk_pose_ready != OM_TRUE)
+            {
+                arm_fk_pose_ready = arm_task_get_ik_forward_pose_snapshot(&arm_fk_pose);
+            }
+            if (arm_fk_pose_ready == OM_TRUE && descriptor->snapshot_index < 6u)
+            {
+                if (descriptor->snapshot_index < 3u)
+                {
+                    value = arm_fk_pose.position_m[descriptor->snapshot_index];
+                }
+                else
+                {
+                    value = arm_fk_pose.orientation_rpy_rad[descriptor->snapshot_index - 3u];
+                }
+            }
+            break;
+
+        case VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT:
+            if (arm_ik_joint_ready != OM_TRUE)
+            {
+                arm_ik_joint_ready = arm_task_get_ik_joint_snapshot(&arm_ik_joint_vector);
+            }
+            if (arm_ik_joint_ready == OM_TRUE && descriptor->snapshot_index < 6u)
+            {
+                value = arm_ik_joint_vector.joint_rad[descriptor->snapshot_index];
+            }
+            break;
+
+        case VOFA_LAYOUT_SOURCE_ARM_MODE:
+            if (arm_mode_ready != OM_TRUE)
+            {
+                arm_mode_ready = arm_task_get_arm_mode_snapshot(&arm_mode);
+            }
+            if (arm_mode_ready == OM_TRUE)
+            {
+                value = (float)arm_mode;
+            }
+            break;
+
+        case VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT:
+            if (arm_ik_target_pose_ready != OM_TRUE)
+            {
+                arm_ik_target_pose_ready = arm_task_get_ik_target_pose_snapshot(&arm_ik_target_pose);
+            }
+            if (arm_ik_target_pose_ready == OM_TRUE && descriptor->snapshot_index < 3u)
+            {
+                value = arm_ik_target_pose.position_m[descriptor->snapshot_index];
+            }
             break;
 
         case VOFA_LAYOUT_SOURCE_CONST_ZERO:

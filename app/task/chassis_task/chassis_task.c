@@ -9,7 +9,7 @@
 #include <string.h>
 
 TaskContextSlotId g_chassis_task_slot_id = 0;
-uint8_t g_chassis_task_mode_channel_storage[sizeof(ModeTaskControlSnapshot) * CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
+uint8_t g_chassis_task_mode_channel_storage[sizeof(ChassisTaskModeSnapshot) * CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
 OmAtomicU8 g_chassis_task_mode_channel_ready_flags[CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
 uint8_t g_chassis_task_rc_channel_storage[CHASSIS_TASK_RC_CHANNEL_CAPACITY_BYTES] = {0};
 uint8_t g_chassis_task_imu_channel_storage[CHASSIS_TASK_IMU_CHANNEL_CAPACITY_BYTES] = {0};
@@ -97,7 +97,7 @@ OmRet chassis_task_start(void)
         &ctx->mode_channel,
         g_chassis_task_mode_channel_storage,
         g_chassis_task_mode_channel_ready_flags,
-        sizeof(ModeTaskControlSnapshot),
+        sizeof(ChassisTaskModeSnapshot),
         CHASSIS_TASK_MODE_CHANNEL_CAPACITY);
     if (ret != OM_OK)
     {
@@ -106,7 +106,7 @@ OmRet chassis_task_start(void)
         return ret;
     }
 
-    if (mode_task_copy_control_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
+    if (mode_task_copy_chassis_mode_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
     {
         ctx->flags |= CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY;
     }
@@ -115,7 +115,7 @@ OmRet chassis_task_start(void)
         &ctx->rc_channel,
         g_chassis_task_rc_channel_storage,
         CHASSIS_TASK_RC_CHANNEL_CAPACITY_BYTES,
-        sizeof(DpRcSnapshot));
+        sizeof(InputRcSnapshot));
     if (ret != OM_OK)
     {
         task_mpsc_channel_deinit(&ctx->mode_channel);
@@ -128,7 +128,7 @@ OmRet chassis_task_start(void)
         &ctx->imu_channel,
         g_chassis_task_imu_channel_storage,
         CHASSIS_TASK_IMU_CHANNEL_CAPACITY_BYTES,
-        sizeof(DpImuSnapshot));
+        sizeof(ImuTaskSnapshot));
     if (ret != OM_OK)
     {
         task_pipe_channel_deinit(&ctx->rc_channel);
@@ -169,7 +169,7 @@ OmRet chassis_task_start(void)
 }
 
 OmRet chassis_task_submit_mode_control_snapshot(
-    const ModeTaskControlSnapshot* snapshot)
+    const ChassisTaskModeSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_chassis_task_owner_context == OM_NULL)
     {
@@ -182,7 +182,7 @@ OmRet chassis_task_submit_mode_control_snapshot(
 }
 
 OmRet chassis_task_submit_rc_snapshot(
-    const DpRcSnapshot* snapshot)
+    const InputRcSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_chassis_task_owner_context == OM_NULL)
     {
@@ -196,7 +196,7 @@ OmRet chassis_task_submit_rc_snapshot(
 }
 
 OmRet chassis_task_submit_imu_snapshot(
-    const DpImuSnapshot* snapshot)
+    const ImuTaskSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_chassis_task_owner_context == OM_NULL)
     {

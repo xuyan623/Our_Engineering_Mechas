@@ -2,12 +2,12 @@
 
 #include "core/om_cpu.h"
 #include "driver/imu/imu.h"
-#include "module/data_pool/data_pool.h"
 #include "module/system_health/system_health.h"
 #include "osal/osal.h"
 #include "osal/osal_config.h"
 #include "osal/osal_time.h"
 #include "task/chassis_task/chassis_task.h"
+#include "task/imu_task/imu_task_snapshot.h"
 #include "task/mode_task/mode_task.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -21,14 +21,14 @@ ImuTaskDebugState g_imu_task_debug = {0};
 
 static void imu_task_fill_snapshot(
     const imu_data_t* imu_data,
-    DpImuSnapshot* snapshot)
+    ImuTaskSnapshot* snapshot)
 {
     if (imu_data == OM_NULL || snapshot == OM_NULL)
     {
         return;
     }
 
-    /* DataPool 暴露给上层的是处理后的物理量，
+    /* 对外只发布处理后的物理量，
      * 不回灌驱动层原始寄存器值，也不把驱动内部临时状态提升成共享事实。
      */
     snapshot->yaw = imu_data->yaw;
@@ -46,9 +46,9 @@ static void imu_task_fill_snapshot(
     snapshot->temp = imu_data->temp;
 }
 
-static void imu_task_store_to_data_pool(const imu_data_t* imu_data)
+static void imu_task_publish_snapshot(const imu_data_t* imu_data)
 {
-    DpImuSnapshot snapshot = {0};
+    ImuTaskSnapshot snapshot = {0};
 
     if (imu_data == OM_NULL)
     {
@@ -56,7 +56,6 @@ static void imu_task_store_to_data_pool(const imu_data_t* imu_data)
     }
 
     imu_task_fill_snapshot(imu_data, &snapshot);
-    dp_store_imu_snapshot(&snapshot);
     (void)chassis_task_submit_imu_snapshot(&snapshot);
 }
 
@@ -85,7 +84,7 @@ static void imu_task_entry(void* arg)
              */
             update_attitude(IMU_TASK_UPDATE_DT_SEC);
             imu_data = get_imu_data();
-            imu_task_store_to_data_pool(imu_data);
+            imu_task_publish_snapshot(imu_data);
 
             g_imu_task_debug.publish_count++;
         }

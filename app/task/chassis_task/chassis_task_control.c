@@ -285,45 +285,6 @@ OmRet chassis_task_restore_control_modes(ChassisTaskContext* context)
     return OM_OK;
 }
 
-OmBool chassis_task_mode_allows_chassis_motion(ChassisMode chassis_mode)
-{
-    switch (chassis_mode)
-    {
-    case MODE_CHASSIS_NORMAL:
-    case MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL:
-    case MODE_CHASSIS_EXCHANGE:
-    case MODE_CHASSIS_PRIMARY:
-    case MODE_CHASSIS_GET_ENERGY_UNIT:
-    case MODE_CHASSIS_GET_ENERGY_UNIT1:
-    case MODE_CHASSIS_GET_ENERGY_UNIT2:
-    case MODE_CHASSIS_SECONDARY_ORE:
-        return OM_TRUE;
-    default:
-        return OM_FALSE;
-    }
-}
-
-OmBool chassis_task_mode_allows_leg_control(ChassisMode chassis_mode)
-{
-    switch (chassis_mode)
-    {
-    case MODE_CHASSIS_NORMAL:
-    case MODE_CHASSIS_CUSTOM_CONTROLLER_NORMAL:
-    case MODE_CHASSIS_EXCHANGE:
-    case MODE_CHASSIS_PRIMARY:
-    case MODE_CHASSIS_GET_ENERGY_UNIT:
-    case MODE_CHASSIS_GET_ENERGY_UNIT1:
-    case MODE_CHASSIS_GET_ENERGY_UNIT2:
-    case MODE_CHASSIS_SECONDARY_ORE:
-    case MODE_CHASSIS_PITCH3_TORQUE_COLLECTION:
-    case MODE_CHASSIS_CHECK:
-    case MODE_CHASSIS_URGENT_MEASURE:
-        return OM_TRUE;
-    default:
-        return OM_FALSE;
-    }
-}
-
 void chassis_task_update_leg_reference_deg(
     ChassisTaskContext* context,
     int16_t ch4,
@@ -419,7 +380,7 @@ void chassis_task_apply_zero_output(ChassisTaskContext* context)
 
 OmBool chassis_task_should_submit_tx_request(
     ChassisTaskContext* context,
-    ChassisMode chassis_mode,
+    ModeTaskOperationalPhaseState operational_phase,
     OsalTimeMs now_ms)
 {
     if (context == OM_NULL)
@@ -428,7 +389,7 @@ OmBool chassis_task_should_submit_tx_request(
     }
 
     if (mct_is_operational_active() != OM_TRUE ||
-        chassis_mode == MODE_CHASSIS_RELEASE)
+        operational_phase == MODE_TASK_OPERATIONAL_PHASE_RELEASE)
     {
         context->last_tx_request_ms = 0u;
         return OM_FALSE;
@@ -707,6 +668,8 @@ void chassis_task_run_once(ChassisTaskContext* context)
     const float current_tick_s = chassis_task_now_s();
     const OsalTimeMs now_ms = osal_time_now_monotonic();
     uint32_t index = 0u;
+    OmBool allow_chassis_motion = OM_FALSE;
+    OmBool allow_leg_control = OM_FALSE;
 
     if (context == OM_NULL)
     {
@@ -750,16 +713,25 @@ void chassis_task_run_once(ChassisTaskContext* context)
         &degraded_mode_enabled,
         &offline_wheel_id);
 
-    /* 根据底盘模式执行相应的控制逻辑 */
-    if (snapshot.system_state != MODE_TASK_SYSTEM_OPERATIONAL ||
-        snapshot.global_mode == MODE_GLOBAL_RELEASE_CTRL ||
-        snapshot.chassis_mode == MODE_CHASSIS_RELEASE)
+    if (snapshot.operational_phase == MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION)
+    {
+        allow_chassis_motion = (snapshot.allow_rc_drive != 0u) ? OM_TRUE : OM_FALSE;
+        allow_leg_control = (snapshot.leg_enable != 0u) ? OM_TRUE : OM_FALSE;
+    }
+    else if (snapshot.operational_phase == MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL)
+    {
+        allow_chassis_motion = (snapshot.allow_rc_drive != 0u) ? OM_TRUE : OM_FALSE;
+        allow_leg_control = (snapshot.leg_enable != 0u) ? OM_TRUE : OM_FALSE;
+    }
+
+    /* 根据正式相位与当前模式执行底盘/后腿控制。 */
+    if (snapshot.operational_phase == MODE_TASK_OPERATIONAL_PHASE_RELEASE)
     {
         /* 释放模式：重置腿部命令并清零所有输出 */
         chassis_task_reset_leg_command(context);
         chassis_task_apply_zero_output(context);
     }
-    else if (chassis_task_mode_allows_chassis_motion(snapshot.chassis_mode) == OM_TRUE)
+    else if (allow_chassis_motion == OM_TRUE)
     {
         /* 计算底盘期望速度并进行运动学解算 */
         chassis_task_compute_chassis_velocity(context, &snapshot, &vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
@@ -781,11 +753,21 @@ void chassis_task_run_once(ChassisTaskContext* context)
         }
 
         chassis_task_apply_wheel_control(context, wheel_speed_ref_rpm, wheel_online_flags, current_tick_s);
-        chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
-        chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
+        if (allow_leg_control == OM_TRUE)
+        {
+            chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
+            chassis_task_apply_leg_control(context, leg_reference_deg, current_tick_s);
+        }
+        else
+        {
+            for (index = 0u; index < CHASSIS_TASK_LEG_COUNT; index++)
+            {
+                chassis_task_apply_current_command(chassis_task_get_leg_motor(index), 0.0f);
+            }
+        }
         chassis_task_apply_big_yaw_hold(context);
     }
-    else if (chassis_task_mode_allows_leg_control(snapshot.chassis_mode) == OM_TRUE)
+    else if (allow_leg_control == OM_TRUE)
     {
         chassis_task_apply_zero_output(context);
         chassis_task_update_leg_reference_deg(context, snapshot.ch4, leg_reference_deg);
@@ -803,7 +785,7 @@ void chassis_task_run_once(ChassisTaskContext* context)
         context->last_wheel_speed_ref_rpm[index] = (float)wheel_speed_ref_rpm[index];
     }
 
-    if (chassis_task_should_submit_tx_request(context, snapshot.chassis_mode, now_ms) != OM_TRUE)
+    if (chassis_task_should_submit_tx_request(context, snapshot.operational_phase, now_ms) != OM_TRUE)
     {
         return;
     }
