@@ -51,7 +51,7 @@ static OmBool mode_task_is_sw2_to_dn_edge(
                : OM_FALSE;
 }
 
-static OmBool mode_task_is_sw2_to_up_from_mi_edge(
+static OmBool mode_task_sw2_mi_to_up(
     const ModeTaskContext* context,
     const ModeTaskRcSnapshot* snapshot)
 {
@@ -60,7 +60,7 @@ static OmBool mode_task_is_sw2_to_up_from_mi_edge(
                : OM_FALSE;
 }
 
-static OmBool mode_task_is_sw2_to_mi_from_up_edge(
+static OmBool mode_task_sw2_up_to_mi(
     const ModeTaskContext* context,
     const ModeTaskRcSnapshot* snapshot)
 {
@@ -73,31 +73,31 @@ static uint8_t mode_task_cycle_motion_mode(uint8_t current, int32_t delta)
 {
     int32_t next = (int32_t)current;
 
-    if (next < (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION ||
-        next > (int32_t)MODE_TASK_MOTION_MODE_RC_IK)
+    if (next < (int32_t)MT_MOTION_MODE_PRESET_ACTION ||
+        next > (int32_t)MT_MOTION_MODE_RC_IK)
     {
-        next = (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION;
+        next = (int32_t)MT_MOTION_MODE_PRESET_ACTION;
     }
 
     next += delta;
-    if (next > (int32_t)MODE_TASK_MOTION_MODE_RC_IK)
+    if (next > (int32_t)MT_MOTION_MODE_RC_IK)
     {
-        next = (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION;
+        next = (int32_t)MT_MOTION_MODE_PRESET_ACTION;
     }
-    else if (next < (int32_t)MODE_TASK_MOTION_MODE_PRESET_ACTION)
+    else if (next < (int32_t)MT_MOTION_MODE_PRESET_ACTION)
     {
-        next = (int32_t)MODE_TASK_MOTION_MODE_RC_IK;
+        next = (int32_t)MT_MOTION_MODE_RC_IK;
     }
 
     return (uint8_t)next;
 }
 
-static void mode_task_update_preset_action_runtime(
+static void mode_task_update_preset(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot)
 {
-    const ModeTaskOperationalPhaseState phase =
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskPhaseState phase =
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine);
     const ModeTaskMotionModeId motion_mode =
         (ModeTaskMotionModeId)sm_get_current(&context->motion_mode_machine);
 
@@ -106,8 +106,8 @@ static void mode_task_update_preset_action_runtime(
         return;
     }
 
-    if (phase != MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL ||
-        motion_mode != MODE_TASK_MOTION_MODE_PRESET_ACTION ||
+    if (phase != MT_OPERATIONAL_PHASE_FORMAL ||
+        motion_mode != MT_MOTION_MODE_PRESET_ACTION ||
         mode_task_is_iw_up_edge(context, rc_snapshot) != OM_TRUE)
     {
         return;
@@ -132,13 +132,13 @@ static void mode_task_update_preset_action_runtime(
     }
 }
 
-void mode_task_update_phase_state_from_rc(
+void mode_task_update_phase(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot)
 {
     const OmBool operational_active = mct_is_operational_active();
-    const ModeTaskOperationalPhaseState current_phase =
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskPhaseState current_phase =
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine);
 
     if (context == OM_NULL || rc_snapshot == OM_NULL)
     {
@@ -149,21 +149,21 @@ void mode_task_update_phase_state_from_rc(
     {
         (void)sm_force_transition(
             &context->operational_phase_machine,
-            (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE);
-        sh_clear_custom_controller_calibration_indicator();
+            (StateId)MT_OPERATIONAL_PHASE_RELEASE);
+        sh_clear_custom_cal();
         return;
     }
 
-    if (mode_task_is_sw2_to_up_from_mi_edge(context, rc_snapshot) == OM_TRUE &&
+    if (mode_task_sw2_mi_to_up(context, rc_snapshot) == OM_TRUE &&
         operational_active == OM_TRUE)
     {
         (void)sm_force_transition(
             &context->operational_phase_machine,
-            (StateId)MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION);
+            (StateId)MT_OPERATIONAL_PHASE_SELECT);
         return;
     }
 
-    if (current_phase == MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION)
+    if (current_phase == MT_OPERATIONAL_PHASE_SELECT)
     {
         if (mode_task_is_sw1_to_up_edge(context, rc_snapshot) == OM_TRUE)
         {
@@ -180,12 +180,12 @@ void mode_task_update_phase_state_from_rc(
                     -1);
         }
 
-        if (mode_task_is_sw2_to_mi_from_up_edge(context, rc_snapshot) == OM_TRUE)
+        if (mode_task_sw2_up_to_mi(context, rc_snapshot) == OM_TRUE)
         {
             (void)sm_force_transition(
                 &context->operational_phase_machine,
-                (StateId)MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL);
-            sh_clear_custom_controller_calibration_indicator();
+                (StateId)MT_OPERATIONAL_PHASE_FORMAL);
+            sh_clear_custom_cal();
         }
     }
 }
@@ -194,15 +194,15 @@ static void mode_task_update_grip_runtime(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot)
 {
-    const ModeTaskOperationalPhaseState phase =
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskPhaseState phase =
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine);
 
     if (context == OM_NULL || rc_snapshot == OM_NULL)
     {
         return;
     }
 
-    if (phase != MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL)
+    if (phase != MT_OPERATIONAL_PHASE_FORMAL)
     {
         return;
     }
@@ -210,18 +210,18 @@ static void mode_task_update_grip_runtime(
     if (mode_task_is_iw_dn_edge(context, rc_snapshot) == OM_TRUE)
     {
         context->grip_runtime.grip_state =
-            (context->grip_runtime.grip_state == MODE_TASK_GRIP_OPEN)
-                ? MODE_TASK_GRIP_CLOSED
-                : MODE_TASK_GRIP_OPEN;
+            (context->grip_runtime.grip_state == MT_GRIP_OPEN)
+                ? MT_GRIP_CLOSED
+                : MT_GRIP_OPEN;
     }
 }
 
-static void mode_task_update_rc_ik_runtime(
+static void mode_task_update_ik(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot)
 {
-    const ModeTaskOperationalPhaseState phase =
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskPhaseState phase =
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine);
     const ModeTaskMotionModeId motion_mode =
         (ModeTaskMotionModeId)sm_get_current(&context->motion_mode_machine);
 
@@ -230,8 +230,8 @@ static void mode_task_update_rc_ik_runtime(
         return;
     }
 
-    if (phase != MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL ||
-        motion_mode != MODE_TASK_MOTION_MODE_RC_IK)
+    if (phase != MT_OPERATIONAL_PHASE_FORMAL ||
+        motion_mode != MT_MOTION_MODE_RC_IK)
     {
         return;
     }
@@ -239,30 +239,30 @@ static void mode_task_update_rc_ik_runtime(
     if (mode_task_is_sw1_to_up_edge(context, rc_snapshot) == OM_TRUE)
     {
         context->rc_ik_runtime.ik_solver_mode =
-            (context->rc_ik_runtime.ik_solver_mode == MODE_TASK_IK_SOLVER_FULL_POSE)
-                ? MODE_TASK_IK_SOLVER_POSITION_PRIORITY
-                : MODE_TASK_IK_SOLVER_FULL_POSE;
+            (context->rc_ik_runtime.ik_solver_mode == MT_IK_SOLVER_FULL_POSE)
+                ? MT_IK_SOLVER_POSITION_PRIORITY
+                : MT_IK_SOLVER_FULL_POSE;
 
         if (context->rc_ik_runtime.ik_solver_mode ==
-            MODE_TASK_IK_SOLVER_POSITION_PRIORITY)
+            MT_IK_SOLVER_POSITION_PRIORITY)
         {
             context->rc_ik_runtime.ik_control_bank =
-                MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ;
+                MT_IK_BANK_POS_XYZ;
         }
     }
     else if (mode_task_is_sw1_to_dn_edge(context, rc_snapshot) == OM_TRUE &&
              context->rc_ik_runtime.ik_solver_mode ==
-                 MODE_TASK_IK_SOLVER_FULL_POSE)
+                 MT_IK_SOLVER_FULL_POSE)
     {
         context->rc_ik_runtime.ik_control_bank =
             (context->rc_ik_runtime.ik_control_bank ==
-             MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ)
-                ? MODE_TASK_IK_CONTROL_BANK_ORIENTATION_RPY
-                : MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ;
+             MT_IK_BANK_POS_XYZ)
+                ? MT_IK_BANK_ORI_RPY
+                : MT_IK_BANK_POS_XYZ;
     }
 }
 
-static void mode_task_sync_context_history(
+static void mode_task_sync_history(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* snapshot)
 {
@@ -288,13 +288,13 @@ static void mode_task_sync_context_history(
 void mode_task_run_once(ModeTaskContext* context)
 {
     ModeTaskRcSnapshot rc_snapshot = {0};
-    InputCustomControllerSnapshot custom_controller_snapshot = {0};
-    ModeTaskSystemSnapshot previous_system_snapshot = {0};
+    InputCustomSnapshot custom_snapshot = {0};
+    ModeSystemSnap previous_system_snapshot = {0};
     ArmTaskModeSnapshot previous_arm_mode_snapshot = {0};
-    ChassisTaskModeSnapshot previous_chassis_mode_snapshot = {0};
-    ModeTaskSystemSnapshot next_system_snapshot = {0};
+    ChassisModeSnap previous_chassis_mode_snapshot = {0};
+    ModeSystemSnap next_system_snapshot = {0};
     ArmTaskModeSnapshot next_arm_mode_snapshot = {0};
-    ChassisTaskModeSnapshot next_chassis_mode_snapshot = {0};
+    ChassisModeSnap next_chassis_mode_snapshot = {0};
     OmBool system_snapshot_changed = OM_FALSE;
     OmBool arm_mode_snapshot_changed = OM_FALSE;
     OmBool chassis_mode_snapshot_changed = OM_FALSE;
@@ -305,86 +305,86 @@ void mode_task_run_once(ModeTaskContext* context)
     }
 
     mode_task_drain_rc_snapshots(context);
-    mode_task_drain_custom_controller_snapshots(context);
+    mode_task_drain_custom(context);
     mode_task_load_rc_snapshot(&rc_snapshot);
-    mode_task_load_custom_controller_snapshot(context, &custom_controller_snapshot);
+    mode_task_load_custom(context, &custom_snapshot);
 
-    if (!(context->flags & MODE_TASK_FLAG_INITIALIZED))
+    if (!(context->flags & MT_FLAG_INITIALIZED))
     {
         context->last_sw1 = rc_snapshot.sw1;
         context->last_last_sw1 = rc_snapshot.sw1;
         context->last_sw2 = rc_snapshot.sw2;
         context->last_iw = rc_snapshot.iw;
-        context->flags |= MODE_TASK_FLAG_INITIALIZED;
+        context->flags |= MT_FLAG_INITIALIZED;
     }
 
-    mode_task_build_system_snapshot(context, &previous_system_snapshot);
-    mode_task_build_arm_mode_snapshot(context, &previous_arm_mode_snapshot);
-    mode_task_build_chassis_mode_snapshot(context, &previous_chassis_mode_snapshot);
+    mode_task_build_system(context, &previous_system_snapshot);
+    mode_task_build_arm_mode(context, &previous_arm_mode_snapshot);
+    mode_task_build_chassis(context, &previous_chassis_mode_snapshot);
 
-    mode_task_drain_init_progress_messages(context);
-    mode_task_update_bootstrap_state_from_progress(context);
-    mode_task_process_mct_lifecycle_requests(context, &rc_snapshot);
+    mode_task_drain_init_messages(context);
+    mode_task_update_bootstrap(context);
+    mode_task_process_mct(context, &rc_snapshot);
 
-    if (mode_task_bootstrap_allows_control(context) == OM_TRUE)
+    if (mode_task_bootstrap_allows(context) == OM_TRUE)
     {
-        mode_task_update_phase_state_from_rc(context, &rc_snapshot);
+        mode_task_update_phase(context, &rc_snapshot);
     }
 
-    if ((ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine) ==
-        MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL)
+    if ((ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine) ==
+        MT_OPERATIONAL_PHASE_FORMAL)
     {
         (void)sm_force_transition(
             &context->motion_mode_machine,
             (StateId)context->confirmed_motion_mode_id);
     }
 
-    mode_task_update_preset_action_runtime(context, &rc_snapshot);
-    mode_task_update_rc_ik_runtime(context, &rc_snapshot);
+    mode_task_update_preset(context, &rc_snapshot);
+    mode_task_update_ik(context, &rc_snapshot);
     mode_task_update_grip_runtime(context, &rc_snapshot);
-    mode_task_update_operational_system_state(
+    mode_task_update_system_state(
         context,
         &rc_snapshot,
-        &custom_controller_snapshot);
+        &custom_snapshot);
 
-    if (context->hierarchy_state.system_state != MODE_TASK_SYSTEM_OPERATIONAL &&
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine) !=
-            MODE_TASK_OPERATIONAL_PHASE_RELEASE)
+    if (context->hierarchy_state.system_state != MT_SYSTEM_OPERATIONAL &&
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine) !=
+            MT_OPERATIONAL_PHASE_RELEASE)
     {
         (void)sm_force_transition(
             &context->operational_phase_machine,
-            (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE);
+            (StateId)MT_OPERATIONAL_PHASE_RELEASE);
     }
 
-    mode_task_update_operational_domain(
+    mode_task_update_domain(
         context,
         &rc_snapshot,
-        &custom_controller_snapshot);
-    mode_task_refresh_output_snapshots(context);
+        &custom_snapshot);
+    mode_task_refresh_snapshots(context);
 
-    mode_task_build_system_snapshot(context, &next_system_snapshot);
-    mode_task_build_arm_mode_snapshot(context, &next_arm_mode_snapshot);
-    mode_task_build_chassis_mode_snapshot(context, &next_chassis_mode_snapshot);
+    mode_task_build_system(context, &next_system_snapshot);
+    mode_task_build_arm_mode(context, &next_arm_mode_snapshot);
+    mode_task_build_chassis(context, &next_chassis_mode_snapshot);
 
-    system_snapshot_changed = mode_task_system_snapshot_changed(
+    system_snapshot_changed = mode_task_system_changed(
         &previous_system_snapshot,
         &next_system_snapshot);
-    arm_mode_snapshot_changed = mode_task_arm_mode_snapshot_changed(
+    arm_mode_snapshot_changed = mode_task_arm_changed(
         &previous_arm_mode_snapshot,
         &next_arm_mode_snapshot);
-    chassis_mode_snapshot_changed = mode_task_chassis_mode_snapshot_changed(
+    chassis_mode_snapshot_changed = mode_task_chassis_changed(
         &previous_chassis_mode_snapshot,
         &next_chassis_mode_snapshot);
 
     if (arm_mode_snapshot_changed == OM_TRUE ||
         chassis_mode_snapshot_changed == OM_TRUE)
     {
-        mode_task_publish_control_snapshots(
+        mode_task_publish_snapshots(
             &next_arm_mode_snapshot,
             &next_chassis_mode_snapshot);
     }
 
-    mode_task_sync_context_history(context, &rc_snapshot);
+    mode_task_sync_history(context, &rc_snapshot);
     mode_task_update_debug_state(context);
 
     if (system_snapshot_changed == OM_TRUE ||

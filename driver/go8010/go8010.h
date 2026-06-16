@@ -96,9 +96,9 @@ const Go8010Feedback* go8010_get_feedback(const Go8010MotorDrv* motor);
 /* 按超时窗口判断当前电机是否在线。 */
 OmBool go8010_is_online(Go8010MotorDrv* motor, uint32_t timeout_ms);
 /* 在正式通信 owner 侧锁存首个有效绝对位置，作为应用层零位基准。 */
-void go8010_capture_initial_position_zero(Go8010MotorDrv* motor);
+void g8_capture_zero(Go8010MotorDrv* motor);
 /* 读取已锁存的初始绝对位置零位。 */
-OmBool go8010_get_initial_position_zero(const Go8010MotorDrv* motor, float* zero_angle_rad);
+OmBool g8_get_zero(const Go8010MotorDrv* motor, float* zero_angle_rad);
 
 #ifdef __cplusplus
 }

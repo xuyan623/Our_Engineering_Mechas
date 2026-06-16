@@ -37,7 +37,7 @@ typedef enum
     SH_CUSTOM_CONTROLLER_CAL_IDLE = 0u,
     SH_CUSTOM_CONTROLLER_CAL_PENDING,
     SH_CUSTOM_CONTROLLER_CAL_FAILED,
-} SHCustomControllerCalibrationState;
+} SHCustomIndicator;
 
 /* 统一错误显示状态机的内部阶段。 */
 typedef enum
@@ -99,7 +99,7 @@ typedef struct
     OsalTimeMs next_transition_ms;
     OsalTimeMs running_green_flash_until_ms;
     OsalTimeMs cal_failed_red_flash_until_ms;
-    SHCustomControllerCalibrationState custom_controller_calibration_state;
+    SHCustomIndicator custom_controller_calibration_state;
     uint8_t current_digit_index;
     uint32_t fatal_completed_display_rounds;
 } SHContext;
@@ -443,7 +443,7 @@ void sh_set_running(void)
     sh_apply_led(g_system_health.state);
 }
 
-void sh_request_running_green_flash(void)
+void sh_request_green_flash(void)
 {
     OsalTimeMs now_ms = osal_time_now_monotonic();
 
@@ -457,7 +457,7 @@ void sh_request_running_green_flash(void)
     sh_apply_led(g_system_health.state);
 }
 
-void sh_set_custom_controller_calibration_pending(void)
+void sh_set_custom_cal_pending(void)
 {
     if (g_system_health.state != SH_STATE_RUNNING)
     {
@@ -469,7 +469,7 @@ void sh_set_custom_controller_calibration_pending(void)
     sh_apply_led(g_system_health.state);
 }
 
-void sh_set_custom_controller_calibration_success(void)
+void sh_set_custom_cal_ok(void)
 {
     if (g_system_health.state != SH_STATE_RUNNING)
     {
@@ -481,7 +481,7 @@ void sh_set_custom_controller_calibration_success(void)
     sh_apply_led(g_system_health.state);
 }
 
-void sh_set_custom_controller_calibration_failed(void)
+void sh_set_custom_cal_fail(void)
 {
     OsalTimeMs now_ms = osal_time_now_monotonic();
 
@@ -497,7 +497,7 @@ void sh_set_custom_controller_calibration_failed(void)
     sh_apply_led(g_system_health.state);
 }
 
-void sh_clear_custom_controller_calibration_indicator(void)
+void sh_clear_custom_cal(void)
 {
     if (g_system_health.state != SH_STATE_RUNNING)
     {

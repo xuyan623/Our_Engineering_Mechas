@@ -33,10 +33,10 @@ float math_utils_normalize_deg(float angle_deg);
 /* 在参考角附近找到与目标角最近的等效角（单位：度）。
  * 用于处理角度环绕问题，例如 roll3 单圈物理角。
  */
-float math_utils_resolve_nearest_equivalent_deg(float target_deg, float reference_deg);
+float math_utils_resolve_deg(float target_deg, float reference_deg);
 
 /* 在参考角附近找到与目标角最近的等效角（单位：弧度）。 */
-float math_utils_resolve_nearest_equivalent_rad(float target_rad, float reference_rad);
+float math_utils_resolve_rad(float target_rad, float reference_rad);
 
 /* 斜坡限速：将 current_value 以不超过 max_rate * dt 的步长逼近 target_value。
  * 当 dt_s <= 0 或 max_rate <= 0 时直接返回 target_value。
@@ -51,6 +51,6 @@ float math_utils_slew_value(
 float math_utils_rad_per_s_to_rpm(float angular_velocity_rad_per_s);
 
 /* 对称死区：当 |value_deg| <= deadband_deg 时返回 0，否则减去死区偏移。 */
-float math_utils_apply_symmetric_deadband(float value_deg, float deadband_deg);
+float math_utils_symmetric_deadband(float value_deg, float deadband_deg);
 
 #endif

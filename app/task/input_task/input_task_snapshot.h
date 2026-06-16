@@ -1,10 +1,10 @@
-#ifndef NEW_ROBOT_INPUT_TASK_SNAPSHOT_H
-#define NEW_ROBOT_INPUT_TASK_SNAPSHOT_H
+#ifndef NEW_ROBOT_IT_SNAPSHOT_H
+#define NEW_ROBOT_IT_SNAPSHOT_H
 
 #include <stdint.h>
 
 /* 自定义控制器对外快照固定导出 6 轴角度。 */
-#define INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT (6u)
+#define IC_ANGLE_COUNT (6u)
 
 typedef struct
 {
@@ -35,7 +35,7 @@ typedef struct
 {
     uint8_t online;
     uint8_t work_mode;
-    float angle_deg[INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT];
-} InputCustomControllerSnapshot;
+    float angle_deg[IC_ANGLE_COUNT];
+} InputCustomSnapshot;
 
 #endif

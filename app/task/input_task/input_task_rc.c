@@ -10,8 +10,8 @@ static InputRcSnapshot g_input_task_rc_snapshot = {0};
  */
 static int16_t input_task_rc_apply_deadband(int16_t value)
 {
-    if (value <= INPUT_TASK_DBUS_CHANNEL_DEADBAND &&
-        value >= -INPUT_TASK_DBUS_CHANNEL_DEADBAND)
+    if (value <= IT_DBUS_CHANNEL_DEADBAND &&
+        value >= -IT_DBUS_CHANNEL_DEADBAND)
     {
         return 0;
     }
@@ -29,13 +29,13 @@ void input_task_rc_reset_runtime(InputTaskRcDebugState* runtime)
     memset((void*)runtime, 0, sizeof(*runtime));
 }
 
-void input_task_rc_reset_latest_snapshot(void)
+void input_task_rc_reset_latest(void)
 {
     memset(&g_input_task_rc_snapshot, 0, sizeof(g_input_task_rc_snapshot));
 }
 
 OmBool input_task_rc_decode_frame(
-    const uint8_t raw_frame[INPUT_TASK_DBUS_FRAME_LEN],
+    const uint8_t raw_frame[IT_DBUS_FRAME_LEN],
     InputTaskRcFrame* frame)
 {
     if (raw_frame == OM_NULL || frame == OM_NULL)
@@ -50,21 +50,21 @@ OmBool input_task_rc_decode_frame(
      */
     frame->ch1 =
         (int16_t)(((raw_frame[0] | (raw_frame[1] << 8)) &
-                   INPUT_TASK_DBUS_11BIT_MASK) -
-                  INPUT_TASK_DBUS_CHANNEL_CENTER);
+                   IT_DBUS_11BIT_MASK) -
+                  IT_DBUS_CHANNEL_CENTER);
     frame->ch2 =
         (int16_t)((((raw_frame[1] >> 3) | (raw_frame[2] << 5)) &
-                   INPUT_TASK_DBUS_11BIT_MASK) -
-                  INPUT_TASK_DBUS_CHANNEL_CENTER);
+                   IT_DBUS_11BIT_MASK) -
+                  IT_DBUS_CHANNEL_CENTER);
     frame->ch3 =
         (int16_t)((((raw_frame[2] >> 6) | (raw_frame[3] << 2) |
                     (raw_frame[4] << 10)) &
-                   INPUT_TASK_DBUS_11BIT_MASK) -
-                  INPUT_TASK_DBUS_CHANNEL_CENTER);
+                   IT_DBUS_11BIT_MASK) -
+                  IT_DBUS_CHANNEL_CENTER);
     frame->ch4 =
         (int16_t)((((raw_frame[4] >> 1) | (raw_frame[5] << 7)) &
-                   INPUT_TASK_DBUS_11BIT_MASK) -
-                  INPUT_TASK_DBUS_CHANNEL_CENTER);
+                   IT_DBUS_11BIT_MASK) -
+                  IT_DBUS_CHANNEL_CENTER);
 
     frame->ch1 = input_task_rc_apply_deadband(frame->ch1);
     frame->ch2 = input_task_rc_apply_deadband(frame->ch2);
@@ -75,7 +75,7 @@ OmBool input_task_rc_decode_frame(
     frame->sw2 = (uint8_t)((raw_frame[5] >> 4) & 0x03u);
     frame->iw =
         (uint16_t)((raw_frame[16] | (raw_frame[17] << 8)) &
-                   INPUT_TASK_DBUS_11BIT_MASK);
+                   IT_DBUS_11BIT_MASK);
 
     frame->mouse.x = (int16_t)(raw_frame[6] | (raw_frame[7] << 8));
     frame->mouse.y = (int16_t)(raw_frame[8] | (raw_frame[9] << 8));
@@ -87,10 +87,10 @@ OmBool input_task_rc_decode_frame(
     /* 摇杆绝对值超出旧工程经验范围时，认为当前帧已错位或损坏。
      * 这里直接清零该帧，保持下游控制逻辑看到的是“安全输入”。
      */
-    if ((abs(frame->ch1) > INPUT_TASK_DBUS_CHANNEL_MAX_ABS) ||
-        (abs(frame->ch2) > INPUT_TASK_DBUS_CHANNEL_MAX_ABS) ||
-        (abs(frame->ch3) > INPUT_TASK_DBUS_CHANNEL_MAX_ABS) ||
-        (abs(frame->ch4) > INPUT_TASK_DBUS_CHANNEL_MAX_ABS))
+    if ((abs(frame->ch1) > IT_DBUS_CHANNEL_MAX_ABS) ||
+        (abs(frame->ch2) > IT_DBUS_CHANNEL_MAX_ABS) ||
+        (abs(frame->ch3) > IT_DBUS_CHANNEL_MAX_ABS) ||
+        (abs(frame->ch4) > IT_DBUS_CHANNEL_MAX_ABS))
     {
         memset(frame, 0, sizeof(*frame));
         return OM_FALSE;
@@ -145,7 +145,7 @@ void input_task_rc_copy_snapshot(InputRcSnapshot* snapshot)
     *snapshot = g_input_task_rc_snapshot;
 }
 
-OmBool input_task_rc_update_online_state(
+OmBool input_task_rc_update_online(
     InputTaskRcDebugState* runtime,
     OsalTimeMs now_ms)
 {
@@ -166,7 +166,7 @@ OmBool input_task_rc_update_online_state(
 
     runtime->last_frame_age_ms = (uint32_t)(now_ms - runtime->last_frame_ms);
     runtime->online =
-        (runtime->last_frame_age_ms <= INPUT_TASK_DBUS_FRAME_TIMEOUT_MS) ? 1u : 0u;
+        (runtime->last_frame_age_ms <= IT_DBUS_FRAME_TIMEOUT_MS) ? 1u : 0u;
     g_input_task_rc_snapshot.online = runtime->online;
     return (previous_online != g_input_task_rc_snapshot.online) ? OM_TRUE : OM_FALSE;
 }

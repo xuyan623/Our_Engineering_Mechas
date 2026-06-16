@@ -31,7 +31,7 @@ static uint8_t ist_reg_read_by_mpu(uint8_t addr)
     return retval;
 }
 
-static void mpu_master_i2c_auto_read_config(uint8_t device_address, uint8_t reg_base_addr, uint8_t data_num)
+static void mpu_i2c_auto_cfg(uint8_t device_address, uint8_t reg_base_addr, uint8_t data_num)
 {
     mpu6500_write_single_reg(MPU_I2CSLV1_ADDR, device_address);
     mpu6500_delay_ms(2);
@@ -98,7 +98,7 @@ uint8_t ist8310_init(void)
         return 5U;
     }
 
-    mpu_master_i2c_auto_read_config(IST8310_ADDRESS, IST8310_R_XL, 0x06);
+    mpu_i2c_auto_cfg(IST8310_ADDRESS, IST8310_R_XL, 0x06);
     mpu6500_delay_ms(100);
     return 0U;
 }

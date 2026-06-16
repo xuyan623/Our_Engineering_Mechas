@@ -15,18 +15,18 @@
  * - 改写 task 的诊断语义
  */
 
-#define VOFA_LAYOUT_MAX_CHANNELS (16u)
+#define VL_MAX_CHANNELS (16u)
 
 typedef enum
 {
-    VOFA_LAYOUT_SOURCE_TASK_SNAPSHOT = 0u,
-    VOFA_LAYOUT_SOURCE_CAN1_TX_FIFO_USED,
-    VOFA_LAYOUT_SOURCE_CAN2_TX_FIFO_USED,
-    VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT,
-    VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT,
-    VOFA_LAYOUT_SOURCE_ARM_MODE,
-    VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT,
-    VOFA_LAYOUT_SOURCE_CONST_ZERO,
+    VL_SRC_TASK_SNAPSHOT = 0u,
+    VL_SRC_CAN1_TX_USED,
+    VL_SRC_CAN2_TX_USED,
+    VOFA_SRC_ARM_FK_POSE,
+    VOFA_SRC_ARM_IK_JOINT,
+    VL_SRC_ARM_MODE,
+    VOFA_SRC_ARM_IK_TARGET_POS,
+    VL_SRC_CONST_ZERO,
 } VofaLayoutSourceKind;
 
 typedef struct
@@ -53,11 +53,11 @@ typedef struct
  * - 3：机械臂当前 FK pose + 当前 arm_mode + IK 目标 xyz
  * - 4：机械臂当前 IK joint（big_yaw/pitch1/pitch2/roll2/pitch3/roll3）
  */
-#define VOFA_LAYOUT_ID_ARM_MACHINE_ANGLES   (0u)
-#define VOFA_LAYOUT_ID_CHASSIS_DEBUG        (1u)
-#define VOFA_LAYOUT_ID_MCT_RUNTIME          (2u)
-#define VOFA_LAYOUT_ID_ARM_FK_POSE          (3u)
-#define VOFA_LAYOUT_ID_ARM_IK_JOINTS        (4u)
+#define VL_ID_ARM_MACHINE   (0u)
+#define VL_ID_CHASSIS_DEBUG        (1u)
+#define VL_ID_MCT_RUNTIME          (2u)
+#define VL_ID_ARM_FK_POSE          (3u)
+#define VL_ID_ARM_IK_JOINTS        (4u)
 
 /* 返回编译期默认布局。 */
 const VofaLayoutDef* vofa_layout_get_default(void);

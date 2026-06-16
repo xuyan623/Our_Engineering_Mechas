@@ -5,7 +5,7 @@ typedef union {
     void* ptr_align;
     uint64_t u64_align;
     double f64_align;
-} TaskContextPoolAlignProbe;
+} TaskCtxAlignProbe;
 
 typedef struct {
     OmBool allocated;
@@ -17,14 +17,14 @@ typedef struct {
 } TaskContextSlot;
 
 typedef union {
-    TaskContextPoolAlignProbe align;
-    uint8_t bytes[TASK_CONTEXT_POOL_BUFFER_BYTES];
-} TaskContextPoolStorage;
+    TaskCtxAlignProbe align;
+    uint8_t bytes[TCP_BUFFER_BYTES];
+} TaskCtxStorage;
 
-#define TASK_CONTEXT_POOL_ALIGNMENT_BYTES ((uint32_t)__alignof__(TaskContextPoolAlignProbe))
+#define TCP_ALIGNMENT_BYTES ((uint32_t)__alignof__(TaskCtxAlignProbe))
 
-static TaskContextPoolStorage g_task_context_pool_storage;
-static TaskContextSlot g_task_context_pool_slots[TASK_CONTEXT_POOL_MAX_SLOTS];
+static TaskCtxStorage g_task_context_pool_storage;
+static TaskContextSlot g_task_context_pool_slots[TCP_MAX_SLOTS];
 static uint32_t g_task_context_pool_used_bytes = 0u;
 
 static uint32_t task_context_pool_align_up(uint32_t value, uint32_t alignment)
@@ -47,7 +47,7 @@ static void* task_context_pool_slot_ptr(const TaskContextSlot* slot)
     return (void*)&g_task_context_pool_storage.bytes[slot->offset];
 }
 
-static void task_context_pool_prepare_slot(
+static void task_context_pool_prep_slot(
     TaskContextSlot* slot,
     const char* name,
     uint32_t size,
@@ -85,36 +85,36 @@ TaskContextSlotId task_context_pool_alloc(const char* name, uint32_t size, const
         return 0u;
     }
 
-    aligned_capacity = task_context_pool_align_up(size, TASK_CONTEXT_POOL_ALIGNMENT_BYTES);
+    aligned_capacity = task_context_pool_align_up(size, TCP_ALIGNMENT_BYTES);
 
-    for (i = 0u; i < TASK_CONTEXT_POOL_MAX_SLOTS; i++)
+    for (i = 0u; i < TCP_MAX_SLOTS; i++)
     {
         if (g_task_context_pool_slots[i].allocated == OM_FALSE &&
             g_task_context_pool_slots[i].capacity >= aligned_capacity)
         {
-            task_context_pool_prepare_slot(&g_task_context_pool_slots[i], name, size, vtable);
+            task_context_pool_prep_slot(&g_task_context_pool_slots[i], name, size, vtable);
             return (TaskContextSlotId)(i + 1u);
         }
     }
 
     aligned_offset = task_context_pool_align_up(
         g_task_context_pool_used_bytes,
-        TASK_CONTEXT_POOL_ALIGNMENT_BYTES);
+        TCP_ALIGNMENT_BYTES);
 
-    if (aligned_offset > TASK_CONTEXT_POOL_BUFFER_BYTES ||
-        aligned_capacity > (TASK_CONTEXT_POOL_BUFFER_BYTES - aligned_offset))
+    if (aligned_offset > TCP_BUFFER_BYTES ||
+        aligned_capacity > (TCP_BUFFER_BYTES - aligned_offset))
     {
         return 0u;
     }
 
-    for (i = 0u; i < TASK_CONTEXT_POOL_MAX_SLOTS; i++)
+    for (i = 0u; i < TCP_MAX_SLOTS; i++)
     {
         if (g_task_context_pool_slots[i].allocated == OM_FALSE &&
             g_task_context_pool_slots[i].capacity == 0u)
         {
             g_task_context_pool_slots[i].offset = aligned_offset;
             g_task_context_pool_slots[i].capacity = aligned_capacity;
-            task_context_pool_prepare_slot(&g_task_context_pool_slots[i], name, size, vtable);
+            task_context_pool_prep_slot(&g_task_context_pool_slots[i], name, size, vtable);
             g_task_context_pool_used_bytes = aligned_offset + aligned_capacity;
             return (TaskContextSlotId)(i + 1u);
         }
@@ -127,7 +127,7 @@ void task_context_pool_reset(TaskContextSlotId slot_id)
 {
     uint32_t index = (uint32_t)slot_id;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return;
     }
@@ -151,7 +151,7 @@ void task_context_pool_free(TaskContextSlotId slot_id)
 {
     uint32_t index = (uint32_t)slot_id;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return;
     }
@@ -181,11 +181,11 @@ void task_context_pool_free(TaskContextSlotId slot_id)
     g_task_context_pool_slots[index].vtable = OM_NULL;
 }
 
-OmBool task_context_pool_is_allocated(TaskContextSlotId slot_id)
+OmBool task_context_pool_allocated(TaskContextSlotId slot_id)
 {
     uint32_t index = (uint32_t)slot_id;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return OM_FALSE;
     }
@@ -194,12 +194,12 @@ OmBool task_context_pool_is_allocated(TaskContextSlotId slot_id)
     return g_task_context_pool_slots[index].allocated;
 }
 
-uint32_t task_context_pool_get_allocated_count(void)
+uint32_t task_context_pool_count(void)
 {
     uint32_t count = 0u;
     uint32_t i = 0u;
 
-    for (i = 0u; i < TASK_CONTEXT_POOL_MAX_SLOTS; i++)
+    for (i = 0u; i < TCP_MAX_SLOTS; i++)
     {
         if (g_task_context_pool_slots[i].allocated == OM_TRUE)
         {
@@ -210,12 +210,12 @@ uint32_t task_context_pool_get_allocated_count(void)
     return count;
 }
 
-TaskContextSlotId task_context_pool_get_slot_by_index(uint32_t index)
+TaskContextSlotId task_context_pool_slot_at(uint32_t index)
 {
     uint32_t i = 0u;
     uint32_t allocated_seen = 0u;
 
-    for (i = 0u; i < TASK_CONTEXT_POOL_MAX_SLOTS; i++)
+    for (i = 0u; i < TCP_MAX_SLOTS; i++)
     {
         if (g_task_context_pool_slots[i].allocated == OM_TRUE)
         {
@@ -234,7 +234,7 @@ const char* task_context_pool_get_name(TaskContextSlotId slot_id)
 {
     uint32_t index = (uint32_t)slot_id;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return OM_NULL;
     }
@@ -243,7 +243,7 @@ const char* task_context_pool_get_name(TaskContextSlotId slot_id)
     return g_task_context_pool_slots[index].name;
 }
 
-void task_context_pool_call_diag_online(TaskContextSlotId slot_id, uint8_t* out_online)
+void task_context_pool_diag_online(TaskContextSlotId slot_id, uint8_t* out_online)
 {
     uint32_t index = (uint32_t)slot_id;
 
@@ -254,7 +254,7 @@ void task_context_pool_call_diag_online(TaskContextSlotId slot_id, uint8_t* out_
 
     *out_online = 0u;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return;
     }
@@ -273,7 +273,7 @@ void task_context_pool_call_diag_online(TaskContextSlotId slot_id, uint8_t* out_
         out_online);
 }
 
-void task_context_pool_call_diag_snapshot(TaskContextSlotId slot_id, float* out_buf, uint32_t cap, uint32_t* out_count)
+void task_context_pool_diag_snap(TaskContextSlotId slot_id, float* out_buf, uint32_t cap, uint32_t* out_count)
 {
     uint32_t index = (uint32_t)slot_id;
 
@@ -284,7 +284,7 @@ void task_context_pool_call_diag_snapshot(TaskContextSlotId slot_id, float* out_
 
     *out_count = 0u;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return;
     }
@@ -307,7 +307,7 @@ void* task_context_pool_get_ptr(TaskContextSlotId slot_id)
 {
     uint32_t index = (uint32_t)slot_id;
 
-    if (index == 0u || index > TASK_CONTEXT_POOL_MAX_SLOTS)
+    if (index == 0u || index > TCP_MAX_SLOTS)
     {
         return OM_NULL;
     }

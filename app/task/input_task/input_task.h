@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_INPUT_TASK_H
-#define NEW_ROBOT_INPUT_TASK_H
+#ifndef NEW_ROBOT_IT_H
+#define NEW_ROBOT_IT_H
 
 #include "bsp/bsp_init.h"
 #include "core/om_def.h"
@@ -30,7 +30,7 @@ typedef struct
     volatile uint8_t last_seq;
     volatile uint32_t last_frame_age_ms;
     volatile uint8_t degraded_start;
-} InputTaskCustomControllerDebugState;
+} InputCustomDebugState;
 
 /* 裁判系统输入本轮尚未正式接线。
  * 这里先保留一个最小 runtime 槽位，下一轮真正接 USART3 RX 时
@@ -40,7 +40,7 @@ typedef struct
 {
     volatile uint32_t rx_available_hint;
     volatile uint32_t reserved_frame_count;
-} InputTaskJudgeStubDebugState;
+} InputJudgeStubState;
 
 /* input_task 当前是外部控制输入的唯一 owner。
  * 所有来自 USART1/UART8 的控制输入调试状态都统一收进这一个 runtime，
@@ -49,8 +49,8 @@ typedef struct
 typedef struct
 {
     InputTaskRcDebugState rc;
-    InputTaskCustomControllerDebugState custom_controller;
-    InputTaskJudgeStubDebugState judge;
+    InputCustomDebugState custom;
+    InputJudgeStubState judge;
 } InputTaskDebugState;
 
 extern InputTaskDebugState g_input_task_runtime;

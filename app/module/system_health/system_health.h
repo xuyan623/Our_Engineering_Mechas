@@ -17,7 +17,7 @@ typedef enum
     SH_TASK_MODE,
     SH_TASK_CHASSIS,
     SH_TASK_ARM,
-    SH_TASK_MOTOR_COMMUNICATIONS,
+    SH_TASK_MCT,
     SH_TASK_COUNT
 } SHTaskId;
 
@@ -45,38 +45,38 @@ typedef enum
 {
     SH_ERR_NONE = 0u,
     SH_ERR_BSP_INIT_FAIL = SH_CODE(1u, 1u, 1u),
-    SH_ERR_DAMIAO_DM4310_TEST_TASK_START_FAIL = SH_CODE(1u, 7u, 1u),
+    SH_ERR_DM4310_TEST_START_FAIL = SH_CODE(1u, 7u, 1u),
     SH_ERR_VOFA_TASK_START_FAIL = SH_CODE(1u, 8u, 1u),
-    SH_ERR_P1010B_LEFT_LEG_TEST_TASK_START_FAIL = SH_CODE(1u, 7u, 2u),
-    SH_ERR_P1010B_VOFA_TASK_START_FAIL = SH_CODE(1u, 8u, 2u),
-    SH_ERR_GO8010_TEST_TASK_START_FAIL = SH_CODE(1u, 7u, 3u),
-    SH_ERR_GO8010_VOFA_TASK_START_FAIL = SH_CODE(1u, 8u, 3u),
-    SH_ERR_SYSTEM_HEALTH_REGISTER_FAIL = SH_CODE(1u, 1u, 2u),
+    SH_ERR_P1010B_LL_TEST_START_FAIL = SH_CODE(1u, 7u, 2u),
+    SH_ERR_P1010B_VOFA_START_FAIL = SH_CODE(1u, 8u, 2u),
+    SH_ERR_GO8010_TEST_START_FAIL = SH_CODE(1u, 7u, 3u),
+    SH_ERR_GO8010_VOFA_START_FAIL = SH_CODE(1u, 8u, 3u),
+    SH_ERR_SH_REG_FAIL = SH_CODE(1u, 1u, 2u),
     SH_ERR_EVENT_BUS_INIT_FAIL = SH_CODE(1u, 1u, 3u),
     SH_ERR_MPU_DEVICE_INIT_FAIL = SH_CODE(1u, 2u, 1u),
     SH_ERR_IMU_TASK_START_FAIL = SH_CODE(1u, 2u, 2u),
-    SH_ERR_INPUT_TASK_START_FAIL = SH_CODE(1u, 3u, 1u),
-    SH_ERR_MODE_TASK_START_FAIL = SH_CODE(1u, 4u, 1u),
-    SH_ERR_CHASSIS_TASK_START_FAIL = SH_CODE(1u, 5u, 2u),
-    SH_ERR_ARM_TASK_START_FAIL = SH_CODE(1u, 6u, 1u),
-    SH_ERR_DJI_M3508_TEST_TASK_START_FAIL = SH_CODE(1u, 5u, 1u),
-    SH_ERR_MOTOR_COMMUNICATIONS_TASK_START_FAIL = SH_CODE(1u, 6u, 2u),
+    SH_ERR_IT_START_FAIL = SH_CODE(1u, 3u, 1u),
+    SH_ERR_MT_START_FAIL = SH_CODE(1u, 4u, 1u),
+    SH_ERR_CT_START_FAIL = SH_CODE(1u, 5u, 2u),
+    SH_ERR_AT_START_FAIL = SH_CODE(1u, 6u, 1u),
+    SH_ERR_M3508_TEST_START_FAIL = SH_CODE(1u, 5u, 1u),
+    SH_ERR_MCT_START_FAIL = SH_CODE(1u, 6u, 2u),
     SH_ERR_SELF_TEST_FATAL = SH_CODE(1u, 9u, 1u),
-    SH_ERR_SELF_TEST_TASK_START_FAIL = SH_CODE(1u, 9u, 2u),
-    SH_ERR_EVT_IMU_DATA_READY_PUBLISH_FAIL = SH_CODE(3u, 2u, 1u),
-    SH_ERR_EVT_RC_DATA_READY_PUBLISH_FAIL = SH_CODE(3u, 3u, 1u),
-    SH_ERR_EVT_MODE_CHANGED_PUBLISH_FAIL = SH_CODE(3u, 4u, 1u),
-    SH_ERR_EVT_MOTOR_TX_REQUEST_PUBLISH_FAIL = SH_CODE(3u, 5u, 1u),
+    SH_ERR_SELF_TEST_START_FAIL = SH_CODE(1u, 9u, 2u),
+    SH_ERR_EVT_IMU_RDY_PUB_FAIL = SH_CODE(3u, 2u, 1u),
+    SH_ERR_EVT_RC_RDY_PUB_FAIL = SH_CODE(3u, 3u, 1u),
+    SH_ERR_EVT_MODE_PUB_FAIL = SH_CODE(3u, 4u, 1u),
+    SH_ERR_EVT_MOTOR_TX_PUB_FAIL = SH_CODE(3u, 5u, 1u),
     SH_ERR_DAMIAO_SMOKE_TIMEOUT = SH_CODE(2u, 7u, 1u),
-    SH_ERR_P1010B_LEFT_LEG_TEST_TIMEOUT = SH_CODE(2u, 7u, 2u),
+    SH_ERR_P1010B_LL_TEST_TIMEOUT = SH_CODE(2u, 7u, 2u),
     SH_ERR_GO8010_SMOKE_TIMEOUT = SH_CODE(2u, 7u, 3u),
     SH_ERR_SELF_TEST_TIMEOUT = SH_CODE(2u, 9u, 1u),
     SH_ERR_IMU_TASK_TIMEOUT = SH_CODE(2u, 2u, 1u),
-    SH_ERR_MODE_TASK_TIMEOUT = SH_CODE(2u, 4u, 1u),
-    SH_ERR_CHASSIS_TASK_TIMEOUT = SH_CODE(2u, 5u, 1u),
-    SH_ERR_ARM_TASK_TIMEOUT = SH_CODE(2u, 6u, 1u),
-    SH_ERR_MOTOR_COMMUNICATIONS_TIMEOUT = SH_CODE(2u, 6u, 2u),
-    SH_ERR_MOTOR_RECOVERY_DEGRADED = SH_CODE(2u, 6u, 3u),
+    SH_ERR_MT_TIMEOUT = SH_CODE(2u, 4u, 1u),
+    SH_ERR_CT_TIMEOUT = SH_CODE(2u, 5u, 1u),
+    SH_ERR_AT_TIMEOUT = SH_CODE(2u, 6u, 1u),
+    SH_ERR_MCT_TIMEOUT = SH_CODE(2u, 6u, 2u),
+    SH_ERR_MR_DEGRADED = SH_CODE(2u, 6u, 3u),
 } SHErrorCode;
 
 #define SH_ERR_RUNTIME_FAULT_MAX (SH_ERR_SELF_TEST_TIMEOUT)
@@ -116,7 +116,7 @@ void sh_set_running(void);
 /* 在 RUNNING 常亮绿灯上插入一次短闪。
  * 用于模式进入/退出这类非故障提示，不改变 system_health 的高层状态。
  */
-void sh_request_running_green_flash(void);
+void sh_request_green_flash(void);
 
 /* 自定义控制器校准指示：
  * - pending：绿灯灭，表示已进入校准流程、正在等待自动对齐
@@ -125,10 +125,10 @@ void sh_request_running_green_flash(void);
  *
  * 这些接口只改变 RUNNING 态下的灯覆盖层，不改变 system_health 的高层状态机。
  */
-void sh_set_custom_controller_calibration_pending(void);
-void sh_set_custom_controller_calibration_success(void);
-void sh_set_custom_controller_calibration_failed(void);
-void sh_clear_custom_controller_calibration_indicator(void);
+void sh_set_custom_cal_pending(void);
+void sh_set_custom_cal_ok(void);
+void sh_set_custom_cal_fail(void);
+void sh_clear_custom_cal(void);
 
 /* 系统健康总裁轮询入口。
  * 这应该由 start_task 周期调用，作为唯一的健康监督执行者。

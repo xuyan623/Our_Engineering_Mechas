@@ -131,7 +131,7 @@ OmRet damiao_motor_register(DamiaoMotorBus* bus, DamiaoMotorDrv* motor, DamiaoMo
 /* 设置 MIT 控制目标，只更新缓存不立即发送。 */
 void damiao_motor_set_mit(DamiaoMotorDrv* motor, float position, float velocity, float kp, float kd, float torque_feedforward);
 /* 通过 0x7FF 参数写帧写入一个 32 位寄存器值。 */
-OmRet damiao_motor_write_register_u32(Device* can_dev, uint16_t can_id, uint8_t register_id, uint32_t value);
+OmRet dm_wr_reg_u32(Device* can_dev, uint16_t can_id, uint8_t register_id, uint32_t value);
 /* 编码使能命令，等待 bus_sync 统一发送。 */
 void damiao_motor_enable(DamiaoMotorDrv* motor);
 /* 编码失能命令，等待 bus_sync 统一发送。 */
@@ -142,7 +142,7 @@ void damiao_motor_bus_sync(DamiaoMotorBus* bus);
 /* 获取指定型号的 MIT 量程配置。 */
 const DamiaoMitLimits* damiao_motor_get_limits(DamiaoMotorType type);
 
-static inline void damiao_motor_config_error_callback(DamiaoMotorDrv* motor, DamiaoMotorErrorCallback callback)
+static inline void dm_err_cb(DamiaoMotorDrv* motor, DamiaoMotorErrorCallback callback)
 {
     if (motor)
         motor->errorCallback = callback;
@@ -189,7 +189,7 @@ static inline uint8_t damiao_motor_get_last_status(DamiaoMotorDrv* motor)
 }
 
 /* 获取最近一次有效反馈时间戳。 */
-static inline uint32_t damiao_motor_get_feedback_timestamp_ms(DamiaoMotorDrv* motor)
+static inline uint32_t dm_fb_ts_ms(DamiaoMotorDrv* motor)
 {
     if (!motor)
         return 0u;
@@ -197,35 +197,35 @@ static inline uint32_t damiao_motor_get_feedback_timestamp_ms(DamiaoMotorDrv* mo
 }
 
 /* 获取有效反馈序号。 */
-static inline uint32_t damiao_motor_get_feedback_sequence(DamiaoMotorDrv* motor)
+static inline uint32_t dm_fb_seq(DamiaoMotorDrv* motor)
 {
     if (!motor)
         return 0u;
     return motor->measure.sequence;
 }
 
-static inline uint32_t damiao_motor_bus_get_raw_rx_count(const DamiaoMotorBus* bus)
+static inline uint32_t dm_raw_rx_cnt(const DamiaoMotorBus* bus)
 {
     if (!bus)
         return 0u;
     return bus->rawRxCount;
 }
 
-static inline uint32_t damiao_motor_bus_get_last_raw_stdid(const DamiaoMotorBus* bus)
+static inline uint32_t dm_last_raw_id(const DamiaoMotorBus* bus)
 {
     if (!bus)
         return 0u;
     return bus->lastRawStdId;
 }
 
-static inline uint32_t damiao_motor_bus_get_raw_rx_by_stdid(const DamiaoMotorBus* bus, uint32_t stdid)
+static inline uint32_t dm_raw_rx_id(const DamiaoMotorBus* bus, uint32_t stdid)
 {
     if (!bus || stdid >= 6u)
         return 0u;
     return bus->rawRxByStdId[stdid];
 }
 
-static inline uint32_t damiao_motor_bus_get_raw_tx_by_stdid(const DamiaoMotorBus* bus, uint32_t stdid)
+static inline uint32_t dm_raw_tx_id(const DamiaoMotorBus* bus, uint32_t stdid)
 {
     if (!bus || stdid >= 6u)
         return 0u;

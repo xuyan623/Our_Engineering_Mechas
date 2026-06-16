@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_TASK_CHANNEL_H
-#define NEW_ROBOT_TASK_CHANNEL_H
+#ifndef NEW_ROBOT_TCH_H
+#define NEW_ROBOT_TCH_H
 
 /* task_channel 的职责边界：
  * - 它只统一 transport 契约：非阻塞提交、接收、统计字段
@@ -30,7 +30,7 @@ typedef struct
     volatile uint32_t error_count;
 } TaskChannelStats;
 
-#define TASK_COMMAND_MAILBOX_MAX_COMMAND_BYTES (16u)
+#define TASK_MAILBOX_CMD_MAX_BYTES (16u)
 
 /* 固定帧长度的 SPSC pipe 包装。
  * 语义固定为：
@@ -52,7 +52,7 @@ OmRet task_pipe_channel_init(
     uint32_t capacity_bytes,
     uint32_t frame_size_bytes);
 void task_pipe_channel_deinit(TaskPipeChannel* channel);
-OmRet task_pipe_channel_submit_nonblocking(
+OmRet tpipe_submit(
     TaskPipeChannel* channel,
     const void* frame,
     OmBool drop_oldest_on_full);
@@ -84,7 +84,7 @@ OmRet task_mpsc_channel_init(
     uint32_t message_size_bytes,
     uint32_t message_capacity);
 void task_mpsc_channel_deinit(TaskMpscChannel* channel);
-OmRet task_mpsc_channel_submit_nonblocking(
+OmRet tmpsc_submit(
     TaskMpscChannel* channel,
     const void* message);
 /* receive(timeout_ms) 适合“等待下一条消息”的消费者。 */
@@ -93,7 +93,7 @@ OmRet task_mpsc_channel_receive(
     void* message,
     uint32_t timeout_ms);
 /* receive_nonblocking() 适合任务主循环内 drain 到 latest-cache。 */
-OmRet task_mpsc_channel_receive_nonblocking(
+OmRet tmpsc_receive(
     TaskMpscChannel* channel,
     void* message);
 
@@ -112,7 +112,7 @@ typedef struct
 {
     OsalQueue* queue;
     uint32_t command_size_bytes;
-    uint8_t pending_command_bytes[TASK_COMMAND_MAILBOX_MAX_COMMAND_BYTES];
+    uint8_t pending_command_bytes[TASK_MAILBOX_CMD_MAX_BYTES];
     uint8_t has_pending_command;
     TaskChannelStats stats;
 } TaskCommandMailbox;
@@ -121,10 +121,10 @@ OmRet task_command_mailbox_init(
     TaskCommandMailbox* mailbox,
     uint32_t command_size_bytes);
 void task_command_mailbox_deinit(TaskCommandMailbox* mailbox);
-OmRet task_command_mailbox_submit_nonblocking(
+OmRet tmail_submit(
     TaskCommandMailbox* mailbox,
     const void* command);
-OmRet task_command_mailbox_receive(
+OmRet tmail_receive(
     TaskCommandMailbox* mailbox,
     void* command,
     uint32_t timeout_ms);

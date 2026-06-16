@@ -14,7 +14,7 @@ void mode_task_load_rc_snapshot(ModeTaskRcSnapshot* snapshot)
 
     memset(snapshot, 0, sizeof(*snapshot));
     if (g_mode_task_owner_context == OM_NULL ||
-        !(g_mode_task_owner_context->flags & MODE_TASK_FLAG_RC_SNAPSHOT_READY))
+        !(g_mode_task_owner_context->flags & MT_FLAG_RC_SNAPSHOT_READY))
     {
         return;
     }
@@ -41,25 +41,25 @@ void mode_task_drain_rc_snapshots(ModeTaskContext* context)
     while (task_pipe_channel_receive(&context->rc_channel, &snapshot, 0u) == OM_OK)
     {
         context->latest_rc_snapshot = snapshot;
-        context->flags |= MODE_TASK_FLAG_RC_SNAPSHOT_READY;
+        context->flags |= MT_FLAG_RC_SNAPSHOT_READY;
     }
 }
 
-void mode_task_load_custom_controller_snapshot(
+void mode_task_load_custom(
     const ModeTaskContext* context,
-    InputCustomControllerSnapshot* snapshot)
+    InputCustomSnapshot* snapshot)
 {
     if (context == OM_NULL || snapshot == OM_NULL)
     {
         return;
     }
 
-    *snapshot = context->latest_custom_controller_snapshot;
+    *snapshot = context->latest_custom_snapshot;
 }
 
-void mode_task_drain_custom_controller_snapshots(ModeTaskContext* context)
+void mode_task_drain_custom(ModeTaskContext* context)
 {
-    InputCustomControllerSnapshot snapshot = {0};
+    InputCustomSnapshot snapshot = {0};
 
     if (context == OM_NULL)
     {
@@ -67,17 +67,17 @@ void mode_task_drain_custom_controller_snapshots(ModeTaskContext* context)
     }
 
     while (task_pipe_channel_receive(
-               &context->custom_controller_channel,
+               &context->custom_channel,
                &snapshot,
                0u) == OM_OK)
     {
-        context->latest_custom_controller_snapshot = snapshot;
+        context->latest_custom_snapshot = snapshot;
     }
 }
 
-void mode_task_build_system_snapshot(
+void mode_task_build_system(
     const ModeTaskContext* context,
-    ModeTaskSystemSnapshot* snapshot)
+    ModeSystemSnap* snapshot)
 {
     if (context == OM_NULL || snapshot == OM_NULL)
     {
@@ -92,16 +92,16 @@ void mode_task_build_system_snapshot(
         context->confirmed_motion_mode_id;
 }
 
-void mode_task_build_arm_mode_snapshot(
+void mode_task_build_arm_mode(
     const ModeTaskContext* context,
     ArmTaskModeSnapshot* snapshot)
 {
     const uint8_t phase =
         (context != OM_NULL) ? (uint8_t)sm_get_current(&context->operational_phase_machine)
-                             : MODE_TASK_OPERATIONAL_PHASE_RELEASE;
+                             : MT_OPERATIONAL_PHASE_RELEASE;
     const uint8_t motion_mode =
         (context != OM_NULL) ? (uint8_t)sm_get_current(&context->motion_mode_machine)
-                             : MODE_TASK_MOTION_MODE_PRESET_ACTION;
+                             : MT_MOTION_MODE_PRESET_ACTION;
 
     if (context == OM_NULL || snapshot == OM_NULL)
     {
@@ -110,29 +110,29 @@ void mode_task_build_arm_mode_snapshot(
 
     memset(snapshot, 0, sizeof(*snapshot));
 
-    if (phase == MODE_TASK_OPERATIONAL_PHASE_RELEASE)
+    if (phase == MT_OPERATIONAL_PHASE_RELEASE)
     {
-        snapshot->arm_mode = ARM_TASK_MODE_RELEASE;
+        snapshot->arm_mode = AT_MODE_RELEASE;
     }
-    else if (phase == MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION)
+    else if (phase == MT_OPERATIONAL_PHASE_SELECT)
     {
-        snapshot->arm_mode = ARM_TASK_MODE_NORMAL;
+        snapshot->arm_mode = AT_MODE_NORMAL;
     }
     else
     {
         switch ((ModeTaskMotionModeId)motion_mode)
         {
-        case MODE_TASK_MOTION_MODE_PRESET_ACTION:
-            snapshot->arm_mode = ARM_TASK_MODE_PRESET_ACTION;
+        case MT_MOTION_MODE_PRESET_ACTION:
+            snapshot->arm_mode = AT_MODE_PRESET_ACTION;
             break;
-        case MODE_TASK_MOTION_MODE_CUSTOM_TAKEOVER:
-            snapshot->arm_mode = ARM_TASK_MODE_CUSTOM_TAKEOVER;
+        case MT_MOTION_MODE_CUSTOM_TAKEOVER:
+            snapshot->arm_mode = AT_MODE_CUSTOM_TAKEOVER;
             break;
-        case MODE_TASK_MOTION_MODE_RC_IK:
-            snapshot->arm_mode = ARM_TASK_MODE_RC_IK;
+        case MT_MOTION_MODE_RC_IK:
+            snapshot->arm_mode = AT_MODE_RC_IK;
             break;
         default:
-            snapshot->arm_mode = ARM_TASK_MODE_NORMAL;
+            snapshot->arm_mode = AT_MODE_NORMAL;
             break;
         }
     }
@@ -146,16 +146,16 @@ void mode_task_build_arm_mode_snapshot(
     snapshot->preset_action.primary_turn_ore_flag = context->preset_action_runtime.primary_turn_ore_flag;
 }
 
-void mode_task_build_chassis_mode_snapshot(
+void mode_task_build_chassis(
     const ModeTaskContext* context,
-    ChassisTaskModeSnapshot* snapshot)
+    ChassisModeSnap* snapshot)
 {
     const uint8_t phase =
         (context != OM_NULL) ? (uint8_t)sm_get_current(&context->operational_phase_machine)
-                             : MODE_TASK_OPERATIONAL_PHASE_RELEASE;
+                             : MT_OPERATIONAL_PHASE_RELEASE;
     const uint8_t motion_mode =
         (context != OM_NULL) ? (uint8_t)sm_get_current(&context->motion_mode_machine)
-                             : MODE_TASK_MOTION_MODE_PRESET_ACTION;
+                             : MT_MOTION_MODE_PRESET_ACTION;
 
     if (context == OM_NULL || snapshot == OM_NULL)
     {
@@ -165,7 +165,7 @@ void mode_task_build_chassis_mode_snapshot(
     memset(snapshot, 0, sizeof(*snapshot));
     snapshot->operational_phase = phase;
 
-    if (phase == MODE_TASK_OPERATIONAL_PHASE_RELEASE)
+    if (phase == MT_OPERATIONAL_PHASE_RELEASE)
     {
         snapshot->wheel_enable = 0u;
         snapshot->leg_enable = 0u;
@@ -173,7 +173,7 @@ void mode_task_build_chassis_mode_snapshot(
         return;
     }
 
-    if (phase == MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION)
+    if (phase == MT_OPERATIONAL_PHASE_SELECT)
     {
         snapshot->wheel_enable = 1u;
         snapshot->leg_enable = 1u;
@@ -181,7 +181,7 @@ void mode_task_build_chassis_mode_snapshot(
         return;
     }
 
-    if (motion_mode == MODE_TASK_MOTION_MODE_RC_IK &&
+    if (motion_mode == MT_MOTION_MODE_RC_IK &&
         context->latest_rc_snapshot.sw1 == RC_SWITCH_DN)
     {
         snapshot->wheel_enable = 0u;
@@ -195,9 +195,9 @@ void mode_task_build_chassis_mode_snapshot(
     snapshot->allow_rc_drive = 1u;
 }
 
-OmBool mode_task_system_snapshot_changed(
-    const ModeTaskSystemSnapshot* lhs,
-    const ModeTaskSystemSnapshot* rhs)
+OmBool mode_task_system_changed(
+    const ModeSystemSnap* lhs,
+    const ModeSystemSnap* rhs)
 {
     if (lhs == OM_NULL || rhs == OM_NULL)
     {
@@ -211,7 +211,7 @@ OmBool mode_task_system_snapshot_changed(
                : OM_FALSE;
 }
 
-OmBool mode_task_arm_mode_snapshot_changed(
+OmBool mode_task_arm_changed(
     const ArmTaskModeSnapshot* lhs,
     const ArmTaskModeSnapshot* rhs)
 {
@@ -232,9 +232,9 @@ OmBool mode_task_arm_mode_snapshot_changed(
                : OM_FALSE;
 }
 
-OmBool mode_task_chassis_mode_snapshot_changed(
-    const ChassisTaskModeSnapshot* lhs,
-    const ChassisTaskModeSnapshot* rhs)
+OmBool mode_task_chassis_changed(
+    const ChassisModeSnap* lhs,
+    const ChassisModeSnap* rhs)
 {
     if (lhs == OM_NULL || rhs == OM_NULL)
     {
@@ -249,22 +249,22 @@ OmBool mode_task_chassis_mode_snapshot_changed(
                : OM_FALSE;
 }
 
-void mode_task_publish_control_snapshots(
+void mode_task_publish_snapshots(
     const ArmTaskModeSnapshot* arm_snapshot,
-    const ChassisTaskModeSnapshot* chassis_snapshot)
+    const ChassisModeSnap* chassis_snapshot)
 {
     if (arm_snapshot != OM_NULL)
     {
-        (void)arm_task_submit_mode_control_snapshot(arm_snapshot);
+        (void)arm_task_submit_mode_snapshot(arm_snapshot);
     }
 
     if (chassis_snapshot != OM_NULL)
     {
-        (void)chassis_task_submit_mode_control_snapshot(chassis_snapshot);
+        (void)chassis_task_submit_mode(chassis_snapshot);
     }
 }
 
-void mode_task_reset_mode_selection_runtime(ModeTaskContext* context)
+void mode_task_reset_select(ModeTaskContext* context)
 {
     if (context == OM_NULL)
     {
@@ -272,10 +272,10 @@ void mode_task_reset_mode_selection_runtime(ModeTaskContext* context)
     }
 
     context->mode_selection_runtime.selected_motion_mode_id =
-        MODE_TASK_MOTION_MODE_NONE;
+        MT_MOTION_MODE_NONE;
 }
 
-void mode_task_reset_preset_action_runtime(ModeTaskContext* context)
+void mode_task_reset_preset(ModeTaskContext* context)
 {
     if (context == OM_NULL)
     {
@@ -295,8 +295,8 @@ void mode_task_reset_rc_ik_runtime(ModeTaskContext* context)
         return;
     }
 
-    context->rc_ik_runtime.ik_solver_mode = MODE_TASK_IK_SOLVER_FULL_POSE;
-    context->rc_ik_runtime.ik_control_bank = MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ;
+    context->rc_ik_runtime.ik_solver_mode = MT_IK_SOLVER_FULL_POSE;
+    context->rc_ik_runtime.ik_control_bank = MT_IK_BANK_POS_XYZ;
 }
 
 void mode_task_reset_grip_runtime(ModeTaskContext* context)
@@ -306,7 +306,7 @@ void mode_task_reset_grip_runtime(ModeTaskContext* context)
         return;
     }
 
-    context->grip_runtime.grip_state = MODE_TASK_GRIP_OPEN;
+    context->grip_runtime.grip_state = MT_GRIP_OPEN;
 }
 
 void mode_task_enter_release(StateMachine* state_machine, void* user_context)
@@ -320,18 +320,18 @@ void mode_task_enter_release(StateMachine* state_machine, void* user_context)
         return;
     }
 
-    mode_task_reset_mode_selection_runtime(context);
-    mode_task_reset_preset_action_runtime(context);
+    mode_task_reset_select(context);
+    mode_task_reset_preset(context);
     mode_task_reset_rc_ik_runtime(context);
     if (context->motion_mode_machine.states != OM_NULL)
     {
         (void)sm_force_transition(
             &context->motion_mode_machine,
-            (StateId)MODE_TASK_MOTION_MODE_PRESET_ACTION);
+            (StateId)MT_MOTION_MODE_PRESET_ACTION);
     }
 }
 
-void mode_task_enter_mode_selection(StateMachine* state_machine, void* user_context)
+void mode_task_enter_select(StateMachine* state_machine, void* user_context)
 {
     ModeTaskContext* context = (ModeTaskContext*)user_context;
 
@@ -342,12 +342,12 @@ void mode_task_enter_mode_selection(StateMachine* state_machine, void* user_cont
         return;
     }
 
-    mode_task_reset_preset_action_runtime(context);
+    mode_task_reset_preset(context);
     context->mode_selection_runtime.selected_motion_mode_id =
         context->confirmed_motion_mode_id;
 }
 
-void mode_task_enter_formal_control(StateMachine* state_machine, void* user_context)
+void mode_task_enter_formal(StateMachine* state_machine, void* user_context)
 {
     ModeTaskContext* context = (ModeTaskContext*)user_context;
     const uint8_t selected = context->mode_selection_runtime.selected_motion_mode_id;
@@ -359,8 +359,8 @@ void mode_task_enter_formal_control(StateMachine* state_machine, void* user_cont
         return;
     }
 
-    if (selected >= MODE_TASK_MOTION_MODE_PRESET_ACTION &&
-        selected <= MODE_TASK_MOTION_MODE_RC_IK)
+    if (selected >= MT_MOTION_MODE_PRESET_ACTION &&
+        selected <= MT_MOTION_MODE_RC_IK)
     {
         context->confirmed_motion_mode_id = selected;
     }
@@ -373,22 +373,22 @@ void mode_task_enter_formal_control(StateMachine* state_machine, void* user_cont
 void mode_task_enter_preset_action(StateMachine* state_machine, void* user_context)
 {
     (void)state_machine;
-    mode_task_reset_preset_action_runtime((ModeTaskContext*)user_context);
+    mode_task_reset_preset((ModeTaskContext*)user_context);
 }
 
 void mode_task_exit_preset_action(StateMachine* state_machine, void* user_context)
 {
     (void)state_machine;
-    mode_task_reset_preset_action_runtime((ModeTaskContext*)user_context);
+    mode_task_reset_preset((ModeTaskContext*)user_context);
 }
 
-void mode_task_enter_custom_takeover(StateMachine* state_machine, void* user_context)
+void mode_task_enter_custom(StateMachine* state_machine, void* user_context)
 {
     (void)state_machine;
     (void)user_context;
 }
 
-void mode_task_exit_custom_takeover(StateMachine* state_machine, void* user_context)
+void mode_task_exit_custom(StateMachine* state_machine, void* user_context)
 {
     (void)state_machine;
     (void)user_context;
@@ -406,7 +406,7 @@ void mode_task_exit_rc_ik(StateMachine* state_machine, void* user_context)
     mode_task_reset_rc_ik_runtime((ModeTaskContext*)user_context);
 }
 
-void mode_task_board_init_context_reset(ModeTaskBoardInitContext* context)
+void mode_task_reset_board_init(ModeBoardInitCtx* context)
 {
     if (context == OM_NULL)
     {
@@ -414,10 +414,10 @@ void mode_task_board_init_context_reset(ModeTaskBoardInitContext* context)
     }
 
     memset(context, 0, sizeof(*context));
-    context->state = MODE_TASK_BOARD_INIT_CAN_INITIALIZING;
+    context->state = MT_BOARD_INIT_CAN_INITIALIZING;
 }
 
-void mode_task_motor_init_context_reset(ModeTaskMotorInitContext* context)
+void mode_task_reset_motor_init(ModeMotorInitCtx* context)
 {
     if (context == OM_NULL)
     {
@@ -425,35 +425,35 @@ void mode_task_motor_init_context_reset(ModeTaskMotorInitContext* context)
     }
 
     memset(context, 0, sizeof(*context));
-    context->state = MODE_TASK_MOTOR_INIT_CHASSIS_INITIALIZING;
+    context->state = MT_MOTOR_INIT_CHASSIS_INIT;
 }
 
-static void mode_task_rc_control_context_reset(ModeTaskOperationalContext* context)
+static void mode_task_reset_rc(ModeTaskPhaseContext* context)
 {
     if (context == OM_NULL)
     {
         return;
     }
 
-    context->domain_state = MODE_TASK_CONTROL_DOMAIN_RC;
-    context->rc_link_state = MODE_TASK_CONTROL_LINK_OFFLINE;
+    context->domain_state = MT_CONTROL_DOMAIN_RC;
+    context->rc_link_state = MT_CONTROL_LINK_OFFLINE;
     context->action_enabled = OM_FALSE;
 }
 
-static void mode_task_custom_control_context_reset(ModeTaskOperationalContext* context)
+static void mode_task_reset_custom(ModeTaskPhaseContext* context)
 {
     if (context == OM_NULL)
     {
         return;
     }
 
-    context->domain_state = MODE_TASK_CONTROL_DOMAIN_CUSTOM;
-    context->custom_link_state = MODE_TASK_CONTROL_LINK_OFFLINE;
-    context->custom_control_state = MODE_TASK_CUSTOM_CONTROL_ALIGNING;
+    context->domain_state = MT_CONTROL_DOMAIN_CUSTOM;
+    context->custom_link_state = MT_CONTROL_LINK_OFFLINE;
+    context->custom_control_state = MT_CUSTOM_CONTROL_ALIGNING;
     context->action_enabled = OM_FALSE;
 }
 
-void mode_task_operational_context_reset(ModeTaskOperationalContext* context)
+void mode_task_reset_phase_context(ModeTaskPhaseContext* context)
 {
     if (context == OM_NULL)
     {
@@ -461,12 +461,12 @@ void mode_task_operational_context_reset(ModeTaskOperationalContext* context)
     }
 
     memset(context, 0, sizeof(*context));
-    mode_task_rc_control_context_reset(context);
-    mode_task_custom_control_context_reset(context);
+    mode_task_reset_rc(context);
+    mode_task_reset_custom(context);
 }
 
-static void mode_task_clear_contexts_from_system_state(
-    ModeTaskHierarchyContext* hierarchy_state,
+static void mode_task_clear_contexts(
+    ModeHierarchyCtx* hierarchy_state,
     ModeTaskSystemState next_system_state)
 {
     if (hierarchy_state == OM_NULL)
@@ -476,23 +476,23 @@ static void mode_task_clear_contexts_from_system_state(
 
     switch (next_system_state)
     {
-    case MODE_TASK_SYSTEM_UNINITIALIZED:
-    case MODE_TASK_SYSTEM_BOARD_INITIALIZING:
-        mode_task_board_init_context_reset(&hierarchy_state->board_init);
-        mode_task_motor_init_context_reset(&hierarchy_state->motor_init);
-        mode_task_operational_context_reset(&hierarchy_state->operational);
+    case MT_SYSTEM_UNINITIALIZED:
+    case MT_SYSTEM_BOARD_INITIALIZING:
+        mode_task_reset_board_init(&hierarchy_state->board_init);
+        mode_task_reset_motor_init(&hierarchy_state->motor_init);
+        mode_task_reset_phase_context(&hierarchy_state->operational);
         break;
 
-    case MODE_TASK_SYSTEM_MOTOR_INITIALIZING:
-        mode_task_motor_init_context_reset(&hierarchy_state->motor_init);
-        mode_task_operational_context_reset(&hierarchy_state->operational);
+    case MT_SYSTEM_MOTOR_INITIALIZING:
+        mode_task_reset_motor_init(&hierarchy_state->motor_init);
+        mode_task_reset_phase_context(&hierarchy_state->operational);
         break;
 
-    case MODE_TASK_SYSTEM_RELEASE:
-        mode_task_operational_context_reset(&hierarchy_state->operational);
+    case MT_SYSTEM_RELEASE:
+        mode_task_reset_phase_context(&hierarchy_state->operational);
         break;
 
-    case MODE_TASK_SYSTEM_OPERATIONAL:
+    case MT_SYSTEM_OPERATIONAL:
     default:
         break;
     }
@@ -508,77 +508,77 @@ static void mode_task_set_system_state(
         return;
     }
 
-    mode_task_clear_contexts_from_system_state(
+    mode_task_clear_contexts(
         &context->hierarchy_state,
         next_system_state);
     context->hierarchy_state.system_state = next_system_state;
 }
 
-void mode_task_update_bootstrap_state_from_progress(ModeTaskContext* context)
+void mode_task_update_bootstrap(ModeTaskContext* context)
 {
     if (context == OM_NULL)
     {
         return;
     }
 
-    if (context->hierarchy_state.system_state == MODE_TASK_SYSTEM_UNINITIALIZED)
+    if (context->hierarchy_state.system_state == MT_SYSTEM_UNINITIALIZED)
     {
-        mode_task_set_system_state(context, MODE_TASK_SYSTEM_BOARD_INITIALIZING);
+        mode_task_set_system_state(context, MT_SYSTEM_BOARD_INITIALIZING);
     }
 
-    if (context->hierarchy_state.system_state == MODE_TASK_SYSTEM_BOARD_INITIALIZING)
+    if (context->hierarchy_state.system_state == MT_SYSTEM_BOARD_INITIALIZING)
     {
-        if (!(context->flags & MODE_TASK_FLAG_INIT_CAN_READY))
+        if (!(context->flags & MT_FLAG_INIT_CAN_READY))
         {
             context->hierarchy_state.board_init.state =
-                MODE_TASK_BOARD_INIT_CAN_INITIALIZING;
+                MT_BOARD_INIT_CAN_INITIALIZING;
             return;
         }
-        if (!(context->flags & MODE_TASK_FLAG_INIT_SERIAL_READY))
+        if (!(context->flags & MT_FLAG_INIT_SERIAL_READY))
         {
             context->hierarchy_state.board_init.state =
-                MODE_TASK_BOARD_INIT_SERIAL_INITIALIZING;
+                MT_BOARD_INIT_SERIAL_INITIALIZING;
             return;
         }
-        if (!(context->flags & MODE_TASK_FLAG_INIT_IMU_READY))
+        if (!(context->flags & MT_FLAG_INIT_IMU_READY))
         {
             context->hierarchy_state.board_init.state =
-                MODE_TASK_BOARD_INIT_IMU_INITIALIZING;
+                MT_BOARD_INIT_IMU_INITIALIZING;
             return;
         }
 
-        mode_task_set_system_state(context, MODE_TASK_SYSTEM_MOTOR_INITIALIZING);
+        mode_task_set_system_state(context, MT_SYSTEM_MOTOR_INITIALIZING);
     }
 
-    if (context->hierarchy_state.system_state == MODE_TASK_SYSTEM_MOTOR_INITIALIZING)
+    if (context->hierarchy_state.system_state == MT_SYSTEM_MOTOR_INITIALIZING)
     {
-        if (!(context->flags & MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY))
+        if (!(context->flags & MT_FLAG_CHASSIS_MOTOR_READY))
         {
             context->hierarchy_state.motor_init.state =
-                MODE_TASK_MOTOR_INIT_CHASSIS_INITIALIZING;
+                MT_MOTOR_INIT_CHASSIS_INIT;
             return;
         }
-        if (!(context->flags & MODE_TASK_FLAG_INIT_ARM_MOTOR_READY))
+        if (!(context->flags & MT_FLAG_ARM_MOTOR_READY))
         {
             context->hierarchy_state.motor_init.state =
-                MODE_TASK_MOTOR_INIT_ARM_INITIALIZING;
+                MT_MOTOR_INIT_ARM_INIT;
             return;
         }
 
-        mode_task_set_system_state(context, MODE_TASK_SYSTEM_RELEASE);
+        mode_task_set_system_state(context, MT_SYSTEM_RELEASE);
     }
 }
 
-void mode_task_update_operational_system_state(
+void mode_task_update_system_state(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot,
-    const InputCustomControllerSnapshot* custom_snapshot)
+    const InputCustomSnapshot* custom_snapshot)
 {
     const OmBool rc_online =
         (rc_snapshot != OM_NULL && rc_snapshot->online != 0u) ? OM_TRUE : OM_FALSE;
     const OmBool operational_active = mct_is_operational_active();
-    const ModeTaskOperationalPhaseState phase =
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskPhaseState phase =
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine);
 
     (void)custom_snapshot;
 
@@ -587,23 +587,23 @@ void mode_task_update_operational_system_state(
         return;
     }
 
-    if (mode_task_bootstrap_allows_control(context) != OM_TRUE)
+    if (mode_task_bootstrap_allows(context) != OM_TRUE)
     {
         return;
     }
 
     if (operational_active != OM_TRUE ||
         rc_online != OM_TRUE ||
-        phase == MODE_TASK_OPERATIONAL_PHASE_RELEASE)
+        phase == MT_OPERATIONAL_PHASE_RELEASE)
     {
-        mode_task_set_system_state(context, MODE_TASK_SYSTEM_RELEASE);
+        mode_task_set_system_state(context, MT_SYSTEM_RELEASE);
         return;
     }
 
-    mode_task_set_system_state(context, MODE_TASK_SYSTEM_OPERATIONAL);
+    mode_task_set_system_state(context, MT_SYSTEM_OPERATIONAL);
 }
 
-void mode_task_process_mct_lifecycle_requests(
+void mode_task_process_mct(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot)
 {
@@ -612,31 +612,31 @@ void mode_task_process_mct_lifecycle_requests(
         return;
     }
 
-    if (mode_task_bootstrap_allows_control(context) != OM_TRUE)
+    if (mode_task_bootstrap_allows(context) != OM_TRUE)
     {
         return;
     }
 
     if (context->last_sw2 != RC_SWITCH_DN && rc_snapshot->sw2 == RC_SWITCH_DN)
     {
-        (void)mct_request_leave_operational_state();
+        (void)mct_request_leave();
         return;
     }
 
     if (context->last_sw2 == RC_SWITCH_DN && rc_snapshot->sw2 == RC_SWITCH_MI)
     {
-        (void)mct_request_enter_operational_state();
+        (void)mct_request_enter();
         return;
     }
 }
 
-void mode_task_update_operational_domain(
+void mode_task_update_domain(
     ModeTaskContext* context,
     const ModeTaskRcSnapshot* rc_snapshot,
-    const InputCustomControllerSnapshot* custom_snapshot)
+    const InputCustomSnapshot* custom_snapshot)
 {
-    const ModeTaskOperationalPhaseState phase =
-        (ModeTaskOperationalPhaseState)sm_get_current(&context->operational_phase_machine);
+    const ModeTaskPhaseState phase =
+        (ModeTaskPhaseState)sm_get_current(&context->operational_phase_machine);
     const ModeTaskMotionModeId motion_mode =
         (ModeTaskMotionModeId)sm_get_current(&context->motion_mode_machine);
     const OmBool rc_online =
@@ -649,49 +649,49 @@ void mode_task_update_operational_domain(
         return;
     }
 
-    if (context->hierarchy_state.system_state != MODE_TASK_SYSTEM_OPERATIONAL)
+    if (context->hierarchy_state.system_state != MT_SYSTEM_OPERATIONAL)
     {
-        mode_task_operational_context_reset(&context->hierarchy_state.operational);
+        mode_task_reset_phase_context(&context->hierarchy_state.operational);
         return;
     }
 
     context->hierarchy_state.operational.rc_link_state =
-        (rc_online == OM_TRUE) ? MODE_TASK_CONTROL_LINK_ONLINE : MODE_TASK_CONTROL_LINK_OFFLINE;
+        (rc_online == OM_TRUE) ? MT_CONTROL_LINK_ONLINE : MT_CONTROL_LINK_OFFLINE;
     context->hierarchy_state.operational.custom_link_state =
-        (custom_online == OM_TRUE) ? MODE_TASK_CONTROL_LINK_ONLINE : MODE_TASK_CONTROL_LINK_OFFLINE;
+        (custom_online == OM_TRUE) ? MT_CONTROL_LINK_ONLINE : MT_CONTROL_LINK_OFFLINE;
     context->hierarchy_state.operational.action_enabled =
-        (phase == MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL) ? OM_TRUE : OM_FALSE;
+        (phase == MT_OPERATIONAL_PHASE_FORMAL) ? OM_TRUE : OM_FALSE;
 
-    if (phase == MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL &&
-        motion_mode == MODE_TASK_MOTION_MODE_CUSTOM_TAKEOVER)
+    if (phase == MT_OPERATIONAL_PHASE_FORMAL &&
+        motion_mode == MT_MOTION_MODE_CUSTOM_TAKEOVER)
     {
-        context->hierarchy_state.operational.domain_state = MODE_TASK_CONTROL_DOMAIN_CUSTOM;
+        context->hierarchy_state.operational.domain_state = MT_CONTROL_DOMAIN_CUSTOM;
         context->hierarchy_state.operational.custom_control_state =
             (custom_online == OM_TRUE && custom_snapshot->work_mode == 0u)
-                ? MODE_TASK_CUSTOM_CONTROL_TAKEOVER
-                : MODE_TASK_CUSTOM_CONTROL_ALIGNING;
+                ? MT_CUSTOM_CONTROL_TAKEOVER
+                : MT_CUSTOM_CONTROL_ALIGNING;
     }
     else
     {
-        context->hierarchy_state.operational.domain_state = MODE_TASK_CONTROL_DOMAIN_RC;
+        context->hierarchy_state.operational.domain_state = MT_CONTROL_DOMAIN_RC;
         context->hierarchy_state.operational.custom_control_state =
-            MODE_TASK_CUSTOM_CONTROL_ALIGNING;
+            MT_CUSTOM_CONTROL_ALIGNING;
     }
 }
 
-void mode_task_refresh_output_snapshots(ModeTaskContext* context)
+void mode_task_refresh_snapshots(ModeTaskContext* context)
 {
     if (context == OM_NULL)
     {
         return;
     }
 
-    mode_task_build_system_snapshot(context, &context->system_snapshot);
-    mode_task_build_arm_mode_snapshot(context, &context->arm_mode_snapshot);
-    mode_task_build_chassis_mode_snapshot(context, &context->chassis_mode_snapshot);
+    mode_task_build_system(context, &context->system_snapshot);
+    mode_task_build_arm_mode(context, &context->arm_mode_snapshot);
+    mode_task_build_chassis(context, &context->chassis_mode_snapshot);
 }
 
-OmBool mode_task_bootstrap_allows_control(
+OmBool mode_task_bootstrap_allows(
     const ModeTaskContext* context)
 {
     if (context == OM_NULL)
@@ -699,8 +699,8 @@ OmBool mode_task_bootstrap_allows_control(
         return OM_FALSE;
     }
 
-    return (context->hierarchy_state.system_state == MODE_TASK_SYSTEM_RELEASE ||
-            context->hierarchy_state.system_state == MODE_TASK_SYSTEM_OPERATIONAL)
+    return (context->hierarchy_state.system_state == MT_SYSTEM_RELEASE ||
+            context->hierarchy_state.system_state == MT_SYSTEM_OPERATIONAL)
                ? OM_TRUE
                : OM_FALSE;
 }
@@ -727,51 +727,51 @@ void mode_task_update_debug_state(const ModeTaskContext* context)
     g_mode_task_debug.grip_state = context->arm_mode_snapshot.grip_state;
 }
 
-static void mode_task_apply_init_progress_message(
+static void mode_task_apply_init_msg(
     ModeTaskContext* context,
-    const ModeTaskInitProgressMessage* message)
+    const ModeTaskInitMessage* message)
 {
     if (context == OM_NULL || message == OM_NULL)
     {
         return;
     }
 
-    switch ((ModeTaskInitProgressKind)message->kind)
+    switch ((ModeTaskInitKind)message->kind)
     {
-    case MODE_TASK_INIT_PROGRESS_CAN_READY:
-        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_CAN_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_CAN_READY; }
+    case MODE_INIT_CAN_READY:
+        if (message->value != 0u) { context->flags |= MT_FLAG_INIT_CAN_READY; } else { context->flags &= ~MT_FLAG_INIT_CAN_READY; }
         break;
-    case MODE_TASK_INIT_PROGRESS_SERIAL_READY:
-        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_SERIAL_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_SERIAL_READY; }
+    case MODE_INIT_SERIAL_READY:
+        if (message->value != 0u) { context->flags |= MT_FLAG_INIT_SERIAL_READY; } else { context->flags &= ~MT_FLAG_INIT_SERIAL_READY; }
         break;
-    case MODE_TASK_INIT_PROGRESS_IMU_READY:
-        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_IMU_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_IMU_READY; }
+    case MODE_INIT_IMU_READY:
+        if (message->value != 0u) { context->flags |= MT_FLAG_INIT_IMU_READY; } else { context->flags &= ~MT_FLAG_INIT_IMU_READY; }
         break;
-    case MODE_TASK_INIT_PROGRESS_CHASSIS_MOTOR_READY:
-        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_CHASSIS_MOTOR_READY; }
+    case MODE_INIT_CHASSIS_MOTOR_READY:
+        if (message->value != 0u) { context->flags |= MT_FLAG_CHASSIS_MOTOR_READY; } else { context->flags &= ~MT_FLAG_CHASSIS_MOTOR_READY; }
         break;
-    case MODE_TASK_INIT_PROGRESS_ARM_MOTOR_READY:
-        if (message->value != 0u) { context->flags |= MODE_TASK_FLAG_INIT_ARM_MOTOR_READY; } else { context->flags &= ~MODE_TASK_FLAG_INIT_ARM_MOTOR_READY; }
+    case MODE_INIT_ARM_MOTOR_READY:
+        if (message->value != 0u) { context->flags |= MT_FLAG_ARM_MOTOR_READY; } else { context->flags &= ~MT_FLAG_ARM_MOTOR_READY; }
         break;
     default:
         break;
     }
 }
 
-void mode_task_drain_init_progress_messages(ModeTaskContext* context)
+void mode_task_drain_init_messages(ModeTaskContext* context)
 {
-    ModeTaskInitProgressMessage message = {0};
+    ModeTaskInitMessage message = {0};
 
     if (context == OM_NULL)
     {
         return;
     }
 
-    while (task_mpsc_channel_receive_nonblocking(
+    while (tmpsc_receive(
                &g_mode_task_init_progress_channel,
                &message) == OM_OK)
     {
-        mode_task_apply_init_progress_message(context, &message);
+        mode_task_apply_init_msg(context, &message);
     }
 }
 
@@ -790,7 +790,7 @@ void mode_task_ctx_reset(void* ctx)
     self->last_last_sw1 = 0u;
     self->last_sw2 = 0u;
     self->last_iw = 0u;
-    self->confirmed_motion_mode_id = MODE_TASK_MOTION_MODE_PRESET_ACTION;
+    self->confirmed_motion_mode_id = MT_MOTION_MODE_PRESET_ACTION;
     self->flags = 0u;
     memset(&self->system_snapshot, 0, sizeof(self->system_snapshot));
     memset(&self->arm_mode_snapshot, 0, sizeof(self->arm_mode_snapshot));
@@ -801,10 +801,10 @@ void mode_task_ctx_reset(void* ctx)
     memset(&self->grip_runtime, 0, sizeof(self->grip_runtime));
     memset(&self->hierarchy_state, 0, sizeof(self->hierarchy_state));
     memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
-    memset(&self->latest_custom_controller_snapshot, 0, sizeof(self->latest_custom_controller_snapshot));
+    memset(&self->latest_custom_snapshot, 0, sizeof(self->latest_custom_snapshot));
 
-    mode_task_reset_mode_selection_runtime(self);
-    mode_task_reset_preset_action_runtime(self);
+    mode_task_reset_select(self);
+    mode_task_reset_preset(self);
     mode_task_reset_rc_ik_runtime(self);
     mode_task_reset_grip_runtime(self);
 }

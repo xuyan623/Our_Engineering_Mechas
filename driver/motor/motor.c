@@ -18,7 +18,7 @@
 
 static Motor* g_motor_registry[MOTOR_REGISTRY_CAPACITY] = {0};
 
-static void motor_write_p1010b_query_feedback(
+static void motor_write_p10_fb(
     P1010BDriver* driver,
     const P1010BResponse* response)
 {
@@ -258,7 +258,7 @@ static OmRet motor_prepare_damiao_target(Motor* motor)
         return OM_ERROR_PARAM;
     }
 
-    if (motor_recovery_should_block_damiao_regular_target(motor) == OM_TRUE)
+    if (motor_recovery_block_damiao(motor) == OM_TRUE)
     {
         return OM_OK;
     }
@@ -387,7 +387,7 @@ static OmRet motor_prepare_vendor_target(Motor* motor)
     }
 }
 
-static OmRet motor_prepare_disabled_observation_target(Motor* motor)
+static OmRet motor_prep_dis_obs(Motor* motor)
 {
     if (motor == OM_NULL)
     {
@@ -414,7 +414,7 @@ static OmRet motor_prepare_disabled_observation_target(Motor* motor)
     }
 }
 
-static OmRet motor_prepare_observation_only_target(Motor* motor)
+static OmRet motor_prep_obs(Motor* motor)
 {
     if (motor == OM_NULL)
     {
@@ -521,7 +521,7 @@ static int32_t motor_find_pointer_index(
     return -1;
 }
 
-static void motor_pack_p1010b_group_payload(
+static void motor_pack_p10(
     const P1010BBus* bus,
     uint8_t group_index,
     uint8_t payload[P1010B_CAN_DLC])
@@ -553,7 +553,7 @@ static OmRet motor_flush_p1010b_group(
         return OM_ERROR_PARAM;
     }
 
-    motor_pack_p1010b_group_payload(bus, group_index, payload);
+    motor_pack_p10(bus, group_index, payload);
     message.dsc = CAN_DATA_MSG_DSC_INIT(
         (group_index == 0u) ? P1010B_CAN_CMD_DRIVE_GROUP_1_4 :
                                P1010B_CAN_CMD_DRIVE_GROUP_5_8,
@@ -639,7 +639,7 @@ static OmRet motor_sync_p1010b_target(
     return OM_OK;
 }
 
-static OmRet motor_write_binding_after_register(Motor* motor, MotorVendor vendor, const void* bus, const void* driver)
+static OmRet motor_write_binding(Motor* motor, MotorVendor vendor, const void* bus, const void* driver)
 {
     if (motor == OM_NULL || bus == OM_NULL || driver == OM_NULL)
     {
@@ -706,7 +706,7 @@ OmRet motor_register_dji(Motor* motor, const char* name, DJIMotorBus* bus, DJIMo
         return ret;
     }
 
-    return motor_write_binding_after_register(motor, MOTOR_VENDOR_DJI, bus, driver);
+    return motor_write_binding(motor, MOTOR_VENDOR_DJI, bus, driver);
 }
 
 OmRet motor_register_damiao(Motor* motor, const char* name, DamiaoMotorBus* bus, DamiaoMotorDrv* driver,
@@ -725,7 +725,7 @@ OmRet motor_register_damiao(Motor* motor, const char* name, DamiaoMotorBus* bus,
         return ret;
     }
 
-    return motor_write_binding_after_register(motor, MOTOR_VENDOR_DAMIAO, bus, driver);
+    return motor_write_binding(motor, MOTOR_VENDOR_DAMIAO, bus, driver);
 }
 
 OmRet motor_register_p1010b(Motor* motor, const char* name, P1010BBus* bus, P1010BDriver* driver,
@@ -744,7 +744,7 @@ OmRet motor_register_p1010b(Motor* motor, const char* name, P1010BBus* bus, P101
         return ret;
     }
 
-    return motor_write_binding_after_register(motor, MOTOR_VENDOR_P1010B, bus, driver);
+    return motor_write_binding(motor, MOTOR_VENDOR_P1010B, bus, driver);
 }
 
 OmRet motor_register_go8010(Motor* motor, const char* name, Go8010Bus* bus, Go8010MotorDrv* driver,
@@ -763,7 +763,7 @@ OmRet motor_register_go8010(Motor* motor, const char* name, Go8010Bus* bus, Go80
         return ret;
     }
 
-    return motor_write_binding_after_register(motor, MOTOR_VENDOR_GO8010, bus, driver);
+    return motor_write_binding(motor, MOTOR_VENDOR_GO8010, bus, driver);
 }
 
 OmRet motor_attach_dji(Motor* motor, const char* name, DJIMotorBus* bus, DJIMotorDrv* driver, DJIMotorType type,
@@ -961,9 +961,9 @@ OmRet motor_refresh_feedback(Motor* motor)
         motor->feedback.speed = damiao_motor_get_velocity(motor->binding.damiao.driver);
         motor->feedback.current = 0.0f;
         motor->feedback.torque = damiao_motor_get_torque(motor->binding.damiao.driver);
-        motor->feedback.timestamp_ms = damiao_motor_get_feedback_timestamp_ms(motor->binding.damiao.driver);
+        motor->feedback.timestamp_ms = dm_fb_ts_ms(motor->binding.damiao.driver);
         motor->feedback.online =
-            (damiao_motor_get_feedback_sequence(motor->binding.damiao.driver) != 0u &&
+            (dm_fb_seq(motor->binding.damiao.driver) != 0u &&
              (uint32_t)(osal_time_now_monotonic() - motor->feedback.timestamp_ms) <= MOTOR_DAMIAO_ONLINE_TIMEOUT_MS) ?
                 OM_TRUE :
                 OM_FALSE;
@@ -1007,7 +1007,7 @@ const MotorFeedback* motor_get_feedback(const Motor* motor)
     return &motor->feedback;
 }
 
-uint32_t motor_get_feedback_timestamp_ms(const Motor* motor)
+uint32_t motor_fb_ts_ms(const Motor* motor)
 {
     const MotorFeedback* feedback = motor_get_feedback(motor);
 
@@ -1026,7 +1026,7 @@ OmBool motor_is_feedback_recent(const Motor* motor, uint32_t timeout_ms)
     return ((uint32_t)(osal_time_now_monotonic() - feedback->timestamp_ms) <= timeout_ms) ? OM_TRUE : OM_FALSE;
 }
 
-OmBool motor_get_single_turn_angle_rad(const Motor* motor, float* angle_rad)
+OmBool motor_turn_rad(const Motor* motor, float* angle_rad)
 {
     const MotorFeedback* feedback = OM_NULL;
 
@@ -1051,7 +1051,7 @@ OmBool motor_get_single_turn_angle_rad(const Motor* motor, float* angle_rad)
     return OM_TRUE;
 }
 
-OmBool motor_get_initial_zero_angle_rad(const Motor* motor, float* zero_angle_rad)
+OmBool motor_zero_rad(const Motor* motor, float* zero_angle_rad)
 {
     if (motor == OM_NULL || zero_angle_rad == OM_NULL || motor->registered_flag != OM_TRUE)
     {
@@ -1063,7 +1063,7 @@ OmBool motor_get_initial_zero_angle_rad(const Motor* motor, float* zero_angle_ra
         return OM_FALSE;
     }
 
-    return go8010_get_initial_position_zero(motor->binding.go8010.driver, zero_angle_rad);
+    return g8_get_zero(motor->binding.go8010.driver, zero_angle_rad);
 }
 
 OmRet motor_capture_initial_zero(Motor* motor)
@@ -1078,11 +1078,11 @@ OmRet motor_capture_initial_zero(Motor* motor)
         return OM_ERROR_NOT_SUPPORT;
     }
 
-    go8010_capture_initial_position_zero(motor->binding.go8010.driver);
+    g8_capture_zero(motor->binding.go8010.driver);
     return OM_OK;
 }
 
-OmRet motor_owner_prepare_working_state(Motor* motor)
+OmRet motor_owner_prepare_work(Motor* motor)
 {
     P1010BDriver* p1010b_driver = OM_NULL;
     P1010BResponse p1010b_response = {0};
@@ -1126,7 +1126,7 @@ OmRet motor_owner_prepare_working_state(Motor* motor)
             return OM_ERROR_PARAM;
         }
 
-        return damiao_motor_write_register_u32(
+        return dm_wr_reg_u32(
             damiao_bus->canDev,
             damiao_driver->link.txId,
             MOTOR_OWNER_DAMIAO_CTRL_MODE_RID,
@@ -1241,7 +1241,7 @@ OmRet motor_owner_query_feedback(Motor* motor)
         return ret;
     }
 
-    motor_write_p1010b_query_feedback(p1010b_driver, &response);
+    motor_write_p10_fb(p1010b_driver, &response);
     (void)motor_refresh_feedback(motor);
     return OM_OK;
 }
@@ -1471,7 +1471,7 @@ OmRet motor_transmit_all(void)
             continue;
         }
 
-        if (motor_prepare_disabled_observation_target(motor) != OM_OK)
+        if (motor_prep_dis_obs(motor) != OM_OK)
         {
             last_error = OM_ERROR;
             continue;
@@ -1572,7 +1572,7 @@ OmRet motor_transmit_all(void)
     return last_error;
 }
 
-OmRet motor_transmit_observation_only(void)
+OmRet motor_tx_obs(void)
 {
     DamiaoMotorBus* damiao_buses[MOTOR_REGISTRY_CAPACITY] = {0};
     Go8010Bus* go8010_buses[MOTOR_REGISTRY_CAPACITY] = {0};
@@ -1596,7 +1596,7 @@ OmRet motor_transmit_observation_only(void)
             continue;
         }
 
-        if (motor_prepare_observation_only_target(motor) != OM_OK)
+        if (motor_prep_obs(motor) != OM_OK)
         {
             last_error = OM_ERROR;
             continue;

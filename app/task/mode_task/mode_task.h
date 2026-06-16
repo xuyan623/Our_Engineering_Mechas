@@ -1,12 +1,12 @@
-#ifndef NEW_ROBOT_MODE_TASK_H
-#define NEW_ROBOT_MODE_TASK_H
+#ifndef NEW_ROBOT_MT_H
+#define NEW_ROBOT_MT_H
 
 /* mode_task 的职责边界：
  * - 它是正式全局控制状态 owner
  * - formal 输出面拆成：
- *   - ModeTaskSystemSnapshot
+ *   - ModeSystemSnap
  *   - ArmTaskModeSnapshot
- *   - ChassisTaskModeSnapshot
+ *   - ChassisModeSnap
  */
 
 #include "core/om_def.h"
@@ -73,117 +73,117 @@ typedef enum
 /* 第一层：系统总状态。 */
 typedef enum
 {
-    MODE_TASK_SYSTEM_UNINITIALIZED = 0u,
-    MODE_TASK_SYSTEM_BOARD_INITIALIZING,
-    MODE_TASK_SYSTEM_MOTOR_INITIALIZING,
-    MODE_TASK_SYSTEM_RELEASE,
-    MODE_TASK_SYSTEM_OPERATIONAL,
+    MT_SYSTEM_UNINITIALIZED = 0u,
+    MT_SYSTEM_BOARD_INITIALIZING,
+    MT_SYSTEM_MOTOR_INITIALIZING,
+    MT_SYSTEM_RELEASE,
+    MT_SYSTEM_OPERATIONAL,
 } ModeTaskSystemState;
 
 /* 第二层：板级初始化子状态。 */
 typedef enum
 {
-    MODE_TASK_BOARD_INIT_NONE = 0u,
-    MODE_TASK_BOARD_INIT_CAN_INITIALIZING,
-    MODE_TASK_BOARD_INIT_SERIAL_INITIALIZING,
-    MODE_TASK_BOARD_INIT_IMU_INITIALIZING,
-} ModeTaskBoardInitState;
+    MT_BOARD_INIT_NONE = 0u,
+    MT_BOARD_INIT_CAN_INITIALIZING,
+    MT_BOARD_INIT_SERIAL_INITIALIZING,
+    MT_BOARD_INIT_IMU_INITIALIZING,
+} ModeBoardInitState;
 
 /* 第二层：电机初始化子状态。 */
 typedef enum
 {
-    MODE_TASK_MOTOR_INIT_NONE = 0u,
-    MODE_TASK_MOTOR_INIT_CHASSIS_INITIALIZING,
-    MODE_TASK_MOTOR_INIT_ARM_INITIALIZING,
-} ModeTaskMotorInitState;
+    MT_MOTOR_INIT_NONE = 0u,
+    MT_MOTOR_INIT_CHASSIS_INIT,
+    MT_MOTOR_INIT_ARM_INIT,
+} ModeMotorInitState;
 
 /* 第二层：正式控制域。 */
 typedef enum
 {
-    MODE_TASK_CONTROL_DOMAIN_NONE = 0u,
-    MODE_TASK_CONTROL_DOMAIN_RC,
-    MODE_TASK_CONTROL_DOMAIN_CUSTOM,
-} ModeTaskControlDomainState;
+    MT_CONTROL_DOMAIN_NONE = 0u,
+    MT_CONTROL_DOMAIN_RC,
+    MT_CONTROL_DOMAIN_CUSTOM,
+} ModeTaskDomainState;
 
 /* 整车 operational 相位。 */
 typedef enum
 {
-    MODE_TASK_OPERATIONAL_PHASE_RELEASE = 0u,
-    MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION,
-    MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL,
-} ModeTaskOperationalPhaseState;
+    MT_OPERATIONAL_PHASE_RELEASE = 0u,
+    MT_OPERATIONAL_PHASE_SELECT,
+    MT_OPERATIONAL_PHASE_FORMAL,
+} ModeTaskPhaseState;
 
 /* 已确认或待确认的运动模式编号。 */
 typedef enum
 {
-    MODE_TASK_MOTION_MODE_NONE = 0u,
-    MODE_TASK_MOTION_MODE_PRESET_ACTION = 1u,
-    MODE_TASK_MOTION_MODE_CUSTOM_TAKEOVER = 2u,
-    MODE_TASK_MOTION_MODE_RC_IK = 3u,
+    MT_MOTION_MODE_NONE = 0u,
+    MT_MOTION_MODE_PRESET_ACTION = 1u,
+    MT_MOTION_MODE_CUSTOM_TAKEOVER = 2u,
+    MT_MOTION_MODE_RC_IK = 3u,
 } ModeTaskMotionModeId;
 
 typedef enum
 {
-    MODE_TASK_IK_SOLVER_FULL_POSE = 0u,
-    MODE_TASK_IK_SOLVER_POSITION_PRIORITY,
+    MT_IK_SOLVER_FULL_POSE = 0u,
+    MT_IK_SOLVER_POSITION_PRIORITY,
 } ModeTaskIkSolverMode;
 
 typedef enum
 {
-    MODE_TASK_IK_CONTROL_BANK_POSITION_XYZ = 0u,
-    MODE_TASK_IK_CONTROL_BANK_ORIENTATION_RPY,
+    MT_IK_BANK_POS_XYZ = 0u,
+    MT_IK_BANK_ORI_RPY,
 } ModeTaskIkControlBank;
 
 typedef enum
 {
-    MODE_TASK_GRIP_OPEN = 0u,
-    MODE_TASK_GRIP_CLOSED,
+    MT_GRIP_OPEN = 0u,
+    MT_GRIP_CLOSED,
 } ModeTaskGripState;
 
 typedef enum
 {
-    ARM_TASK_MODE_RELEASE = 0u,
-    ARM_TASK_MODE_NORMAL,
-    ARM_TASK_MODE_PRESET_ACTION,
-    ARM_TASK_MODE_CUSTOM_TAKEOVER,
-    ARM_TASK_MODE_RC_IK,
+    AT_MODE_RELEASE = 0u,
+    AT_MODE_NORMAL,
+    AT_MODE_PRESET_ACTION,
+    AT_MODE_CUSTOM_TAKEOVER,
+    AT_MODE_RC_IK,
 } ArmTaskMode;
 
 /* 第三层：控制链在线状态。 */
 typedef enum
 {
-    MODE_TASK_CONTROL_LINK_OFFLINE = 0u,
-    MODE_TASK_CONTROL_LINK_ONLINE,
-} ModeTaskControlLinkState;
+    MT_CONTROL_LINK_OFFLINE = 0u,
+    MT_CONTROL_LINK_ONLINE,
+} ModeLinkState;
 
 /* 第四层：自定义控制器在线后的行为态。 */
 typedef enum
 {
-    MODE_TASK_CUSTOM_CONTROL_ALIGNING = 0u,
-    MODE_TASK_CUSTOM_CONTROL_TAKEOVER,
-} ModeTaskCustomControlState;
+    MT_CUSTOM_CONTROL_ALIGNING = 0u,
+    MT_CUSTOM_CONTROL_TAKEOVER,
+} ModeTaskCustomState;
 
 typedef enum
 {
-    MODE_TASK_INIT_PROGRESS_CAN_READY = 0u,
-    MODE_TASK_INIT_PROGRESS_SERIAL_READY,
-    MODE_TASK_INIT_PROGRESS_IMU_READY,
-    MODE_TASK_INIT_PROGRESS_CHASSIS_MOTOR_READY,
-    MODE_TASK_INIT_PROGRESS_ARM_MOTOR_READY,
-} ModeTaskInitProgressKind;
+    MODE_INIT_CAN_READY = 0u,
+    MODE_INIT_SERIAL_READY,
+    MODE_INIT_IMU_READY,
+    MODE_INIT_CHASSIS_MOTOR_READY,
+    MODE_INIT_ARM_MOTOR_READY,
+} ModeTaskInitKind;
 
 typedef struct
 {
     uint8_t kind;
     uint8_t value;
-} ModeTaskInitProgressMessage;
+} ModeTaskInitMessage;
 
 typedef struct
 {
     uint8_t operational_phase;
     uint8_t selected_motion_mode_id;
     uint8_t confirmed_motion_mode_id;
-} ModeTaskSystemSnapshot;
+} ModeSystemSnap;
 
 typedef struct
 {
@@ -191,7 +191,7 @@ typedef struct
     uint8_t clamp_action;
     uint8_t exchange_action;
     uint8_t primary_turn_ore_flag;
-} ArmTaskPresetActionRuntimeSnapshot;
+} ArmPresetSnapshot;
 
 typedef struct
 {
@@ -199,7 +199,7 @@ typedef struct
     uint8_t grip_state;
     uint8_t ik_solver_mode;
     uint8_t ik_control_bank;
-    ArmTaskPresetActionRuntimeSnapshot preset_action;
+    ArmPresetSnapshot preset_action;
 } ArmTaskModeSnapshot;
 
 typedef struct
@@ -208,7 +208,7 @@ typedef struct
     uint8_t wheel_enable;
     uint8_t leg_enable;
     uint8_t allow_rc_drive;
-} ChassisTaskModeSnapshot;
+} ChassisModeSnap;
 
 /* mode_task 的轻量调试状态：
  * - loop_count：任务循环次数
@@ -244,20 +244,20 @@ extern ModeTaskDebugState g_mode_task_debug;
  */
 OmRet mode_task_start(void);
 
-OmRet mode_task_submit_init_progress(
-    const ModeTaskInitProgressMessage* message);
+OmRet mode_task_submit_init(
+    const ModeTaskInitMessage* message);
 
 OmRet mode_task_submit_rc_snapshot(
     const InputRcSnapshot* snapshot);
 
-OmRet mode_task_submit_custom_controller_snapshot(
-    const InputCustomControllerSnapshot* snapshot);
+OmRet mode_task_submit_custom(
+    const InputCustomSnapshot* snapshot);
 
-OmBool mode_task_copy_system_snapshot(
-    ModeTaskSystemSnapshot* snapshot);
-OmBool mode_task_copy_arm_mode_snapshot(
+OmBool mode_task_copy_system(
+    ModeSystemSnap* snapshot);
+OmBool mode_task_copy_arm_mode(
     ArmTaskModeSnapshot* snapshot);
-OmBool mode_task_copy_chassis_mode_snapshot(
-    ChassisTaskModeSnapshot* snapshot);
+OmBool mode_task_copy_chassis_mode(
+    ChassisModeSnap* snapshot);
 
 #endif

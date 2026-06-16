@@ -11,41 +11,41 @@
  */
 
 const MctDjiChassisConfig g_mct_dji_chassis_configs[MCT_DJI_CHASSIS_COUNT] = {
-    {.name = APP_MOTOR_NAME_CHASSIS_FR, .id = APP_MOTOR_DJI_ID_CHASSIS_FR, .profile_role = APP_MOTOR_ROLE_CHASSIS_FR},
-    {.name = APP_MOTOR_NAME_CHASSIS_FL, .id = APP_MOTOR_DJI_ID_CHASSIS_FL, .profile_role = APP_MOTOR_ROLE_CHASSIS_FL},
-    {.name = APP_MOTOR_NAME_CHASSIS_BL, .id = APP_MOTOR_DJI_ID_CHASSIS_BL, .profile_role = APP_MOTOR_ROLE_CHASSIS_BL},
-    {.name = APP_MOTOR_NAME_CHASSIS_BR, .id = APP_MOTOR_DJI_ID_CHASSIS_BR, .profile_role = APP_MOTOR_ROLE_CHASSIS_BR},
+    {.name = APP_MN_CHASSIS_FR, .id = APP_MDJI_ID_CHASSIS_FR, .profile_role = APP_MR_CHASSIS_FR},
+    {.name = APP_MN_CHASSIS_FL, .id = APP_MDJI_ID_CHASSIS_FL, .profile_role = APP_MR_CHASSIS_FL},
+    {.name = APP_MN_CHASSIS_BL, .id = APP_MDJI_ID_CHASSIS_BL, .profile_role = APP_MR_CHASSIS_BL},
+    {.name = APP_MN_CHASSIS_BR, .id = APP_MDJI_ID_CHASSIS_BR, .profile_role = APP_MR_CHASSIS_BR},
 };
 
 const MctP1010BConfig g_mct_p1010b_configs[MCT_P1010B_COUNT] = {
-    {.name = APP_MOTOR_NAME_JOINT_LEG_R, .id = APP_MOTOR_P1010B_ID_JOINT_LEG_R, .profile_role = APP_MOTOR_ROLE_JOINT_LEG_R},
-    {.name = APP_MOTOR_NAME_JOINT_LEG_L, .id = APP_MOTOR_P1010B_ID_JOINT_LEG_L, .profile_role = APP_MOTOR_ROLE_JOINT_LEG_L},
+    {.name = APP_MN_JOINT_LEG_R, .id = APP_MP10_ID_JOINT_LEG_R, .profile_role = APP_MR_JOINT_LEG_R},
+    {.name = APP_MN_JOINT_LEG_L, .id = APP_MP10_ID_JOINT_LEG_L, .profile_role = APP_MR_JOINT_LEG_L},
 };
 
 const MctDamiaoConfig g_mct_damiao_configs[MCT_DAMIAO_COUNT] = {
-    {.name = APP_MOTOR_NAME_BIG_YAW, .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = APP_MOTOR_DAMIAO_CAN_ID_BIG_YAW, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_BIG_YAW, .profile_role = APP_MOTOR_ROLE_BIG_YAW},
-    {.name = APP_MOTOR_NAME_PITCH1, .type = DAMIAO_MOTOR_TYPE_DM10010L, .can_id = APP_MOTOR_DAMIAO_CAN_ID_PITCH1, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_PITCH1, .profile_role = APP_MOTOR_ROLE_PITCH1},
-    {.name = APP_MOTOR_NAME_ROLL1, .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = APP_MOTOR_DAMIAO_CAN_ID_ROLL1, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_ROLL1, .profile_role = APP_MOTOR_ROLE_ROLL1},
-    {.name = APP_MOTOR_NAME_ROLL2, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MOTOR_DAMIAO_CAN_ID_ROLL2, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_ROLL2, .profile_role = APP_MOTOR_ROLE_ROLL2},
-    {.name = APP_MOTOR_NAME_GRIP, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MOTOR_DAMIAO_CAN_ID_GRIP, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_GRIP, .profile_role = APP_MOTOR_ROLE_GRIP},
-    {.name = APP_MOTOR_NAME_PITCH3, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MOTOR_DAMIAO_CAN_ID_PITCH3, .master_id = APP_MOTOR_DAMIAO_MASTER_ID_PITCH3, .profile_role = APP_MOTOR_ROLE_PITCH3},
+    {.name = APP_MN_BIG_YAW, .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = APP_MD_CAN_ID_BIG_YAW, .master_id = APP_MD_MASTER_ID_BIG_YAW, .profile_role = APP_MR_BIG_YAW},
+    {.name = APP_MN_PITCH1, .type = DAMIAO_MOTOR_TYPE_DM10010L, .can_id = APP_MD_CAN_ID_PITCH1, .master_id = APP_MD_MASTER_ID_PITCH1, .profile_role = APP_MR_PITCH1},
+    {.name = APP_MN_ROLL1, .type = DAMIAO_MOTOR_TYPE_DM4340, .can_id = APP_MD_CAN_ID_ROLL1, .master_id = APP_MD_MASTER_ID_ROLL1, .profile_role = APP_MR_ROLL1},
+    {.name = APP_MN_ROLL2, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MD_CAN_ID_ROLL2, .master_id = APP_MD_MASTER_ID_ROLL2, .profile_role = APP_MR_ROLL2},
+    {.name = APP_MN_GRIP, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MD_CAN_ID_GRIP, .master_id = APP_MD_MASTER_ID_GRIP, .profile_role = APP_MR_GRIP},
+    {.name = APP_MN_PITCH3, .type = DAMIAO_MOTOR_TYPE_DM4310, .can_id = APP_MD_CAN_ID_PITCH3, .master_id = APP_MD_MASTER_ID_PITCH3, .profile_role = APP_MR_PITCH3},
 };
 
 TaskContextSlotId g_mct_slot_id = 0;
 
 static OmBool mct_profile_role_is_present(uint8_t profile_role)
 {
-    return app_motor_profile_is_present(profile_role);
+    return app_motor_role_is_present(profile_role);
 }
 
 static OmBool mct_dji_roll3_is_present(void)
 {
-    return app_motor_profile_is_present(APP_MOTOR_ROLE_ROLL3);
+    return app_motor_role_is_present(APP_MR_ROLL3);
 }
 
 static OmBool mct_go8010_pitch2_is_present(void)
 {
-    return app_motor_profile_is_present(APP_MOTOR_ROLE_PITCH2);
+    return app_motor_role_is_present(APP_MR_PITCH2);
 }
 
 /* owner 侧 CAN bring-up：
@@ -131,17 +131,17 @@ static void mct_runtime_reset_loop_state(MctRuntime* runtime)
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
         runtime->damiao_non_operational_disable_confirmed[index] = OM_FALSE;
-        runtime->damiao_non_operational_disable_sequence_base[index] = 0u;
+        runtime->damiao_idle_dis_seq_base[index] = 0u;
     }
 }
 
-static void mct_runtime_clear_tx_dispatch_state(void)
+static void mct_runtime_clear_tx_state(void)
 {
-    (void)motor_tx_dispatch_drain_sources_mask();
-    (void)motor_tx_dispatch_take_overflow_flag();
+    (void)mtx_drain();
+    (void)mtx_take_overflow();
 }
 
-static void mct_runtime_set_all_motors_control_mode(
+static void mct_runtime_set_control_mode(
     MctRuntime* runtime,
     MotorControlMode control_mode)
 {
@@ -189,7 +189,7 @@ static void mct_runtime_set_all_motors_control_mode(
     }
 }
 
-static OmRet mct_runtime_prepare_owner_devices(const BspDeviceRegistry* devices)
+static OmRet mct_runtime_prepare_devices(const BspDeviceRegistry* devices)
 {
     OmRet ret = OM_OK;
 
@@ -207,7 +207,7 @@ static OmRet mct_runtime_prepare_owner_devices(const BspDeviceRegistry* devices)
     return mct_prepare_can(devices->can2);
 }
 
-static OmRet mct_runtime_init_vendor_buses(
+static OmRet mct_runtime_init_buses(
     MctRuntime* runtime,
     const BspDeviceRegistry* devices)
 {
@@ -240,7 +240,7 @@ static OmRet mct_runtime_init_vendor_buses(
     return go8010_init(&runtime->go8010_bus, devices->usart6);
 }
 
-static OmRet mct_runtime_start_owner_devices(const BspDeviceRegistry* devices)
+static OmRet mct_runtime_start_devices(const BspDeviceRegistry* devices)
 {
     OmRet ret = OM_OK;
 
@@ -258,7 +258,7 @@ static OmRet mct_runtime_start_owner_devices(const BspDeviceRegistry* devices)
     return mct_start_can(devices->can2);
 }
 
-static void mct_runtime_update_non_operational_disable_confirmation(MctRuntime* runtime)
+static void mct_runtime_idle_confirm(MctRuntime* runtime)
 {
     uint32_t index = 0u;
 
@@ -293,8 +293,8 @@ static void mct_runtime_update_non_operational_disable_confirmation(MctRuntime* 
             continue;
         }
 
-        if (damiao_motor_get_feedback_sequence(&runtime->damiao_drivers[index]) >
-                runtime->damiao_non_operational_disable_sequence_base[index] &&
+        if (dm_fb_seq(&runtime->damiao_drivers[index]) >
+                runtime->damiao_idle_dis_seq_base[index] &&
             damiao_motor_get_status(&runtime->damiao_drivers[index]) == 0u)
         {
             runtime->damiao_non_operational_disable_confirmed[index] = OM_TRUE;
@@ -302,7 +302,7 @@ static void mct_runtime_update_non_operational_disable_confirmation(MctRuntime* 
     }
 }
 
-static OmRet mct_runtime_observe_non_operational_p1010b(MctRuntime* runtime)
+static OmRet mct_runtime_p1010b_observe(MctRuntime* runtime)
 {
     OsalTimeMs now_ms = 0u;
     uint32_t attempt_index = 0u;
@@ -315,7 +315,7 @@ static OmRet mct_runtime_observe_non_operational_p1010b(MctRuntime* runtime)
     now_ms = osal_time_now_monotonic();
     if (runtime->last_non_operational_p1010b_observation_ms != 0u &&
         (uint32_t)(now_ms - runtime->last_non_operational_p1010b_observation_ms) <
-            MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS)
+            MCT_IDLE_P1010B_OBSERVE_MS)
     {
         return OM_OK;
     }
@@ -344,7 +344,7 @@ static OmRet mct_runtime_observe_non_operational_p1010b(MctRuntime* runtime)
     return OM_OK;
 }
 
-static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
+static OmRet mct_runtime_idle_outputs(MctRuntime* runtime)
 {
     uint32_t index = 0u;
     OmRet ret = OM_OK;
@@ -359,8 +359,8 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
     }
 
     runtime->last_non_operational_cycle_ms = osal_time_now_monotonic();
-    mct_runtime_set_all_motors_control_mode(runtime, MOTOR_CONTROL_MODE_DISABLED);
-    mct_runtime_update_non_operational_disable_confirmation(runtime);
+    mct_runtime_set_control_mode(runtime, MOTOR_CONTROL_MODE_DISABLED);
+    mct_runtime_idle_confirm(runtime);
 
     for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
     {
@@ -458,8 +458,8 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
             continue;
         }
 
-        runtime->damiao_non_operational_disable_sequence_base[index] =
-            damiao_motor_get_feedback_sequence(&runtime->damiao_drivers[index]);
+        runtime->damiao_idle_dis_seq_base[index] =
+            dm_fb_seq(&runtime->damiao_drivers[index]);
         ret = motor_owner_disable(&runtime->damiao_motors[index]);
         if (ret != OM_OK)
         {
@@ -480,7 +480,7 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
         }
     }
 
-    ret = mct_runtime_observe_non_operational_p1010b(runtime);
+    ret = mct_runtime_p1010b_observe(runtime);
     if (ret != OM_OK)
     {
         last_error = ret;
@@ -491,13 +491,13 @@ static OmRet mct_runtime_apply_non_operational_outputs(MctRuntime* runtime)
         last_error = OM_ERROR;
     }
 
-    mct_runtime_update_non_operational_disable_confirmation(runtime);
+    mct_runtime_idle_confirm(runtime);
 
-    (void)sh_clear_runtime_fault(SH_ERR_MOTOR_RECOVERY_DEGRADED);
+    (void)sh_clear_runtime_fault(SH_ERR_MR_DEGRADED);
     return last_error;
 }
 
-OmRet mct_runtime_enter_operational_state(MctRuntime* runtime)
+OmRet mct_runtime_enter_active(MctRuntime* runtime)
 {
     if (runtime == OM_NULL)
     {
@@ -506,14 +506,14 @@ OmRet mct_runtime_enter_operational_state(MctRuntime* runtime)
 
     mct_runtime_reset_loop_state(runtime);
     motor_tx_dispatch_init();
-    mct_runtime_clear_tx_dispatch_state();
-    motor_recovery_rearm_registered_entries();
+    mct_runtime_clear_tx_state();
+    motor_recovery_rearm_all();
     (void)mct_prepare_startup_motors(runtime);
-    motor_recovery_arm_initial_grace();
+    motor_recovery_initial_grace();
     return OM_OK;
 }
 
-OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
+OmRet mct_runtime_leave_active(MctRuntime* runtime)
 {
     if (runtime == OM_NULL)
     {
@@ -521,11 +521,11 @@ OmRet mct_runtime_leave_operational_state(MctRuntime* runtime)
     }
 
     mct_runtime_reset_loop_state(runtime);
-    mct_runtime_clear_tx_dispatch_state();
-    return mct_runtime_apply_non_operational_outputs(runtime);
+    mct_runtime_clear_tx_state();
+    return mct_runtime_idle_outputs(runtime);
 }
 
-OmRet mct_runtime_run_non_operational_cycle(MctRuntime* runtime)
+OmRet mct_runtime_run_idle(MctRuntime* runtime)
 {
     OsalTimeMs now_ms = 0u;
 
@@ -536,12 +536,12 @@ OmRet mct_runtime_run_non_operational_cycle(MctRuntime* runtime)
 
     now_ms = osal_time_now_monotonic();
     if (runtime->last_non_operational_cycle_ms != 0u &&
-        (uint32_t)(now_ms - runtime->last_non_operational_cycle_ms) < MCT_NON_OPERATIONAL_PERIOD_MS)
+        (uint32_t)(now_ms - runtime->last_non_operational_cycle_ms) < MCT_IDLE_PERIOD_MS)
     {
         return OM_OK;
     }
 
-    return mct_runtime_apply_non_operational_outputs(runtime);
+    return mct_runtime_idle_outputs(runtime);
 }
 
 OmRet mct_runtime_init(
@@ -560,14 +560,14 @@ OmRet mct_runtime_init(
     memset(runtime, 0, sizeof(*runtime));
     motor_recovery_reset();
 
-    ret = mct_runtime_prepare_owner_devices(devices);
+    ret = mct_runtime_prepare_devices(devices);
     if (ret != OM_OK)
     {
         return ret;
     }
 
     /* 先 init vendor bus，再统一 register motors。 */
-    ret = mct_runtime_init_vendor_buses(runtime, devices);
+    ret = mct_runtime_init_buses(runtime, devices);
     if (ret != OM_OK)
     {
         return ret;
@@ -579,7 +579,7 @@ OmRet mct_runtime_init(
         return ret;
     }
 
-    ret = mct_runtime_start_owner_devices(devices);
+    ret = mct_runtime_start_devices(devices);
     if (ret != OM_OK)
     {
         return ret;

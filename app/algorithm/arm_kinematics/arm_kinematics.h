@@ -42,7 +42,7 @@ typedef enum
     ARM_IK_WRIST_SINGULAR,
 } ArmIkWristBranch;
 
-/* 公开关节语义固定沿用当前固件 machine pose：
+/* 公开关节语义固定与当前动作表机构角语义一致：
  * [0] big_yaw
  * [1] pitch1
  * [2] pitch2
@@ -50,8 +50,11 @@ typedef enum
  * [4] pitch3
  * [5] roll3
  *
- * 单位均为 rad，其中 roll3 允许保持 machine 侧绝对角语义，
- * 算法内部会自行 wrap 到 [-pi, pi]。
+ * 单位均为 rad：
+ * - 所有轴都表示“反馈逆映射后的机构角 - 该轴零点”
+ * - 在当前项目里，normal 姿态对应各轴 joint 约为 0
+ *
+ * 算法内部会统一做 normal/home offset 与 wrap 适配。
  */
 typedef struct
 {
@@ -74,14 +77,14 @@ typedef struct
     float orientation_error_rad[3];
     float position_error_norm_m;
     float orientation_error_norm_rad;
-} ArmIkPoseErrorSnapshot;
+} ArmIkPoseErr;
 
 typedef struct
 {
     uint8_t shoulder_branch;
     uint8_t elbow_branch;
     uint8_t wrist_branch;
-} ArmIkPoseFeatureSnapshot;
+} ArmIkPoseFeat;
 
 typedef struct
 {
@@ -90,33 +93,33 @@ typedef struct
     uint16_t iteration_count;
     uint16_t candidate_count;
     uint16_t valid_candidate_count;
-} ArmIkSolveDebugSnapshot;
+} ArmIkSolveDiag;
 
 OmRet arm_kinematics_forward(
     const ArmIkJointVector* joint_vector,
     ArmIkPose* pose);
 
-OmRet arm_kinematics_inverse_full_pose_local(
+OmRet aik_inverse_full_local(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector,
     ArmIkJointVector* solved_joint_vector,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot,
-    ArmIkSolveDebugSnapshot* solve_debug_snapshot);
+    ArmIkPoseErr* pose_error_snapshot,
+    ArmIkSolveDiag* solve_debug_snapshot);
 
-OmRet arm_kinematics_inverse_position_priority_local(
+OmRet aik_inverse_pos_local(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector,
     ArmIkJointVector* solved_joint_vector,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot,
-    ArmIkSolveDebugSnapshot* solve_debug_snapshot);
+    ArmIkPoseErr* pose_error_snapshot,
+    ArmIkSolveDiag* solve_debug_snapshot);
 
-OmRet arm_kinematics_compute_pose_error(
+OmRet aik_pose_error(
     const ArmIkPose* target_pose,
     const ArmIkPose* current_pose,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot);
+    ArmIkPoseErr* pose_error_snapshot);
 
-OmRet arm_kinematics_classify_pose_features(
+OmRet aik_classify_pose(
     const ArmIkJointVector* joint_vector,
-    ArmIkPoseFeatureSnapshot* pose_feature_snapshot);
+    ArmIkPoseFeat* pose_feature_snapshot);
 
 #endif

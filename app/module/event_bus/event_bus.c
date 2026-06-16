@@ -20,7 +20,7 @@ static void event_bus_reset_bus(EventBus* bus)
     }
 }
 
-static void event_bus_delete_created_flags(EventBus* bus, uint32_t created_count)
+static void event_bus_delete_flags(EventBus* bus, uint32_t created_count)
 {
     uint32_t index = 0U;
 
@@ -51,7 +51,7 @@ OsalStatus event_bus_init(EventBus* bus)
         status = osal_event_flags_create(&bus->flags[index]);
         if (status != OSAL_OK)
         {
-            event_bus_delete_created_flags(bus, index);
+            event_bus_delete_flags(bus, index);
             return status;
         }
     }

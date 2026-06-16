@@ -14,7 +14,7 @@
 #include "task/input_task/input_task_rc.h"
 #include <string.h>
 
-#define INPUT_TASK_PERIOD_MS (1u)
+#define IT_PERIOD_MS (1u)
 
 /* input_task 当前是外部控制输入的唯一 owner：
  * - USART1：DBUS 遥控器
@@ -26,15 +26,15 @@
  */
 InputTaskDebugState g_input_task_runtime = {0};
 
-static void input_task_usart1_read_callback(Device* dev, void* param, size_t paramsz);
-static void input_task_uart8_read_callback(Device* dev, void* param, size_t paramsz);
+static void input_task_usart1_read_cb(Device* dev, void* param, size_t paramsz);
+static void input_task_uart8_read_cb(Device* dev, void* param, size_t paramsz);
 static OmRet input_task_prepare_usart1(Device* usart1_device);
 static OmRet input_task_prepare_uart8(Device* uart8_device);
 
 /* 串口回调只负责提示“可能有新数据”，
  * 不在 ISR / 回调上下文里直接解协议。
  */
-static void input_task_usart1_read_callback(Device* dev, void* param, size_t paramsz)
+static void input_task_usart1_read_cb(Device* dev, void* param, size_t paramsz)
 {
     InputTaskRcDebugState* runtime = (InputTaskRcDebugState*)param;
 
@@ -48,10 +48,10 @@ static void input_task_usart1_read_callback(Device* dev, void* param, size_t par
     runtime->rx_available_hint = (uint32_t)paramsz;
 }
 
-static void input_task_uart8_read_callback(Device* dev, void* param, size_t paramsz)
+static void input_task_uart8_read_cb(Device* dev, void* param, size_t paramsz)
 {
-    InputTaskCustomControllerDebugState* runtime =
-        (InputTaskCustomControllerDebugState*)param;
+    InputCustomDebugState* runtime =
+        (InputCustomDebugState*)param;
 
     (void)dev;
 
@@ -73,16 +73,16 @@ static OmRet input_task_prepare_usart1(Device* usart1_device)
         return OM_ERROR_NULL;
     }
 
-    serial_cfg.baudrate = INPUT_TASK_USART1_BAUDRATE;
+    serial_cfg.baudrate = IT_USART1_BAUDRATE;
     serial_cfg.parity = PARITY_EVEN;
-    serial_cfg.txBufSize = INPUT_TASK_USART1_TX_BUFSIZE;
-    serial_cfg.rxBufSize = INPUT_TASK_USART1_RX_BUFSIZE;
+    serial_cfg.txBufSize = IT_USART1_TX_BUFSIZE;
+    serial_cfg.rxBufSize = IT_USART1_RX_BUFSIZE;
 
     hal_serial = (HalSerial*)usart1_device;
     hal_serial->cfg = serial_cfg;
 
     device_set_param(usart1_device, &g_input_task_runtime.rc);
-    device_set_read_cb(usart1_device, input_task_usart1_read_callback);
+    device_set_read_cb(usart1_device, input_task_usart1_read_cb);
 
     return device_open(usart1_device, SERIAL_O_NBLCK_RX);
 }
@@ -100,15 +100,15 @@ static OmRet input_task_prepare_uart8(Device* uart8_device)
         return OM_ERROR_NULL;
     }
 
-    serial_cfg.baudrate = INPUT_TASK_CUSTOM_CONTROLLER_UART8_BAUDRATE;
-    serial_cfg.txBufSize = INPUT_TASK_CUSTOM_CONTROLLER_UART8_TX_BUFSIZE;
-    serial_cfg.rxBufSize = INPUT_TASK_CUSTOM_CONTROLLER_UART8_RX_BUFSIZE;
+    serial_cfg.baudrate = IC_UART8_BAUD;
+    serial_cfg.txBufSize = IC_UART8_TX_BUF;
+    serial_cfg.rxBufSize = IC_UART8_RX_BUF;
 
     hal_serial = (HalSerial*)uart8_device;
     hal_serial->cfg = serial_cfg;
 
-    device_set_param(uart8_device, &g_input_task_runtime.custom_controller);
-    device_set_read_cb(uart8_device, input_task_uart8_read_callback);
+    device_set_param(uart8_device, &g_input_task_runtime.custom);
+    device_set_read_cb(uart8_device, input_task_uart8_read_cb);
 
     return device_open(uart8_device, SERIAL_O_NBLCK_RX);
 }
@@ -118,28 +118,28 @@ static void input_task_entry(void* arg)
     const BspDeviceRegistry* devices = (const BspDeviceRegistry*)arg;
     OsalTimeMs deadline_cursor_ms = 0u;
     OsalTimeMs now_ms = 0u;
-    uint8_t raw_frame[INPUT_TASK_DBUS_FRAME_LEN] = {0};
+    uint8_t raw_frame[IT_DBUS_FRAME_LEN] = {0};
     InputTaskRcFrame parsed_frame = {0};
-    InputTaskCustomControllerParser custom_controller_parser = {0};
+    InputCustomParser custom_parser = {0};
     InputRcSnapshot rc_snapshot = {0};
-    InputCustomControllerSnapshot custom_controller_snapshot = {0};
+    InputCustomSnapshot custom_snapshot = {0};
     size_t read_len = 0u;
     uint8_t byte = 0u;
     OmBool rc_online_changed = OM_FALSE;
-    OmBool custom_controller_snapshot_changed = OM_FALSE;
-    uint32_t previous_custom_controller_frame_count = 0u;
+    OmBool custom_changed = OM_FALSE;
+    uint32_t prev_custom_frame_count = 0u;
 
-    input_task_custom_controller_reset_parser(&custom_controller_parser, 0u);
+    input_custom_reset_parser(&custom_parser, 0u);
 
     while (1)
     {
         rc_online_changed = OM_FALSE;
-        custom_controller_snapshot_changed = OM_FALSE;
-        previous_custom_controller_frame_count =
-            g_input_task_runtime.custom_controller.frame_count;
-        input_task_custom_controller_copy_snapshot(&custom_controller_snapshot);
+        custom_changed = OM_FALSE;
+        prev_custom_frame_count =
+            g_input_task_runtime.custom.frame_count;
+        input_custom_copy_snapshot(&custom_snapshot);
 
-        if (g_input_task_runtime.rc.rx_available_hint >= INPUT_TASK_DBUS_FRAME_LEN)
+        if (g_input_task_runtime.rc.rx_available_hint >= IT_DBUS_FRAME_LEN)
         {
             do
             {
@@ -148,8 +148,8 @@ static void input_task_entry(void* arg)
                  * 因此这里按 18 字节整帧读取，和旧工程的 DBUS 边界保持一致。
                  */
                 read_len = device_read(
-                    devices->usart1, 0, raw_frame, INPUT_TASK_DBUS_FRAME_LEN);
-                if (read_len == INPUT_TASK_DBUS_FRAME_LEN)
+                    devices->usart1, 0, raw_frame, IT_DBUS_FRAME_LEN);
+                if (read_len == IT_DBUS_FRAME_LEN)
                 {
                     if (input_task_rc_decode_frame(raw_frame, &parsed_frame) ==
                         OM_FALSE)
@@ -163,18 +163,18 @@ static void input_task_entry(void* arg)
                     g_input_task_runtime.rc.online = 1u;
                     input_task_rc_commit_snapshot(&rc_snapshot);
                     (void)mode_task_submit_rc_snapshot(&rc_snapshot);
-                    (void)chassis_task_submit_rc_snapshot(&rc_snapshot);
+                    (void)chassis_task_submit_rc(&rc_snapshot);
                     (void)arm_task_submit_rc_snapshot(&rc_snapshot);
                     g_input_task_runtime.rc.frame_count++;
                 }
-            } while (read_len == INPUT_TASK_DBUS_FRAME_LEN);
+            } while (read_len == IT_DBUS_FRAME_LEN);
 
             g_input_task_runtime.rc.rx_available_hint = 0u;
         }
 
         if (devices->uart8 != OM_NULL &&
-            g_input_task_runtime.custom_controller.degraded_start == 0u &&
-            g_input_task_runtime.custom_controller.rx_available_hint > 0u)
+            g_input_task_runtime.custom.degraded_start == 0u &&
+            g_input_task_runtime.custom.rx_available_hint > 0u)
         {
             /* 自定义控制器协议按字节流推进状态机：
              * - 不要求 UART8 一次凑齐整帧
@@ -183,50 +183,50 @@ static void input_task_entry(void* arg)
             while (device_read(devices->uart8, 0, &byte, 1u) == 1u)
             {
                 now_ms = osal_time_now_monotonic();
-                (void)input_task_custom_controller_accept_byte(
-                    &g_input_task_runtime.custom_controller,
-                    &custom_controller_parser,
+                (void)input_custom_accept_byte(
+                    &g_input_task_runtime.custom,
+                    &custom_parser,
                     byte,
                     now_ms);
             }
 
-            g_input_task_runtime.custom_controller.rx_available_hint = 0u;
+            g_input_task_runtime.custom.rx_available_hint = 0u;
         }
 
         now_ms = osal_time_now_monotonic();
         rc_online_changed =
-            input_task_rc_update_online_state(&g_input_task_runtime.rc, now_ms);
+            input_task_rc_update_online(&g_input_task_runtime.rc, now_ms);
         if (rc_online_changed == OM_TRUE)
         {
             input_task_rc_copy_snapshot(&rc_snapshot);
             (void)mode_task_submit_rc_snapshot(&rc_snapshot);
-            (void)chassis_task_submit_rc_snapshot(&rc_snapshot);
+            (void)chassis_task_submit_rc(&rc_snapshot);
             (void)arm_task_submit_rc_snapshot(&rc_snapshot);
         }
 
-        custom_controller_snapshot_changed =
-            input_task_custom_controller_update_online_state(
-            &g_input_task_runtime.custom_controller,
-            &custom_controller_parser,
+        custom_changed =
+            input_custom_update_online(
+            &g_input_task_runtime.custom,
+            &custom_parser,
             now_ms);
 
-        input_task_custom_controller_copy_snapshot(&custom_controller_snapshot);
-        if (g_input_task_runtime.custom_controller.frame_count !=
-                previous_custom_controller_frame_count ||
-            custom_controller_snapshot_changed == OM_TRUE)
+        input_custom_copy_snapshot(&custom_snapshot);
+        if (g_input_task_runtime.custom.frame_count !=
+                prev_custom_frame_count ||
+            custom_changed == OM_TRUE)
         {
-            custom_controller_snapshot_changed = OM_TRUE;
+            custom_changed = OM_TRUE;
         }
 
-        if (custom_controller_snapshot_changed == OM_TRUE)
+        if (custom_changed == OM_TRUE)
         {
-            (void)mode_task_submit_custom_controller_snapshot(
-                &custom_controller_snapshot);
-            (void)arm_task_submit_custom_controller_snapshot(
-                &custom_controller_snapshot);
+            (void)mode_task_submit_custom(
+                &custom_snapshot);
+            (void)arm_task_submit_custom(
+                &custom_snapshot);
         }
 
-        (void)osal_delay_until(&deadline_cursor_ms, INPUT_TASK_PERIOD_MS, OM_NULL);
+        (void)osal_delay_until(&deadline_cursor_ms, IT_PERIOD_MS, OM_NULL);
     }
 }
 
@@ -248,11 +248,11 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
     }
 
     input_task_rc_reset_runtime(&g_input_task_runtime.rc);
-    input_task_rc_reset_latest_snapshot();
-    input_task_custom_controller_reset_runtime(
-        &g_input_task_runtime.custom_controller);
-    input_task_judge_stub_reset_runtime(&g_input_task_runtime.judge);
-    input_task_custom_controller_reset_latest_snapshot();
+    input_task_rc_reset_latest();
+    input_custom_reset_runtime(
+        &g_input_task_runtime.custom);
+    input_task_judge_reset(&g_input_task_runtime.judge);
+    input_custom_reset_latest();
 
     /* USART1 是本轮唯一必选输入源：它失败时 input_task 整体启动失败。 */
     if (input_task_prepare_usart1(devices->usart1) != OM_OK)
@@ -266,8 +266,8 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
      */
     if (devices->uart8 == OM_NULL || input_task_prepare_uart8(devices->uart8) != OM_OK)
     {
-        g_input_task_runtime.custom_controller.degraded_start = 1u;
-        input_task_custom_controller_reset_latest_snapshot();
+        g_input_task_runtime.custom.degraded_start = 1u;
+        input_custom_reset_latest();
     }
 
     status = osal_thread_create(
@@ -279,10 +279,10 @@ OmRet input_task_start(const BspDeviceRegistry* devices)
     }
 
     {
-        const ModeTaskInitProgressMessage init_progress = {
-            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_SERIAL_READY,
+        const ModeTaskInitMessage init_progress = {
+            .kind = (uint8_t)MODE_INIT_SERIAL_READY,
             .value = 1u};
-        (void)mode_task_submit_init_progress(&init_progress);
+        (void)mode_task_submit_init(&init_progress);
     }
 
     return OM_OK;

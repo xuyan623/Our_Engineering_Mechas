@@ -14,9 +14,9 @@ typedef struct
     volatile uint32_t loop_count;
     volatile uint32_t tx_count;
     volatile uint32_t feedback_seen_count;
-} DamiaoDm4310TestDebugState;
+} Damiao4310Debug;
 
-extern DamiaoDm4310TestDebugState g_damiao_dm4310_test_debug;
+extern Damiao4310Debug g_damiao_dm4310_test_debug;
 
 OmRet damiao_dm4310_test_task_start(const BspDeviceRegistry* devices);
 

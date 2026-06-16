@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_MOTOR_TX_DISPATCH_H
-#define NEW_ROBOT_MOTOR_TX_DISPATCH_H
+#ifndef NEW_ROBOT_MTX_H
+#define NEW_ROBOT_MTX_H
 
 #include "core/om_def.h"
 #include <stdint.h>
@@ -14,7 +14,7 @@ typedef enum
 
 void motor_tx_dispatch_init(void);
 OmRet motor_tx_dispatch_submit(MotorTxRequestSource source);
-uint32_t motor_tx_dispatch_drain_sources_mask(void);
-OmBool motor_tx_dispatch_take_overflow_flag(void);
+uint32_t mtx_drain(void);
+OmBool mtx_take_overflow(void);
 
 #endif

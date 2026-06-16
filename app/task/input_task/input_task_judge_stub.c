@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-void input_task_judge_stub_reset_runtime(InputTaskJudgeStubDebugState* runtime)
+void input_task_judge_reset(InputJudgeStubState* runtime)
 {
     if (runtime == OM_NULL)
     {

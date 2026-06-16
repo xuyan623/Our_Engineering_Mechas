@@ -71,7 +71,7 @@ static void start_task(void* arg)
     OmRet mode_task_ret = OM_OK;
     OmRet chassis_task_ret = OM_OK;
     OmRet arm_task_ret = OM_OK;
-    OmRet motor_communications_task_ret = OM_OK;
+    OmRet mct_ret = OM_OK;
     OmRet vofa_task_ret = OM_OK;
     const BspDeviceRegistry* devices = OM_NULL;
 
@@ -91,7 +91,7 @@ static void start_task(void* arg)
     mode_task_ret = mode_task_start();
     if (mode_task_ret != OM_OK)
     {
-        sh_report_fatal(SH_ERR_MODE_TASK_START_FAIL, "mode_task_start failed");
+        sh_report_fatal(SH_ERR_MT_START_FAIL, "mode_task_start failed");
         goto supervisor_loop;
     }
 
@@ -99,36 +99,36 @@ static void start_task(void* arg)
      * 为避免 mode_task 卡在 bootstrap，这里直接上报 IMU ready。
      */
     {
-        const ModeTaskInitProgressMessage init_progress = {
-            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_IMU_READY,
+        const ModeTaskInitMessage init_progress = {
+            .kind = (uint8_t)MODE_INIT_IMU_READY,
             .value = 1u};
-        (void)mode_task_submit_init_progress(&init_progress);
+        (void)mode_task_submit_init(&init_progress);
     }
 
     input_task_ret = input_task_start(devices);
     if (input_task_ret != OM_OK)
     {
-        sh_report_fatal(SH_ERR_INPUT_TASK_START_FAIL, "input_task_start failed");
+        sh_report_fatal(SH_ERR_IT_START_FAIL, "input_task_start failed");
         goto supervisor_loop;
     }
 
-    motor_communications_task_ret = mct_start(devices);
-    if (motor_communications_task_ret != OM_OK)
+    mct_ret = mct_start(devices);
+    if (mct_ret != OM_OK)
     {
         sh_report_fatal(
-            SH_ERR_MOTOR_COMMUNICATIONS_TASK_START_FAIL,
-            "motor_communications_task_start failed");
+            SH_ERR_MCT_START_FAIL,
+            "mct_start failed");
         goto supervisor_loop;
     }
 
     if (sh_register(
-            SH_TASK_MOTOR_COMMUNICATIONS,
+            SH_TASK_MCT,
             50u,
-            SH_ERR_MOTOR_COMMUNICATIONS_TIMEOUT) != OM_OK)
+            SH_ERR_MCT_TIMEOUT) != OM_OK)
     {
         sh_report_fatal(
-            SH_ERR_SYSTEM_HEALTH_REGISTER_FAIL,
-            "sh_register MOTOR_COMMUNICATIONS failed");
+            SH_ERR_SH_REG_FAIL,
+            "sh_register MCT failed");
         goto supervisor_loop;
     }
 
@@ -136,7 +136,7 @@ static void start_task(void* arg)
     if (chassis_task_ret != OM_OK)
     {
         sh_report_fatal(
-            SH_ERR_CHASSIS_TASK_START_FAIL,
+            SH_ERR_CT_START_FAIL,
             "chassis_task_start failed");
         goto supervisor_loop;
     }
@@ -144,10 +144,10 @@ static void start_task(void* arg)
     if (sh_register(
             SH_TASK_CHASSIS,
             50u,
-            SH_ERR_CHASSIS_TASK_TIMEOUT) != OM_OK)
+            SH_ERR_CT_TIMEOUT) != OM_OK)
     {
         sh_report_fatal(
-            SH_ERR_SYSTEM_HEALTH_REGISTER_FAIL,
+            SH_ERR_SH_REG_FAIL,
             "sh_register CHASSIS failed");
         goto supervisor_loop;
     }
@@ -156,7 +156,7 @@ static void start_task(void* arg)
     if (arm_task_ret != OM_OK)
     {
         sh_report_fatal(
-            SH_ERR_ARM_TASK_START_FAIL,
+            SH_ERR_AT_START_FAIL,
             "arm_task_start failed");
         goto supervisor_loop;
     }
@@ -164,10 +164,10 @@ static void start_task(void* arg)
     if (sh_register(
             SH_TASK_ARM,
             50u,
-            SH_ERR_ARM_TASK_TIMEOUT) != OM_OK)
+            SH_ERR_AT_TIMEOUT) != OM_OK)
     {
         sh_report_fatal(
-            SH_ERR_SYSTEM_HEALTH_REGISTER_FAIL,
+            SH_ERR_SH_REG_FAIL,
             "sh_register ARM failed");
         goto supervisor_loop;
     }

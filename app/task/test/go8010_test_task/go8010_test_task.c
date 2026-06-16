@@ -93,7 +93,7 @@ static void go8010_test_refresh_feedback(Go8010TestRuntime* runtime)
     }
 }
 
-static void go8010_test_update_online_flag(Go8010TestRuntime* runtime)
+static void g8_test_online(Go8010TestRuntime* runtime)
 {
     uint32_t now_ms = 0u;
     uint32_t age_ms = 0u;
@@ -160,7 +160,7 @@ static void go8010_test_task_entry(void* arg)
         go8010_tx_service(&runtime->bus);
         go8010_rx_service(&runtime->bus);
         go8010_test_refresh_feedback(runtime);
-        go8010_test_update_online_flag(runtime);
+        g8_test_online(runtime);
         (void)sh_beat(SH_TASK_GO8010_SMOKE);
 
         if (g_go8010_test_debug.online_flag == 0u &&

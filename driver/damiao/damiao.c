@@ -4,7 +4,7 @@
 #include "osal/osal_time.h"
 #include <string.h>
 
-#define DAMIAO_CAN_CLASSIC_INTERFRAME_DELAY_US    (200u)
+#define DAMIAO_CAN_FRAME_GAP_US    (200u)
 #define DAMIAO_PARAM_FRAME_STDID                  (0x7FFu)
 
 /* 各型号 MIT 模式量程直接沿用旧工程定义。
@@ -84,7 +84,7 @@ static uint16_t damiao_float_to_uint(float value, float min_value, float max_val
     return (uint16_t)(((value - min_value) * (float)max_code) / span);
 }
 
-OmRet damiao_motor_write_register_u32(Device* can_dev, uint16_t can_id, uint8_t register_id, uint32_t value)
+OmRet dm_wr_reg_u32(Device* can_dev, uint16_t can_id, uint8_t register_id, uint32_t value)
 {
     CanUserMsg msg = {0};
     uint8_t payload[8] = {0};
@@ -365,7 +365,7 @@ void damiao_motor_bus_sync(DamiaoMotorBus* bus)
             /* 临时试验：反馈已经稳定后，先注释掉 200us 帧间延时，
              * 观察多电机经典 CAN 下的反馈 cadence、掉帧与总线错误是否回归。
              *
-             * DWT_Delay((float)DAMIAO_CAN_CLASSIC_INTERFRAME_DELAY_US / 1000000.0f);
+             * DWT_Delay((float)DAMIAO_CAN_FRAME_GAP_US / 1000000.0f);
              */
         }
     }

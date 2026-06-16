@@ -19,10 +19,10 @@ typedef struct
     volatile int32_t prepare_ret;
     volatile uint32_t feedback_count;
     volatile uint32_t last_rx_age_ms;
-} P1010BLeftLegTestDebugState;
+} P1010BLeftDebug;
 
-extern P1010BLeftLegTestDebugState g_p1010b_left_leg_test_debug;
+extern P1010BLeftDebug g_p1010b_left_leg_test_debug;
 
-OmRet p1010b_left_leg_test_task_start(const BspDeviceRegistry* devices);
+OmRet p10lt_start(const BspDeviceRegistry* devices);
 
 #endif

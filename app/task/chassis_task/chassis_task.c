@@ -9,10 +9,10 @@
 #include <string.h>
 
 TaskContextSlotId g_chassis_task_slot_id = 0;
-uint8_t g_chassis_task_mode_channel_storage[sizeof(ChassisTaskModeSnapshot) * CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
-OmAtomicU8 g_chassis_task_mode_channel_ready_flags[CHASSIS_TASK_MODE_CHANNEL_CAPACITY] = {0};
-uint8_t g_chassis_task_rc_channel_storage[CHASSIS_TASK_RC_CHANNEL_CAPACITY_BYTES] = {0};
-uint8_t g_chassis_task_imu_channel_storage[CHASSIS_TASK_IMU_CHANNEL_CAPACITY_BYTES] = {0};
+uint8_t g_chassis_task_mode_channel_storage[sizeof(ChassisModeSnap) * CT_MODE_CHANNEL_CAPACITY] = {0};
+OmAtomicU8 g_chassis_task_mode_channel_ready_flags[CT_MODE_CHANNEL_CAPACITY] = {0};
+uint8_t g_chassis_task_rc_channel_storage[CT_RC_BYTES] = {0};
+uint8_t g_chassis_task_imu_channel_storage[CT_IMU_BYTES] = {0};
 
 static void chassis_task_entry(void* arg)
 {
@@ -31,7 +31,7 @@ static void chassis_task_entry(void* arg)
     {
         chassis_task_run_once(context);
         (void)sh_beat(SH_TASK_CHASSIS);
-        (void)osal_delay_until(&deadline_cursor_ms, CHASSIS_TASK_PERIOD_MS, OM_NULL);
+        (void)osal_delay_until(&deadline_cursor_ms, CT_PERIOD_MS, OM_NULL);
     }
 }
 
@@ -47,7 +47,7 @@ static void chassis_task_ctx_reset(void* ctx)
     memset(&self->latest_mode_snapshot, 0, sizeof(self->latest_mode_snapshot));
     memset(&self->latest_rc_snapshot, 0, sizeof(self->latest_rc_snapshot));
     memset(&self->latest_imu_snapshot, 0, sizeof(self->latest_imu_snapshot));
-    memset(self->last_wheel_speed_ref_rpm, 0, sizeof(self->last_wheel_speed_ref_rpm));
+    memset(self->last_wheel_speed_reference_rpm, 0, sizeof(self->last_wheel_speed_reference_rpm));
     self->pit_leg_cmd_deg = 0.0f;
     self->big_yaw_hold_angle_rad = 0.0f;
     self->last_tx_request_ms = 0u;
@@ -74,8 +74,8 @@ OmRet chassis_task_start(void)
     static OsalThread* chassis_task_thread = OM_NULL;
     const OsalThreadAttr chassis_task_attr = {
         "chassis_task",
-        CHASSIS_TASK_STACK_BYTES,
-        CHASSIS_TASK_PRIORITY};
+        CT_STACK_BYTES,
+        CT_PRIORITY};
     OsalStatus status = OSAL_INVALID;
     OmRet ret = OM_OK;
     ChassisTaskContext* ctx = OM_NULL;
@@ -97,8 +97,8 @@ OmRet chassis_task_start(void)
         &ctx->mode_channel,
         g_chassis_task_mode_channel_storage,
         g_chassis_task_mode_channel_ready_flags,
-        sizeof(ChassisTaskModeSnapshot),
-        CHASSIS_TASK_MODE_CHANNEL_CAPACITY);
+        sizeof(ChassisModeSnap),
+        CT_MODE_CHANNEL_CAPACITY);
     if (ret != OM_OK)
     {
         task_context_pool_free(g_chassis_task_slot_id);
@@ -106,15 +106,15 @@ OmRet chassis_task_start(void)
         return ret;
     }
 
-    if (mode_task_copy_chassis_mode_snapshot(&ctx->latest_mode_snapshot) == OM_TRUE)
+    if (mode_task_copy_chassis_mode(&ctx->latest_mode_snapshot) == OM_TRUE)
     {
-        ctx->flags |= CHASSIS_TASK_FLAG_MODE_SNAPSHOT_READY;
+        ctx->flags |= CT_FLAG_MODE_READY;
     }
 
     ret = task_pipe_channel_init(
         &ctx->rc_channel,
         g_chassis_task_rc_channel_storage,
-        CHASSIS_TASK_RC_CHANNEL_CAPACITY_BYTES,
+        CT_RC_BYTES,
         sizeof(InputRcSnapshot));
     if (ret != OM_OK)
     {
@@ -127,7 +127,7 @@ OmRet chassis_task_start(void)
     ret = task_pipe_channel_init(
         &ctx->imu_channel,
         g_chassis_task_imu_channel_storage,
-        CHASSIS_TASK_IMU_CHANNEL_CAPACITY_BYTES,
+        CT_IMU_BYTES,
         sizeof(ImuTaskSnapshot));
     if (ret != OM_OK)
     {
@@ -168,20 +168,20 @@ OmRet chassis_task_start(void)
     return OM_OK;
 }
 
-OmRet chassis_task_submit_mode_control_snapshot(
-    const ChassisTaskModeSnapshot* snapshot)
+OmRet chassis_task_submit_mode(
+    const ChassisModeSnap* snapshot)
 {
     if (snapshot == OM_NULL || g_chassis_task_owner_context == OM_NULL)
     {
         return OM_ERROR_PARAM;
     }
 
-    return task_mpsc_channel_submit_nonblocking(
+    return tmpsc_submit(
         &g_chassis_task_owner_context->mode_channel,
         snapshot);
 }
 
-OmRet chassis_task_submit_rc_snapshot(
+OmRet chassis_task_submit_rc(
     const InputRcSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_chassis_task_owner_context == OM_NULL)
@@ -189,13 +189,13 @@ OmRet chassis_task_submit_rc_snapshot(
         return OM_ERROR_PARAM;
     }
 
-    return task_pipe_channel_submit_nonblocking(
+    return tpipe_submit(
         &g_chassis_task_owner_context->rc_channel,
         snapshot,
         OM_TRUE);
 }
 
-OmRet chassis_task_submit_imu_snapshot(
+OmRet chassis_task_submit_imu(
     const ImuTaskSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_chassis_task_owner_context == OM_NULL)
@@ -203,7 +203,7 @@ OmRet chassis_task_submit_imu_snapshot(
         return OM_ERROR_PARAM;
     }
 
-    return task_pipe_channel_submit_nonblocking(
+    return tpipe_submit(
         &g_chassis_task_owner_context->imu_channel,
         snapshot,
         OM_TRUE);

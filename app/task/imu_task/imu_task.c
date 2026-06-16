@@ -56,7 +56,7 @@ static void imu_task_publish_snapshot(const imu_data_t* imu_data)
     }
 
     imu_task_fill_snapshot(imu_data, &snapshot);
-    (void)chassis_task_submit_imu_snapshot(&snapshot);
+    (void)chassis_task_submit_imu(&snapshot);
 }
 
 static void imu_task_entry(void* arg)
@@ -135,10 +135,10 @@ OmRet imu_task_start(void)
     }
 
     {
-        const ModeTaskInitProgressMessage init_progress = {
-            .kind = (uint8_t)MODE_TASK_INIT_PROGRESS_IMU_READY,
+        const ModeTaskInitMessage init_progress = {
+            .kind = (uint8_t)MODE_INIT_IMU_READY,
             .value = 1u};
-        (void)mode_task_submit_init_progress(&init_progress);
+        (void)mode_task_submit_init(&init_progress);
     }
 
     return OM_OK;

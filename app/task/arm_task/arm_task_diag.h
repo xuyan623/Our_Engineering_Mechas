@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_ARM_TASK_DIAG_H
-#define NEW_ROBOT_ARM_TASK_DIAG_H
+#ifndef NEW_ROBOT_AT_DIAG_H
+#define NEW_ROBOT_AT_DIAG_H
 
 /* arm_task 观测接口。
  * 职责：为 VOFA、mode_task 等外部观测路径提供只读诊断快照。
@@ -13,17 +13,17 @@
 /* 当前自定义控制器接管是否已经完成对齐并进入可接管态。
  * 这是只读调试接口，供 VOFA 等观测路径使用。
  */
-uint8_t arm_task_get_custom_controller_alignment_done(void);
+uint8_t arm_task_custom_align_done(void);
 
 /* 自定义控制器最近一次接收快照的在线位。
  * 这是接收链语义，不依赖 mode_task 当前是否处于 CUSTOM domain。
  */
-uint8_t arm_task_get_custom_controller_online(void);
+uint8_t arm_task_get_custom_online(void);
 
 /* 自定义控制器是否正处于接管态（alignment 完成 + 模式匹配 + 在线 + 工作模式正确）。
  * 返回 1 表示正在接管，0 表示未接管。
  */
-uint8_t arm_task_get_custom_controller_takeover_bit(void);
+uint8_t arm_task_get_custom_takeover(void);
 
 
 
@@ -31,7 +31,7 @@ uint8_t arm_task_get_custom_controller_takeover_bit(void);
  * 当前按 Y / Z / X 三轴导出，单位为度（deg）。
  * 上下文未初始化或任一参数为 NULL 时返回 OM_FALSE。
  */
-OmBool arm_task_get_custom_controller_feedback_snapshot(
+OmBool arm_task_copy_custom_feedback(
     float* axis0_feedback_deg,
     float* axis1_feedback_deg,
     float* axis2_feedback_deg);
@@ -39,7 +39,7 @@ OmBool arm_task_get_custom_controller_feedback_snapshot(
 /* 采集自定义控制器 pitch 轴（控制 pitch3）的角度反馈。
  * 单位为度（deg）。
  */
-OmBool arm_task_get_custom_controller_pitch_axis_feedback(float* pitch_axis_feedback_deg);
+OmBool arm_task_get_custom_pitch_fb(float* pitch_axis_feedback_deg);
 
 /* 采集机械臂全部 7 轴电机角度反馈快照。
  * 顺序和单位与 g_arm_pose_* 动作表一致：
@@ -64,10 +64,10 @@ OmBool arm_task_get_custom_controller_pitch_axis_feedback(float* pitch_axis_feed
  * 该接口将电机原始反馈角逆向映射回机构角语义，
  * 便于在 VOFA 上直接与 g_arm_pose_* 动作表数值对比。
  */
-OmBool arm_task_get_arm_motor_machine_angle_rad_snapshot(
+OmBool arm_task_joint_snapshot(
     float machine_angle_rad[7]);
 
-OmBool arm_task_get_arm_motor_feedback_rad_snapshot(
+OmBool arm_task_copy_motor_feedback(
     float arm_feedback_rad[7]);
 
 /* 采集当前反馈对应的 6 轴 IK joint snapshot。
@@ -79,27 +79,29 @@ OmBool arm_task_get_arm_motor_feedback_rad_snapshot(
  * [4] pitch3
  * [5] roll3
  *
- * 单位均为 rad，语义固定为“真实电机 normal 姿态 = 0”。
+ * 单位均为 rad，语义与动作表机构角完全一致：
+ * - 每一轴都表示“反馈逆映射后的机构角 - 该轴零点”
+ * - normal 姿态对应 joint 约为 0
  */
-OmBool arm_task_get_ik_joint_snapshot(
+OmBool arm_task_ik_snapshot(
     ArmIkJointVector* joint_vector);
 
 /* 对当前反馈做 FK，导出末端位姿快照。 */
-OmBool arm_task_get_ik_forward_pose_snapshot(
+OmBool arm_task_get_fk_pose_snapshot(
     ArmIkPose* pose);
 
 /* 导出当前 IK 目标 pose 快照。
  * 当前只在 RC_IK 模式且目标已初始化时返回 OM_TRUE。
  */
-OmBool arm_task_get_ik_target_pose_snapshot(
+OmBool arm_task_get_ik_target_pose(
     ArmIkPose* pose);
 
 /* 对当前反馈做姿态特征分类，导出 shoulder/elbow/wrist 分支。 */
-OmBool arm_task_get_ik_pose_feature_snapshot(
-    ArmIkPoseFeatureSnapshot* pose_feature_snapshot);
+OmBool arm_task_get_ik_feat_snapshot(
+    ArmIkPoseFeat* pose_feature_snapshot);
 
 /* 导出当前 arm_task 正式控制模式枚举值。 */
-OmBool arm_task_get_arm_mode_snapshot(
+OmBool arm_task_mode_snapshot(
     uint8_t* arm_mode);
 
 
@@ -111,7 +113,7 @@ OmBool arm_task_get_arm_mode_snapshot(
  * - 力矩单位：N·m
  * - online：0/1
  */
-OmBool arm_task_get_pitch2_debug_snapshot(
+OmBool arm_task_pitch2_debug(
     float* pitch2_feedback_deg,
     float* pitch2_feedback_rpm,
     float* pitch2_feedback_current,
@@ -125,7 +127,7 @@ OmBool arm_task_get_pitch2_debug_snapshot(
  * - 力矩单位：N·m
  * - online：0/1
  */
-OmBool arm_task_get_pitch1_debug_snapshot(
+OmBool arm_task_pitch1_debug(
     float* pitch1_feedback_deg,
     float* pitch1_feedback_rpm,
     float* pitch1_feedback_torque,
@@ -138,7 +140,7 @@ OmBool arm_task_get_pitch1_debug_snapshot(
  * - 力矩单位：N·m
  * - online：0/1
  */
-OmBool arm_task_get_pitch3_debug_snapshot(
+OmBool arm_task_pitch3_debug(
     float* pitch3_feedback_deg,
     float* pitch3_feedback_rpm,
     float* pitch3_feedback_torque,
@@ -178,7 +180,7 @@ OmBool arm_task_get_debug_snapshot(
  *   [4] pitch3    (rad)
  *   [5] roll3     (rad)
  *   [6] grip      (rad)
- *   [7] custom_controller_takeover_bit (bit)
+ *   [7] custom_takeover_bit (bit)
  */
 void arm_task_diag_online(void* ctx, uint8_t* out_online);
 void arm_task_diag_snapshot(void* ctx, float* out_buf, uint32_t cap, uint32_t* out_count);

@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_CHASSIS_TASK_DIAG_H
-#define NEW_ROBOT_CHASSIS_TASK_DIAG_H
+#ifndef NEW_ROBOT_CT_DIAG_H
+#define NEW_ROBOT_CT_DIAG_H
 
 /* chassis_task 观测接口。
  * 职责：为 VOFA 等外部观测路径提供只读诊断快照。
@@ -14,7 +14,7 @@
  * - leg_feedback_deg / leg_command_current：长度 2（两腿）
  * 任一参数为 NULL 或上下文未初始化时返回 OM_FALSE。
  */
-OmBool chassis_task_get_debug_snapshot(
+OmBool chassis_task_debug_snapshot(
     float wheel_feedback_rpm[4],
     float wheel_command_current[4],
     float leg_feedback_deg[2],
@@ -24,7 +24,7 @@ OmBool chassis_task_get_debug_snapshot(
  * - chassis_mode：输出当前 operational phase（0=release,1=selection,2=formal）
  * - 返回 OM_TRUE 表示模式快照已就绪，OM_FALSE 表示尚未收到首帧
  */
-OmBool chassis_task_get_debug_chassis_mode(
+OmBool chassis_task_get_phase_debug(
     uint8_t* chassis_mode);
 
 /* VTable 诊断回调：

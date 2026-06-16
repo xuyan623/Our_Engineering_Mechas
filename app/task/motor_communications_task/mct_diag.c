@@ -10,22 +10,22 @@ OmRet mct_copy_recovery_snapshots(
     uint32_t capacity,
     uint32_t* snapshot_count)
 {
-    return motor_recovery_copy_snapshots(snapshots, capacity, snapshot_count);
+    return motor_recovery_copy(snapshots, capacity, snapshot_count);
 }
 
-OmRet mct_copy_p1010b_predicate_snapshots(
-    MotorRecoveryP1010BPredicateSnapshot* snapshots,
+OmRet mct_copy_p1010b_checks(
+    MotorRecoveryP1010BInfo* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count)
 {
-    return motor_recovery_copy_p1010b_predicate_snapshots(
+    return motor_recovery_copy_p1010b(
         snapshots,
         capacity,
         snapshot_count);
 }
 
 /* P1010B 诊断快照只反映 active report 的反馈新鲜度。 */
-OmRet mct_copy_p1010b_diag_snapshots(
+OmRet mct_copy_p1010b_diag(
     MctP1010BDiagSnapshot* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count)
@@ -87,7 +87,7 @@ OmRet mct_copy_p1010b_diag_snapshots(
  * - bus 级 raw rx 观测
  * - 每台正式达妙驱动的 feedback_sequence
  */
-OmRet mct_copy_damiao_diag(
+OmRet mct_copy_damiao_bus_diag(
     MctDamiaoDiagSnapshot* snapshot)
 {
     uint32_t index = 0u;
@@ -99,25 +99,25 @@ OmRet mct_copy_damiao_diag(
 
     memset(snapshot, 0, sizeof(*snapshot));
     snapshot->raw_rx_count =
-        damiao_motor_bus_get_raw_rx_count(&g_mct_runtime.damiao_bus);
+        dm_raw_rx_cnt(&g_mct_runtime.damiao_bus);
     snapshot->last_raw_stdid =
-        damiao_motor_bus_get_last_raw_stdid(&g_mct_runtime.damiao_bus);
+        dm_last_raw_id(&g_mct_runtime.damiao_bus);
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
         snapshot->raw_rx_by_stdid[index] =
-            damiao_motor_bus_get_raw_rx_by_stdid(&g_mct_runtime.damiao_bus, index);
+            dm_raw_rx_id(&g_mct_runtime.damiao_bus, index);
         snapshot->raw_tx_by_stdid[index] =
-            damiao_motor_bus_get_raw_tx_by_stdid(&g_mct_runtime.damiao_bus, index);
+            dm_raw_tx_id(&g_mct_runtime.damiao_bus, index);
         snapshot->feedback_sequence[index] =
-            damiao_motor_get_feedback_sequence(&g_mct_runtime.damiao_drivers[index]);
+            dm_fb_seq(&g_mct_runtime.damiao_drivers[index]);
     }
 
     return OM_OK;
 }
 
-OmRet mct_copy_damiao_motor_diag_snapshots(
-    MctDamiaoMotorDiagSnapshot* snapshots,
+OmRet mct_copy_damiao_diag_items(
+    MctDamiaoDiagItem* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count)
 {
@@ -152,7 +152,7 @@ OmRet mct_copy_damiao_motor_diag_snapshots(
                 (uint32_t)(now_ms - g_mct_runtime.damiao_motors[index].feedback.timestamp_ms) :
                 0u;
         snapshots[index].feedback_sequence =
-            damiao_motor_get_feedback_sequence(&g_mct_runtime.damiao_drivers[index]);
+            dm_fb_seq(&g_mct_runtime.damiao_drivers[index]);
         snapshots[index].status =
             damiao_motor_get_status(&g_mct_runtime.damiao_drivers[index]);
         (*snapshot_count)++;

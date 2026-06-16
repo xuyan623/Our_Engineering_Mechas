@@ -17,7 +17,7 @@ static OmRet mct_register_dji(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DJI_CHASSIS_COUNT; index++)
     {
-        if (app_motor_profile_is_present(g_mct_dji_chassis_configs[index].profile_role) != OM_TRUE)
+        if (app_motor_role_is_present(g_mct_dji_chassis_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -36,7 +36,7 @@ static OmRet mct_register_dji(MctRuntime* runtime)
             return ret;
         }
 
-        ret = motor_recovery_register_entry(
+        ret = motor_recovery_register(
             &runtime->dji_chassis_motors[index]);
         if (ret != OM_OK)
         {
@@ -44,14 +44,14 @@ static OmRet mct_register_dji(MctRuntime* runtime)
         }
     }
 
-    if (app_motor_profile_is_present(APP_MOTOR_ROLE_ROLL3) != OM_TRUE)
+    if (app_motor_role_is_present(APP_MR_ROLL3) != OM_TRUE)
     {
         return OM_OK;
     }
 
     ret = motor_attach_dji(
         &runtime->dji_roll3_motor,
-        APP_MOTOR_NAME_ROLL3,
+        APP_MN_ROLL3,
         &runtime->dji_bus,
         &runtime->dji_roll3_driver,
         DJI_MOTOR_TYPE_GM6020,
@@ -63,7 +63,7 @@ static OmRet mct_register_dji(MctRuntime* runtime)
         return ret;
     }
 
-    return motor_recovery_register_entry(&runtime->dji_roll3_motor);
+    return motor_recovery_register(&runtime->dji_roll3_motor);
 }
 
 /* P1010B 注册阶段只完成：
@@ -86,7 +86,7 @@ static OmRet mct_register_p1010b(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
-        if (app_motor_profile_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        if (app_motor_role_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -104,9 +104,9 @@ static OmRet mct_register_p1010b(MctRuntime* runtime)
             return ret;
         }
 
-        motor_recovery_configure_p1010b_driver(&runtime->p1010b_drivers[index]);
+        motor_recovery_bind_p1010b(&runtime->p1010b_drivers[index]);
 
-        ret = motor_recovery_register_entry(
+        ret = motor_recovery_register(
             &runtime->p1010b_motors[index]);
         if (ret != OM_OK)
         {
@@ -135,7 +135,7 @@ static OmRet mct_register_damiao(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (app_motor_profile_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
+        if (app_motor_role_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -154,7 +154,7 @@ static OmRet mct_register_damiao(MctRuntime* runtime)
             return ret;
         }
 
-        ret = motor_recovery_register_entry(
+        ret = motor_recovery_register(
             &runtime->damiao_motors[index]);
         if (ret != OM_OK)
         {
@@ -175,14 +175,14 @@ static OmRet mct_register_go8010(MctRuntime* runtime)
         return OM_ERROR_NULL;
     }
 
-    if (app_motor_profile_is_present(APP_MOTOR_ROLE_PITCH2) != OM_TRUE)
+    if (app_motor_role_is_present(APP_MR_PITCH2) != OM_TRUE)
     {
         return OM_OK;
     }
 
     ret = motor_attach_go8010(
         &runtime->go8010_pitch2_motor,
-        APP_MOTOR_NAME_PITCH2,
+        APP_MN_PITCH2,
         &runtime->go8010_bus,
         &runtime->go8010_pitch2_driver,
         MCT_GO8010_PITCH2_ID,
@@ -192,7 +192,7 @@ static OmRet mct_register_go8010(MctRuntime* runtime)
         return ret;
     }
 
-    return motor_recovery_register_entry(&runtime->go8010_pitch2_motor);
+    return motor_recovery_register(&runtime->go8010_pitch2_motor);
 }
 
 /* P1010B 启动期固定四步：
@@ -210,7 +210,7 @@ static OmRet mct_prepare_p1010b_motor(Motor* motor)
     }
 
     driver = motor->binding.p1010b.driver;
-    motor_recovery_configure_p1010b_driver(driver);
+    motor_recovery_bind_p1010b(driver);
 
     ret = p1010b_disable(driver, 0u, &response);
     if (ret != OM_OK)
@@ -237,7 +237,7 @@ static OmRet mct_prepare_p1010b_motor(Motor* motor)
     ret = p1010b_enable(driver, 0u, &response);
     if (ret == OM_OK)
     {
-        motor_recovery_notify_p1010b_enabled(motor);
+        motor_recovery_mark_p1010b(motor);
     }
 
     return ret;
@@ -258,7 +258,7 @@ static OmRet mct_prepare_p1010b(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_P1010B_COUNT; index++)
     {
-        if (app_motor_profile_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
+        if (app_motor_role_is_present(g_mct_p1010b_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -290,12 +290,12 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (app_motor_profile_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
+        if (app_motor_role_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
 
-        ret = motor_owner_prepare_working_state(&runtime->damiao_motors[index]);
+        ret = motor_owner_prepare_work(&runtime->damiao_motors[index]);
         if (ret != OM_OK)
         {
             last_error = ret;
@@ -310,7 +310,7 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
 
     for (index = 0u; index < MCT_DAMIAO_COUNT; index++)
     {
-        if (app_motor_profile_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
+        if (app_motor_role_is_present(g_mct_damiao_configs[index].profile_role) != OM_TRUE)
         {
             continue;
         }
@@ -321,7 +321,7 @@ static OmRet mct_prepare_damiao(MctRuntime* runtime)
             last_error = ret;
             continue;
         }
-        motor_recovery_notify_damiao_enabled(&runtime->damiao_motors[index]);
+        motor_recovery_mark_damiao(&runtime->damiao_motors[index]);
     }
 
     if (sync_motor != OM_NULL && motor_owner_sync_bus(sync_motor) != OM_OK)

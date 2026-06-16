@@ -34,13 +34,13 @@ typedef struct
 {
     const char* task_name;
     TaskContextSlotId slot_id;
-    float snapshot[VOFA_LAYOUT_MAX_CHANNELS];
+    float snapshot[VL_MAX_CHANNELS];
     uint32_t snapshot_count;
 } VofaResolvedTask;
 
-static float g_vofa_frame[VOFA_LAYOUT_MAX_CHANNELS] = {0.0f};
+static float g_vofa_frame[VL_MAX_CHANNELS] = {0.0f};
 static const VofaLayoutDef* g_vofa_layout = OM_NULL;
-static VofaResolvedTask g_vofa_resolved_tasks[VOFA_LAYOUT_MAX_CHANNELS] = {0};
+static VofaResolvedTask g_vofa_resolved_tasks[VL_MAX_CHANNELS] = {0};
 static uint32_t g_vofa_resolved_task_count = 0u;
 
 static OmRet vofa_task_prepare_uart7(Device* uart7_device)
@@ -83,7 +83,7 @@ static void vofa_task_drain_uart7_rx(Device* uart7_device)
     }
 }
 
-static float vofa_task_get_can_tx_fifo_used(Device* can_device)
+static float vt_can_tx(Device* can_device)
 {
     const HalCanHandler* can = (const HalCanHandler*)can_device;
     size_t total_count = 0u;
@@ -105,7 +105,7 @@ static float vofa_task_get_can_tx_fifo_used(Device* can_device)
 static TaskContextSlotId vofa_task_find_slot_by_name(const char* task_name)
 {
     uint32_t i = 0;
-    uint32_t count = task_context_pool_get_allocated_count();
+    uint32_t count = task_context_pool_count();
 
     if (task_name == OM_NULL)
     {
@@ -114,7 +114,7 @@ static TaskContextSlotId vofa_task_find_slot_by_name(const char* task_name)
 
     for (i = 0; i < count; i++)
     {
-        TaskContextSlotId slot = task_context_pool_get_slot_by_index(i);
+        TaskContextSlotId slot = task_context_pool_slot_at(i);
         const char* name = task_context_pool_get_name(slot);
         if (name != OM_NULL && strcmp(name, task_name) == 0)
         {
@@ -153,7 +153,7 @@ static OmRet vofa_task_prepare_layout(void)
     g_vofa_layout = vofa_layout_get_default();
     if (g_vofa_layout == OM_NULL || g_vofa_layout->channels == OM_NULL ||
         g_vofa_layout->channel_count == 0u ||
-        g_vofa_layout->channel_count > VOFA_LAYOUT_MAX_CHANNELS)
+        g_vofa_layout->channel_count > VL_MAX_CHANNELS)
     {
         return OM_ERROR_PARAM;
     }
@@ -166,7 +166,7 @@ static OmRet vofa_task_prepare_layout(void)
         const VofaChannelDescriptor* descriptor = &g_vofa_layout->channels[channel_index];
         TaskContextSlotId slot_id = 0u;
 
-        if (descriptor->source_kind != VOFA_LAYOUT_SOURCE_TASK_SNAPSHOT ||
+        if (descriptor->source_kind != VL_SRC_TASK_SNAPSHOT ||
             descriptor->task_name == OM_NULL)
         {
             continue;
@@ -177,7 +177,7 @@ static OmRet vofa_task_prepare_layout(void)
             continue;
         }
 
-        if (g_vofa_resolved_task_count >= VOFA_LAYOUT_MAX_CHANNELS)
+        if (g_vofa_resolved_task_count >= VL_MAX_CHANNELS)
         {
             return OM_ERROR;
         }
@@ -197,7 +197,7 @@ static OmRet vofa_task_prepare_layout(void)
     return OM_OK;
 }
 
-static void vofa_task_refresh_resolved_snapshots(void)
+static void vt_refresh(void)
 {
     uint32_t index = 0u;
 
@@ -207,17 +207,17 @@ static void vofa_task_refresh_resolved_snapshots(void)
         g_vofa_resolved_tasks[index].snapshot_count = 0u;
         if (g_vofa_resolved_tasks[index].slot_id != 0u)
         {
-            task_context_pool_call_diag_snapshot(
+            task_context_pool_diag_snap(
                 g_vofa_resolved_tasks[index].slot_id,
                 g_vofa_resolved_tasks[index].snapshot,
-                VOFA_LAYOUT_MAX_CHANNELS,
+                VL_MAX_CHANNELS,
                 &g_vofa_resolved_tasks[index].snapshot_count);
         }
     }
 }
 
 static void vofa_task_fill_frame(
-    float frame[VOFA_LAYOUT_MAX_CHANNELS],
+    float frame[VL_MAX_CHANNELS],
     uint32_t* frame_count,
     const BspDeviceRegistry* devices)
 {
@@ -237,14 +237,14 @@ static void vofa_task_fill_frame(
     }
 
     *frame_count = 0u;
-    memset(frame, 0, sizeof(float) * VOFA_LAYOUT_MAX_CHANNELS);
+    memset(frame, 0, sizeof(float) * VL_MAX_CHANNELS);
 
     if (devices == OM_NULL || g_vofa_layout == OM_NULL)
     {
         return;
     }
 
-    vofa_task_refresh_resolved_snapshots();
+    vt_refresh();
 
     for (channel_index = 0u; channel_index < g_vofa_layout->channel_count; channel_index++)
     {
@@ -253,7 +253,7 @@ static void vofa_task_fill_frame(
 
         switch (descriptor->source_kind)
         {
-        case VOFA_LAYOUT_SOURCE_TASK_SNAPSHOT:
+        case VL_SRC_TASK_SNAPSHOT:
         {
             VofaResolvedTask* resolved_task = vofa_task_find_resolved_task(descriptor->task_name);
             if (resolved_task != OM_NULL &&
@@ -264,18 +264,18 @@ static void vofa_task_fill_frame(
             break;
         }
 
-        case VOFA_LAYOUT_SOURCE_CAN1_TX_FIFO_USED:
-            value = vofa_task_get_can_tx_fifo_used(devices->can1);
+        case VL_SRC_CAN1_TX_USED:
+            value = vt_can_tx(devices->can1);
             break;
 
-        case VOFA_LAYOUT_SOURCE_CAN2_TX_FIFO_USED:
-            value = vofa_task_get_can_tx_fifo_used(devices->can2);
+        case VL_SRC_CAN2_TX_USED:
+            value = vt_can_tx(devices->can2);
             break;
 
-        case VOFA_LAYOUT_SOURCE_ARM_FK_POSE_COMPONENT:
+        case VOFA_SRC_ARM_FK_POSE:
             if (arm_fk_pose_ready != OM_TRUE)
             {
-                arm_fk_pose_ready = arm_task_get_ik_forward_pose_snapshot(&arm_fk_pose);
+                arm_fk_pose_ready = arm_task_get_fk_pose_snapshot(&arm_fk_pose);
             }
             if (arm_fk_pose_ready == OM_TRUE && descriptor->snapshot_index < 6u)
             {
@@ -290,10 +290,10 @@ static void vofa_task_fill_frame(
             }
             break;
 
-        case VOFA_LAYOUT_SOURCE_ARM_IK_JOINT_COMPONENT:
+        case VOFA_SRC_ARM_IK_JOINT:
             if (arm_ik_joint_ready != OM_TRUE)
             {
-                arm_ik_joint_ready = arm_task_get_ik_joint_snapshot(&arm_ik_joint_vector);
+                arm_ik_joint_ready = arm_task_ik_snapshot(&arm_ik_joint_vector);
             }
             if (arm_ik_joint_ready == OM_TRUE && descriptor->snapshot_index < 6u)
             {
@@ -301,10 +301,10 @@ static void vofa_task_fill_frame(
             }
             break;
 
-        case VOFA_LAYOUT_SOURCE_ARM_MODE:
+        case VL_SRC_ARM_MODE:
             if (arm_mode_ready != OM_TRUE)
             {
-                arm_mode_ready = arm_task_get_arm_mode_snapshot(&arm_mode);
+                arm_mode_ready = arm_task_mode_snapshot(&arm_mode);
             }
             if (arm_mode_ready == OM_TRUE)
             {
@@ -312,10 +312,10 @@ static void vofa_task_fill_frame(
             }
             break;
 
-        case VOFA_LAYOUT_SOURCE_ARM_IK_TARGET_POSITION_COMPONENT:
+        case VOFA_SRC_ARM_IK_TARGET_POS:
             if (arm_ik_target_pose_ready != OM_TRUE)
             {
-                arm_ik_target_pose_ready = arm_task_get_ik_target_pose_snapshot(&arm_ik_target_pose);
+                arm_ik_target_pose_ready = arm_task_get_ik_target_pose(&arm_ik_target_pose);
             }
             if (arm_ik_target_pose_ready == OM_TRUE && descriptor->snapshot_index < 3u)
             {
@@ -323,7 +323,7 @@ static void vofa_task_fill_frame(
             }
             break;
 
-        case VOFA_LAYOUT_SOURCE_CONST_ZERO:
+        case VL_SRC_CONST_ZERO:
         default:
             value = 0.0f;
             break;

@@ -6,11 +6,11 @@
 typedef struct
 {
     uint8_t work_mode;
-    float angle_deg[INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT];
-    uint8_t reserved[INPUT_TASK_CUSTOM_CONTROLLER_PAYLOAD_LEN - sizeof(uint8_t) - sizeof(float) * INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT];
-} __attribute__((__packed__)) InputTaskCustomControllerPayload;
+    float angle_deg[IC_ANGLE_COUNT];
+    uint8_t reserved[IC_PAYLOAD_LEN - sizeof(uint8_t) - sizeof(float) * IC_ANGLE_COUNT];
+} __attribute__((__packed__)) InputCustomPayload;
 
-static InputCustomControllerSnapshot g_input_task_custom_controller_snapshot = {0};
+static InputCustomSnapshot g_input_custom_snapshot = {0};
 
 /* 只有整帧 CRC16 和 cmd_id 都通过后，才刷新 owner 持有的 latest-cache。
  * 这保证 arm_task / mode_task 看到的始终是一份“最近一次合法帧”快照。
@@ -26,7 +26,7 @@ static InputCustomControllerSnapshot g_input_task_custom_controller_snapshot = {
  * @param runtime 运行时调试状态指针，用于记录统计信息和序列号等
  * @param parser 解析器状态指针，用于更新最后接收帧的时间戳
  * @param frame 指向完整数据帧的指针，包含帧头、命令、载荷和CRC校验
- * @param frame_len 数据帧的长度，必须等于INPUT_TASK_CUSTOM_CONTROLLER_FRAME_MAX_SIZE
+ * @param frame_len 数据帧的长度，必须等于IC_FRAME_SIZE
  * @param now_ms 当前系统时间戳（毫秒），用于更新帧接收时间和计算帧龄
  * 
  * @return 无返回值，失败时直接返回，成功时更新数据池和统计信息
@@ -34,16 +34,16 @@ static InputCustomControllerSnapshot g_input_task_custom_controller_snapshot = {
  * @note 函数采用快速失败策略，任何验证失败都会立即返回并递增相应的错误计数
  * @note 只有在CRC16校验和命令ID都通过的情况下，才会更新控制器正式快照
  */
-static void input_task_custom_controller_consume_frame(
-    InputTaskCustomControllerDebugState* runtime,
-    InputTaskCustomControllerParser* parser,
-    const uint8_t frame[INPUT_TASK_CUSTOM_CONTROLLER_FRAME_MAX_SIZE],
+static void input_custom_consume_frame(
+    InputCustomDebugState* runtime,
+    InputCustomParser* parser,
+    const uint8_t frame[IC_FRAME_SIZE],
     uint16_t frame_len,
     OsalTimeMs now_ms)
 {
     uint16_t cmd_id = 0u;
-    InputTaskCustomControllerPayload payload = {0};
-    InputCustomControllerSnapshot snapshot = {0};
+    InputCustomPayload payload = {0};
+    InputCustomSnapshot snapshot = {0};
     uint32_t angle_index = 0u;
 
     /* 参数有效性检查：确保所有必需指针非空 */
@@ -53,7 +53,7 @@ static void input_task_custom_controller_consume_frame(
     }
 
     /* 帧长度验证：确保接收到的帧长度与预期完全一致 */
-    if (frame_len != INPUT_TASK_CUSTOM_CONTROLLER_FRAME_MAX_SIZE)
+    if (frame_len != IC_FRAME_SIZE)
     {
         return;
     }
@@ -66,10 +66,10 @@ static void input_task_custom_controller_consume_frame(
     }
 
     /* 提取并验证命令ID：从帧中解析16位命令ID并与期望值比较 */
-    cmd_id = (uint16_t)(frame[INPUT_TASK_CUSTOM_CONTROLLER_HEADER_LEN] |
-                        (frame[INPUT_TASK_CUSTOM_CONTROLLER_HEADER_LEN + 1u]
+    cmd_id = (uint16_t)(frame[IC_HEADER_LEN] |
+                        (frame[IC_HEADER_LEN + 1u]
                          << 8u));
-    if (cmd_id != INPUT_TASK_CUSTOM_CONTROLLER_CMD_ID)
+    if (cmd_id != IC_CMD_ID)
     {
         runtime->cmd_mismatch_count++;
         return;
@@ -78,28 +78,28 @@ static void input_task_custom_controller_consume_frame(
     /* 解析载荷数据：从帧中提取工作模式和角度数组 */
     memcpy(
         &payload,
-        &frame[INPUT_TASK_CUSTOM_CONTROLLER_HEADER_LEN +
-               INPUT_TASK_CUSTOM_CONTROLLER_CMD_LEN],
+        &frame[IC_HEADER_LEN +
+               IC_CMD_LEN],
         sizeof(payload));
 
     snapshot.online = 1u;
     snapshot.work_mode = payload.work_mode;
-    for (angle_index = 0u; angle_index < INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT;
+    for (angle_index = 0u; angle_index < IC_ANGLE_COUNT;
          angle_index++)
     {
         snapshot.angle_deg[angle_index] = payload.angle_deg[angle_index];
     }
 
     /* 标记控制器在线状态，更新解析器时间戳和运行时统计信息。 */
-    g_input_task_custom_controller_snapshot = snapshot;
+    g_input_custom_snapshot = snapshot;
     parser->last_frame_ms = now_ms;
     runtime->frame_count++;
     runtime->last_seq = frame[3];
     runtime->last_frame_age_ms = 0u;
 }
 
-void input_task_custom_controller_reset_runtime(
-    InputTaskCustomControllerDebugState* runtime)
+void input_custom_reset_runtime(
+    InputCustomDebugState* runtime)
 {
     if (runtime == OM_NULL)
     {
@@ -109,24 +109,24 @@ void input_task_custom_controller_reset_runtime(
     memset((void*)runtime, 0, sizeof(*runtime));
 }
 
-void input_task_custom_controller_reset_latest_snapshot(void)
+void input_custom_reset_latest(void)
 {
-    InputCustomControllerSnapshot snapshot = {0};
+    InputCustomSnapshot snapshot = {0};
     uint32_t angle_index = 0u;
 
     /* 降级启动或控制器掉线时，统一把 owner latest-cache 收回到“离线 + 0 值”。
      * 这样其它任务不需要再区分“从没启动成功”和“运行时断开”。
      */
-    for (angle_index = 0u; angle_index < INPUT_TASK_CUSTOM_CONTROLLER_ANGLE_COUNT;
+    for (angle_index = 0u; angle_index < IC_ANGLE_COUNT;
          angle_index++)
     {
         snapshot.angle_deg[angle_index] = 0.0f;
     }
-    g_input_task_custom_controller_snapshot = snapshot;
+    g_input_custom_snapshot = snapshot;
 }
 
-void input_task_custom_controller_reset_parser(
-    InputTaskCustomControllerParser* parser,
+void input_custom_reset_parser(
+    InputCustomParser* parser,
     uint8_t maybe_sof)
 {
     if (parser == OM_NULL)
@@ -138,13 +138,13 @@ void input_task_custom_controller_reset_parser(
     parser->index = 0u;
     parser->data_length = 0u;
     parser->expected_frame_len = 0u;
-    parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_WAIT_SOF;
+    parser->step = IC_STEP_WAIT_SOF;
 
-    if (maybe_sof == INPUT_TASK_CUSTOM_CONTROLLER_FRAME_SOF)
+    if (maybe_sof == IC_FRAME_SOF)
     {
         parser->buffer[0] = maybe_sof;
         parser->index = 1u;
-        parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_LENGTH_LOW;
+        parser->step = IC_STEP_LEN_LO;
     }
 }
 
@@ -171,9 +171,9 @@ void input_task_custom_controller_reset_parser(
  *         - OM_ERROR: CRC8校验失败
  *         - OM_ERR_OVERFLOW: 缓冲区溢出
  */
-OmRet input_task_custom_controller_accept_byte(
-    InputTaskCustomControllerDebugState* runtime,
-    InputTaskCustomControllerParser* parser,
+OmRet input_custom_accept_byte(
+    InputCustomDebugState* runtime,
+    InputCustomParser* parser,
     uint8_t byte,
     OsalTimeMs now_ms)
 {
@@ -184,66 +184,66 @@ OmRet input_task_custom_controller_accept_byte(
 
     switch (parser->step)
     {
-    case INPUT_TASK_CUSTOM_CONTROLLER_STEP_WAIT_SOF:
+    case IC_STEP_WAIT_SOF:
         /* 只接受 0xA5 作为新帧起点；其它字节全部丢掉。 */
-        if (byte == INPUT_TASK_CUSTOM_CONTROLLER_FRAME_SOF)
+        if (byte == IC_FRAME_SOF)
         {
             parser->buffer[0] = byte;
             parser->index = 1u;
-            parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_LENGTH_LOW;
+            parser->step = IC_STEP_LEN_LO;
         }
         return OM_OK;
 
-    case INPUT_TASK_CUSTOM_CONTROLLER_STEP_LENGTH_LOW:
+    case IC_STEP_LEN_LO:
         parser->buffer[parser->index++] = byte;
         parser->data_length = byte;
-        parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_LENGTH_HIGH;
+        parser->step = IC_STEP_LEN_HI;
         return OM_OK;
 
-    case INPUT_TASK_CUSTOM_CONTROLLER_STEP_LENGTH_HIGH:
+    case IC_STEP_LEN_HI:
         parser->buffer[parser->index++] = byte;
         parser->data_length = (uint16_t)(parser->data_length | (byte << 8u));
         
         /* 验证数据长度是否符合预期，不符合则重置解析器 */
-        if (parser->data_length != INPUT_TASK_CUSTOM_CONTROLLER_PAYLOAD_LEN)
+        if (parser->data_length != IC_PAYLOAD_LEN)
         {
-            input_task_custom_controller_reset_parser(parser, byte);
+            input_custom_reset_parser(parser, byte);
             return OM_ERROR_PARAM;
         }
         
         /* 计算期望的完整帧长度 */
         parser->expected_frame_len =
-            (uint16_t)(INPUT_TASK_CUSTOM_CONTROLLER_HEADER_LEN +
-                       INPUT_TASK_CUSTOM_CONTROLLER_CMD_LEN +
+            (uint16_t)(IC_HEADER_LEN +
+                       IC_CMD_LEN +
                        parser->data_length +
-                       INPUT_TASK_CUSTOM_CONTROLLER_CRC16_LEN);
-        parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_SEQ;
+                       IC_CRC16_LEN);
+        parser->step = IC_STEP_SEQ;
         return OM_OK;
 
-    case INPUT_TASK_CUSTOM_CONTROLLER_STEP_SEQ:
+    case IC_STEP_SEQ:
         parser->buffer[parser->index++] = byte;
-        parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_HEADER_CRC8;
+        parser->step = IC_STEP_HEADER_CRC8;
         return OM_OK;
 
-    case INPUT_TASK_CUSTOM_CONTROLLER_STEP_HEADER_CRC8:
+    case IC_STEP_HEADER_CRC8:
         parser->buffer[parser->index++] = byte;
         
         /* 验证帧头CRC8校验和，失败则丢弃当前帧并重新寻找SOF */
         if (verify_crc8_check_sum(
-                parser->buffer, INPUT_TASK_CUSTOM_CONTROLLER_HEADER_LEN) == 0u)
+                parser->buffer, IC_HEADER_LEN) == 0u)
         {
             runtime->crc8_fail_count++;
-            input_task_custom_controller_reset_parser(parser, byte);
+            input_custom_reset_parser(parser, byte);
             return OM_ERROR;
         }
-        parser->step = INPUT_TASK_CUSTOM_CONTROLLER_STEP_BODY_AND_CRC16;
+        parser->step = IC_STEP_BODY_CRC16;
         return OM_OK;
 
-    case INPUT_TASK_CUSTOM_CONTROLLER_STEP_BODY_AND_CRC16:
+    case IC_STEP_BODY_CRC16:
         /* 检查缓冲区是否溢出 */
-        if (parser->index >= INPUT_TASK_CUSTOM_CONTROLLER_FRAME_MAX_SIZE)
+        if (parser->index >= IC_FRAME_SIZE)
         {
-            input_task_custom_controller_reset_parser(parser, byte);
+            input_custom_reset_parser(parser, byte);
             return OM_ERR_OVERFLOW;
         }
 
@@ -256,23 +256,23 @@ OmRet input_task_custom_controller_accept_byte(
         }
 
         /* 到这里说明一帧字节数已经收满，剩下的合法性由 consume_frame 统一判断。 */
-        input_task_custom_controller_consume_frame(
+        input_custom_consume_frame(
             runtime, parser, parser->buffer, parser->expected_frame_len, now_ms);
-        input_task_custom_controller_reset_parser(parser, 0u);
+        input_custom_reset_parser(parser, 0u);
         return OM_OK;
 
     default:
-        input_task_custom_controller_reset_parser(parser, byte);
+        input_custom_reset_parser(parser, byte);
         return OM_ERROR_PARAM;
     }
 }
 
-OmBool input_task_custom_controller_update_online_state(
-    InputTaskCustomControllerDebugState* runtime,
-    const InputTaskCustomControllerParser* parser,
+OmBool input_custom_update_online(
+    InputCustomDebugState* runtime,
+    const InputCustomParser* parser,
     OsalTimeMs now_ms)
 {
-    const uint8_t previous_online = g_input_task_custom_controller_snapshot.online;
+    const uint8_t previous_online = g_input_custom_snapshot.online;
 
     if (runtime == OM_NULL || parser == OM_NULL)
     {
@@ -281,9 +281,9 @@ OmBool input_task_custom_controller_update_online_state(
 
     if (parser->last_frame_ms == 0u)
     {
-        g_input_task_custom_controller_snapshot.online = 0u;
+        g_input_custom_snapshot.online = 0u;
         runtime->last_frame_age_ms = 0u;
-        return (previous_online != g_input_task_custom_controller_snapshot.online) ? OM_TRUE : OM_FALSE;
+        return (previous_online != g_input_custom_snapshot.online) ? OM_TRUE : OM_FALSE;
     }
 
     /* 控制器 online 只由“最近是否收到合法帧”决定，
@@ -291,25 +291,25 @@ OmBool input_task_custom_controller_update_online_state(
      */
     runtime->last_frame_age_ms = (uint32_t)(now_ms - parser->last_frame_ms);
     if (runtime->last_frame_age_ms >
-        INPUT_TASK_CUSTOM_CONTROLLER_FRAME_TIMEOUT_MS)
+        IC_FRAME_TIMEOUT_MS)
     {
-        g_input_task_custom_controller_snapshot.online = 0u;
+        g_input_custom_snapshot.online = 0u;
     }
     else
     {
-        g_input_task_custom_controller_snapshot.online = 1u;
+        g_input_custom_snapshot.online = 1u;
     }
 
-    return (previous_online != g_input_task_custom_controller_snapshot.online) ? OM_TRUE : OM_FALSE;
+    return (previous_online != g_input_custom_snapshot.online) ? OM_TRUE : OM_FALSE;
 }
 
-void input_task_custom_controller_copy_snapshot(
-    InputCustomControllerSnapshot* snapshot)
+void input_custom_copy_snapshot(
+    InputCustomSnapshot* snapshot)
 {
     if (snapshot == OM_NULL)
     {
         return;
     }
 
-    *snapshot = g_input_task_custom_controller_snapshot;
+    *snapshot = g_input_custom_snapshot;
 }

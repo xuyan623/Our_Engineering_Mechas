@@ -390,7 +390,7 @@ const MotorFeedback* motor_get_feedback(const Motor* motor);
  * @param motor 电机实例指针
  * @return uint32_t 时间戳（毫秒）
  */
-uint32_t motor_get_feedback_timestamp_ms(const Motor* motor);
+uint32_t motor_fb_ts_ms(const Motor* motor);
 
 /**
  * @brief 检查反馈数据是否在有效时间窗口内
@@ -408,7 +408,7 @@ OmBool motor_is_feedback_recent(const Motor* motor, uint32_t timeout_ms);
  * @param angle_rad 输出单圈角度（弧度）
  * @return OmBool 操作是否成功
  */
-OmBool motor_get_single_turn_angle_rad(const Motor* motor, float* angle_rad);
+OmBool motor_turn_rad(const Motor* motor, float* angle_rad);
 
 /**
  * @brief 获取初始零位角度
@@ -417,7 +417,7 @@ OmBool motor_get_single_turn_angle_rad(const Motor* motor, float* angle_rad);
  * @param zero_angle_rad 输出零位角度（弧度）
  * @return OmBool 操作是否成功
  */
-OmBool motor_get_initial_zero_angle_rad(const Motor* motor, float* zero_angle_rad);
+OmBool motor_zero_rad(const Motor* motor, float* zero_angle_rad);
 
 /**
  * @brief 捕获当前角度作为初始零位
@@ -433,7 +433,7 @@ OmRet motor_capture_initial_zero(Motor* motor);
  * @param motor 电机实例指针
  * @return OmRet 操作结果
  */
-OmRet motor_owner_prepare_working_state(Motor* motor);
+OmRet motor_owner_prepare_work(Motor* motor);
 
 /**
  * @brief 使能电机输出
@@ -546,7 +546,7 @@ OmRet motor_transmit_all(void);
  *
  * @return OmRet 操作结果
  */
-OmRet motor_transmit_observation_only(void);
+OmRet motor_tx_obs(void);
 
 /**
  * @brief 接收所有已注册电机的反馈数据从总线

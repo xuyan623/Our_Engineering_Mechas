@@ -19,7 +19,7 @@ static void task_channel_reset_stats(TaskChannelStats* stats)
     memset((void*)stats, 0, sizeof(*stats));
 }
 
-static OmRet task_channel_translate_osal_status(OsalStatus status)
+static OmRet task_channel_from_osal(OsalStatus status)
 {
     switch (status)
     {
@@ -71,7 +71,7 @@ void task_pipe_channel_deinit(TaskPipeChannel* channel)
     task_channel_reset_stats(&channel->stats);
 }
 
-OmRet task_pipe_channel_submit_nonblocking(
+OmRet tpipe_submit(
     TaskPipeChannel* channel,
     const void* frame,
     OmBool drop_oldest_on_full)
@@ -214,7 +214,7 @@ void task_mpsc_channel_deinit(TaskMpscChannel* channel)
     task_channel_reset_stats(&channel->stats);
 }
 
-OmRet task_mpsc_channel_submit_nonblocking(
+OmRet tmpsc_submit(
     TaskMpscChannel* channel,
     const void* message)
 {
@@ -286,7 +286,7 @@ OmRet task_mpsc_channel_receive(
     return OM_ERROR_WOULD_BLOCK;
 }
 
-OmRet task_mpsc_channel_receive_nonblocking(
+OmRet tmpsc_receive(
     TaskMpscChannel* channel,
     void* message)
 {
@@ -312,7 +312,7 @@ OmRet task_command_mailbox_init(
     OsalStatus status = OSAL_INVALID;
 
     if (mailbox == OM_NULL || command_size_bytes == 0u ||
-        command_size_bytes > TASK_COMMAND_MAILBOX_MAX_COMMAND_BYTES)
+        command_size_bytes > TASK_MAILBOX_CMD_MAX_BYTES)
     {
         return OM_ERROR_PARAM;
     }
@@ -322,7 +322,7 @@ OmRet task_command_mailbox_init(
     task_channel_reset_stats(&mailbox->stats);
 
     status = osal_queue_create(&mailbox->queue, 1u, command_size_bytes);
-    return task_channel_translate_osal_status(status);
+    return task_channel_from_osal(status);
 }
 
 void task_command_mailbox_deinit(TaskCommandMailbox* mailbox)
@@ -344,7 +344,7 @@ void task_command_mailbox_deinit(TaskCommandMailbox* mailbox)
     task_channel_reset_stats(&mailbox->stats);
 }
 
-OmRet task_command_mailbox_submit_nonblocking(
+OmRet tmail_submit(
     TaskCommandMailbox* mailbox,
     const void* command)
 {
@@ -398,10 +398,10 @@ OmRet task_command_mailbox_submit_nonblocking(
     }
 
     mailbox->stats.error_count++;
-    return task_channel_translate_osal_status(status);
+    return task_channel_from_osal(status);
 }
 
-OmRet task_command_mailbox_receive(
+OmRet tmail_receive(
     TaskCommandMailbox* mailbox,
     void* command,
     uint32_t timeout_ms)
@@ -456,5 +456,5 @@ OmRet task_command_mailbox_reset(TaskCommandMailbox* mailbox)
         memset(mailbox->pending_command_bytes, 0, sizeof(mailbox->pending_command_bytes));
         taskEXIT_CRITICAL();
     }
-    return task_channel_translate_osal_status(status);
+    return task_channel_from_osal(status);
 }

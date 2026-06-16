@@ -9,7 +9,7 @@ typedef struct
     float pitch2_torque_nm;
     float roll2_torque_nm;
     float pitch3_torque_nm;
-} GravityCompTorqueSnapshot;
+} GravityTorqueSnap;
 
 /* 输入角度均为当前电机反馈角，单位 rad：
  * - pitch1_motor_angle_rad：Pitch1 电机角
@@ -18,9 +18,9 @@ typedef struct
  * - pitch3_motor_angle_rad：Pitch3 电机角
  * - roll2_motor_angle_rad：Roll2 电机角
  */
-OmRet gravity_comp_compute_torque_snapshot(float pitch1_motor_angle_rad, float pitch2_motor_angle_rad,
+OmRet gravity_torque_snapshot(float pitch1_motor_angle_rad, float pitch2_motor_angle_rad,
                                            float pitch2_zero_angle_rad, float pitch3_motor_angle_rad,
-                                           float roll2_motor_angle_rad, GravityCompTorqueSnapshot* snapshot);
+                                           float roll2_motor_angle_rad, GravityTorqueSnap* snapshot);
 float pitch1_grav_torque_calcuate(float pitch1_motor_angle_rad, float pitch2_motor_angle_rad, float pitch2_zero_angle_rad,
                                   float pitch3_motor_angle_rad, float roll2_motor_angle_rad);
 float pitch2_grav_torque_calculate(float pitch1_motor_angle_rad, float pitch2_motor_angle_rad, float pitch2_zero_angle_rad,

@@ -12,8 +12,8 @@
 /* IK 求解节拍独立于 arm_task 主循环。
  * arm_task 仍以 3ms 跑控制，但高成本 IK 默认只按更低频率触发。
  */
-#ifndef APP_ARM_IK_SOLVER_PERIOD_MS
-#define APP_ARM_IK_SOLVER_PERIOD_MS (10u)
+#ifndef APP_AT_IK_SOLVER_PERIOD_MS
+#define APP_AT_IK_SOLVER_PERIOD_MS (10u)
 #endif
 
 /* 正解开关：
@@ -24,8 +24,8 @@
  * - RC_IK 模式进入时需要基于当前反馈做一次 FK 捕获目标 pose
  * - 因此关闭后，RC_IK 模式将无法建立目标 pose
  */
-#ifndef APP_ARM_IK_FORWARD_ENABLE
-#define APP_ARM_IK_FORWARD_ENABLE (1u)
+#ifndef APP_AT_IK_FORWARD_ENABLE
+#define APP_AT_IK_FORWARD_ENABLE (1u)
 #endif
 
 #endif

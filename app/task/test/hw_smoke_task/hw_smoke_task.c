@@ -86,7 +86,7 @@ static void hw_smoke_can_callback(Device* dev, void* param, CanFilterHandle filt
             : OM_FALSE;
 }
 
-static OmRet hw_smoke_prepare_serial_device(
+static OmRet hw_smoke_serial(
     Device* serial_dev,
     uint32_t baudrate,
     uint32_t open_flags)
@@ -109,7 +109,7 @@ static OmRet hw_smoke_prepare_serial_device(
     return device_open(serial_dev, open_flags);
 }
 
-static OmRet hw_smoke_configure_loopback_can(Device* can_dev, HwSmokeCanId can_id, uint32_t can_id_value)
+static OmRet hw_smoke_can(Device* can_dev, HwSmokeCanId can_id, uint32_t can_id_value)
 {
     CanCfg can_cfg = CAN_DEFUALT_CFG;
     CanFilterAllocArg alloc_arg = {
@@ -211,7 +211,7 @@ static void hw_smoke_send_can_frame(Device* can_dev, HwSmokeCanId can_id, uint32
     }
 }
 
-static void hw_smoke_send_serial_heartbeat(Device* serial_dev, HwSmokeSerialId serial_id)
+static void hw_smoke_hb(Device* serial_dev, HwSmokeSerialId serial_id)
 {
     static const char* heartbeat_names[HW_SMOKE_SERIAL_COUNT] = {"usart1", "usart3", "usart6", "uart7", "uart8"};
     char payload[32] = {0};
@@ -387,9 +387,9 @@ static void hw_smoke_task_entry(void* arg)
         heartbeat_divider++;
         if ((heartbeat_divider % (HW_SMOKE_HEARTBEAT_PERIOD_MS / HW_SMOKE_TASK_PERIOD_MS)) == 0u)
         {
-            hw_smoke_send_serial_heartbeat(devices->usart3, HW_SMOKE_SERIAL_USART3);
-            hw_smoke_send_serial_heartbeat(devices->usart6, HW_SMOKE_SERIAL_USART6);
-            hw_smoke_send_serial_heartbeat(devices->uart8, HW_SMOKE_SERIAL_UART8);
+            hw_smoke_hb(devices->usart3, HW_SMOKE_SERIAL_USART3);
+            hw_smoke_hb(devices->usart6, HW_SMOKE_SERIAL_USART6);
+            hw_smoke_hb(devices->uart8, HW_SMOKE_SERIAL_UART8);
         }
 
         hw_smoke_fill_vofa_frame(vofa_frame);
@@ -419,22 +419,22 @@ OmRet hw_smoke_task_start(const BspDeviceRegistry* devices, uint8_t imu_init_ret
 
     g_hw_smoke_snapshot.serials[HW_SMOKE_SERIAL_USART1].open_ret = (devices->usart1 != 0) ? OM_OK : OM_ERROR_NULL;
     g_hw_smoke_snapshot.serials[HW_SMOKE_SERIAL_USART3].open_ret =
-        hw_smoke_prepare_serial_device(
+        hw_smoke_serial(
             devices->usart3,
             HW_SMOKE_USART3_BAUDRATE,
             SERIAL_O_NBLCK_RX | SERIAL_O_NBLCK_TX);
     g_hw_smoke_snapshot.serials[HW_SMOKE_SERIAL_USART6].open_ret =
-        hw_smoke_prepare_serial_device(
+        hw_smoke_serial(
             devices->usart6,
             HW_SMOKE_USART6_BAUDRATE,
             SERIAL_O_NBLCK_RX | SERIAL_O_NBLCK_TX);
     g_hw_smoke_snapshot.serials[HW_SMOKE_SERIAL_UART7].open_ret =
-        hw_smoke_prepare_serial_device(
+        hw_smoke_serial(
             devices->uart7,
             HW_SMOKE_UART7_BAUDRATE,
             SERIAL_O_NBLCK_TX);
     g_hw_smoke_snapshot.serials[HW_SMOKE_SERIAL_UART8].open_ret =
-        hw_smoke_prepare_serial_device(
+        hw_smoke_serial(
             devices->uart8,
             HW_SMOKE_UART8_BAUDRATE,
             SERIAL_O_NBLCK_RX | SERIAL_O_NBLCK_TX);
@@ -465,7 +465,7 @@ OmRet hw_smoke_task_start(const BspDeviceRegistry* devices, uint8_t imu_init_ret
 
     if (devices->can1 != 0)
     {
-        can_ret = hw_smoke_configure_loopback_can(devices->can1, HW_SMOKE_CAN1, HW_SMOKE_CAN1_TEST_ID);
+        can_ret = hw_smoke_can(devices->can1, HW_SMOKE_CAN1, HW_SMOKE_CAN1_TEST_ID);
         if (can_ret != OM_OK)
         {
             return can_ret;
@@ -474,7 +474,7 @@ OmRet hw_smoke_task_start(const BspDeviceRegistry* devices, uint8_t imu_init_ret
 
     if (devices->can2 != 0)
     {
-        can_ret = hw_smoke_configure_loopback_can(devices->can2, HW_SMOKE_CAN2, HW_SMOKE_CAN2_TEST_ID);
+        can_ret = hw_smoke_can(devices->can2, HW_SMOKE_CAN2, HW_SMOKE_CAN2_TEST_ID);
         if (can_ret != OM_OK)
         {
             return can_ret;

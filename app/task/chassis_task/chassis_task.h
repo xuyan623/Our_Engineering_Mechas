@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_CHASSIS_TASK_H
-#define NEW_ROBOT_CHASSIS_TASK_H
+#ifndef NEW_ROBOT_CT_H
+#define NEW_ROBOT_CT_H
 
 #include "core/om_def.h"
 #include "task/input_task/input_task_snapshot.h"
@@ -9,16 +9,16 @@
 
 /**
  * @brief 启动底盘控制任务
- * @details 消费 mode_task 导出的 ChassisTaskModeSnapshot，
+ * @details 消费 mode_task 导出的 ChassisModeSnap，
  *          只根据 wheel_enable / leg_enable / allow_rc_drive 做底盘输出分流。
  * @return `OM_OK` 表示启动成功，其他返回值表示重复启动、PID 初始化失败或任务创建失败
  */
 OmRet chassis_task_start(void);
-OmRet chassis_task_submit_mode_control_snapshot(
-    const ChassisTaskModeSnapshot* snapshot);
-OmRet chassis_task_submit_rc_snapshot(
+OmRet chassis_task_submit_mode(
+    const ChassisModeSnap* snapshot);
+OmRet chassis_task_submit_rc(
     const InputRcSnapshot* snapshot);
-OmRet chassis_task_submit_imu_snapshot(
+OmRet chassis_task_submit_imu(
     const ImuTaskSnapshot* snapshot);
 
 #endif

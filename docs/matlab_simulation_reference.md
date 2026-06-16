@@ -256,8 +256,8 @@ pit_leg_cmd_deg clamp to [-1.82, 38.85] deg
 左右腿参考角：
 
 ```text
-left_leg_ref_deg  = clamp(-3.4 - pit_leg_cmd_deg, [-38.85, 1.82])
-right_leg_ref_deg = clamp( 3.4 + pit_leg_cmd_deg, [-1.82, 38.85])
+left_leg_reference_deg  = clamp(-3.4 - pit_leg_cmd_deg, [-38.85, 1.82])
+right_leg_reference_deg = clamp( 3.4 + pit_leg_cmd_deg, [-1.82, 38.85])
 ```
 
 ### 8.2 腿部控制结构
@@ -468,8 +468,8 @@ grip    = 0
 
 ```text
 big_yaw_target = final_big_yaw
-pitch1_target  = APP_ARM_PITCH1_TARGET_RATIO * final_pitch1
-pitch2_target  = pitch2_zero_angle + final_pitch2_joint * (-APP_ARM_PITCH2_GEAR_RATIO)
+pitch1_target  = APP_AT_PITCH1_TARGET_RATIO * final_pitch1
+pitch2_target  = pitch2_zero_angle + final_pitch2_joint * (-APP_AT_PITCH2_GEAR_RATIO)
 roll2_target   = final_roll2
 pitch3_target  = final_pitch3
 roll3_target   = deg2rad(final_roll3_deg)
@@ -478,8 +478,8 @@ grip_target    = final_grip
 
 其中：
 
-- `APP_ARM_PITCH1_TARGET_RATIO = -1.0`
-- `APP_ARM_PITCH2_GEAR_RATIO = 6.33`
+- `APP_AT_PITCH1_TARGET_RATIO = -1.0`
+- `APP_AT_PITCH2_GEAR_RATIO = 6.33`
 - `pitch2_zero_angle` 由 GO8010 首次在线反馈捕获
 
 ### 9.7 机械臂控制模式
@@ -528,16 +528,16 @@ grip_target    = final_grip
 
 ### 9.9 `pitch2` 零位与限幅
 
-- `APP_ARM_PITCH1_ZERO_OFFSET_RAD = 0.2793`
-- `APP_ARM_PITCH2_ZERO_OFFSET_RAD = 1.85`
-- `APP_ARM_PITCH1_MIN_RAD = -2.5133`
-- `APP_ARM_PITCH1_MAX_RAD = 0.0`
-- `APP_ARM_PITCH2_MIN_RAD = -2.0`
-- `APP_ARM_PITCH2_MAX_RAD = 0.0`
+- `APP_AT_PITCH1_ZERO_OFFSET_RAD = 0.2793`
+- `APP_AT_PITCH2_ZERO_OFFSET_RAD = 1.85`
+- `APP_AT_PITCH1_MIN_RAD = -2.5133`
+- `APP_AT_PITCH1_MAX_RAD = 0.0`
+- `APP_AT_PITCH2_MIN_RAD = -2.0`
+- `APP_AT_PITCH2_MAX_RAD = 0.0`
 
 注意：
 
-- 这组零位偏置主要用于 `Change_Position_to_Motor_Angle(...)`
+- 这组零位偏置主要用于 `kin_pos_to_motor(...)`
 - 当前正式 `arm_task` 主链是**姿态表驱动**
 - 在线逆解函数目前仅存在于 `kinematics.c`，当前正式 `arm_task` 未直接调用
 
@@ -554,7 +554,7 @@ grip_target    = final_grip
 
 ### 10.2 当前仓库中的逆解函数
 
-函数：`Change_Position_to_Motor_Angle(float x_mm, float z_mm, ...)`
+函数：`kin_pos_to_motor(float x_mm, float z_mm, ...)`
 
 输入：
 

@@ -225,7 +225,7 @@ static OmRet imu_bsp_configure_spi_dma(void)
     return OM_OK;
 }
 
-static void imu_bsp_start_dma_transfer_from_isr(void)
+static void imu_bsp_start_dma_from_isr(void)
 {
     HAL_StatusTypeDef rx_status = HAL_OK;
     HAL_StatusTypeDef tx_status = HAL_OK;
@@ -356,7 +356,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t gpio_pin)
 
     /* HAL 统一 EXTI 回调最终汇到这里，再转成一次 IMU 采样启动。 */
     g_imu_bsp_debug.drdy_irq_count++;
-    imu_bsp_start_dma_transfer_from_isr();
+    imu_bsp_start_dma_from_isr();
 }
 
 void EXTI9_5_IRQHandler(void)

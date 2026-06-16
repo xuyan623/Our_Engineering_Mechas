@@ -8,45 +8,45 @@
 
 TaskMpscChannel g_mode_task_init_progress_channel = {0};
 static uint8_t g_mode_task_init_progress_storage
-    [sizeof(ModeTaskInitProgressMessage) * MODE_TASK_INIT_PROGRESS_CHANNEL_CAPACITY] = {0};
-static OmAtomicU8 g_mode_task_init_progress_ready_flags[MODE_TASK_INIT_PROGRESS_CHANNEL_CAPACITY] = {0};
-static uint8_t g_mode_task_rc_channel_storage[MODE_TASK_RC_CHANNEL_CAPACITY_BYTES] = {0};
-static uint8_t g_mode_task_custom_controller_channel_storage
-    [MODE_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES] = {0};
+    [sizeof(ModeTaskInitMessage) * MT_INIT_MSG_CAP] = {0};
+static OmAtomicU8 g_mode_task_init_progress_ready_flags[MT_INIT_MSG_CAP] = {0};
+static uint8_t g_mode_task_rc_channel_storage[MT_RC_CHANNEL_BYTES] = {0};
+static uint8_t g_mode_task_custom_ch_storage
+    [MT_CUSTOM_CH_BYTES] = {0};
 
 ModeTaskDebugState g_mode_task_debug = {0};
 TaskContextSlotId g_mode_task_slot_id = 0;
 
 static const State g_mode_operational_phase_states[] = {
-    {.id = (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE,
+    {.id = (StateId)MT_OPERATIONAL_PHASE_RELEASE,
      .on_enter = mode_task_enter_release,
      .on_execute = OM_NULL,
      .on_exit = OM_NULL,
      .name = "release"},
-    {.id = (StateId)MODE_TASK_OPERATIONAL_PHASE_MODE_SELECTION,
-     .on_enter = mode_task_enter_mode_selection,
+    {.id = (StateId)MT_OPERATIONAL_PHASE_SELECT,
+     .on_enter = mode_task_enter_select,
      .on_execute = OM_NULL,
      .on_exit = OM_NULL,
      .name = "mode_selection"},
-    {.id = (StateId)MODE_TASK_OPERATIONAL_PHASE_FORMAL_CONTROL,
-     .on_enter = mode_task_enter_formal_control,
+    {.id = (StateId)MT_OPERATIONAL_PHASE_FORMAL,
+     .on_enter = mode_task_enter_formal,
      .on_execute = OM_NULL,
      .on_exit = OM_NULL,
      .name = "formal_control"},
 };
 
 static const State g_mode_motion_mode_states[] = {
-    {.id = (StateId)MODE_TASK_MOTION_MODE_PRESET_ACTION,
+    {.id = (StateId)MT_MOTION_MODE_PRESET_ACTION,
      .on_enter = mode_task_enter_preset_action,
      .on_execute = OM_NULL,
      .on_exit = mode_task_exit_preset_action,
      .name = "preset_action"},
-    {.id = (StateId)MODE_TASK_MOTION_MODE_CUSTOM_TAKEOVER,
-     .on_enter = mode_task_enter_custom_takeover,
+    {.id = (StateId)MT_MOTION_MODE_CUSTOM_TAKEOVER,
+     .on_enter = mode_task_enter_custom,
      .on_execute = OM_NULL,
-     .on_exit = mode_task_exit_custom_takeover,
+     .on_exit = mode_task_exit_custom,
      .name = "custom_takeover"},
-    {.id = (StateId)MODE_TASK_MOTION_MODE_RC_IK,
+    {.id = (StateId)MT_MOTION_MODE_RC_IK,
      .on_enter = mode_task_enter_rc_ik,
      .on_execute = OM_NULL,
      .on_exit = mode_task_exit_rc_ik,
@@ -62,7 +62,7 @@ static void mode_task_entry(void* arg)
     {
         g_mode_task_debug.loop_count++;
         mode_task_run_once(context);
-        (void)osal_delay_until(&deadline_cursor_ms, MODE_TASK_PERIOD_MS, OM_NULL);
+        (void)osal_delay_until(&deadline_cursor_ms, MT_PERIOD_MS, OM_NULL);
     }
 }
 
@@ -100,22 +100,22 @@ OmRet mode_task_start(void)
     }
 
     ctx = mode_task_get_owner_context();
-    ctx->confirmed_motion_mode_id = MODE_TASK_MOTION_MODE_PRESET_ACTION;
-    mode_task_reset_mode_selection_runtime(ctx);
-    mode_task_reset_preset_action_runtime(ctx);
+    ctx->confirmed_motion_mode_id = MT_MOTION_MODE_PRESET_ACTION;
+    mode_task_reset_select(ctx);
+    mode_task_reset_preset(ctx);
     mode_task_reset_rc_ik_runtime(ctx);
     mode_task_reset_grip_runtime(ctx);
-    ctx->hierarchy_state.system_state = MODE_TASK_SYSTEM_UNINITIALIZED;
-    mode_task_board_init_context_reset(&ctx->hierarchy_state.board_init);
-    mode_task_motor_init_context_reset(&ctx->hierarchy_state.motor_init);
-    mode_task_operational_context_reset(&ctx->hierarchy_state.operational);
+    ctx->hierarchy_state.system_state = MT_SYSTEM_UNINITIALIZED;
+    mode_task_reset_board_init(&ctx->hierarchy_state.board_init);
+    mode_task_reset_motor_init(&ctx->hierarchy_state.motor_init);
+    mode_task_reset_phase_context(&ctx->hierarchy_state.operational);
 
     ret = task_mpsc_channel_init(
         &g_mode_task_init_progress_channel,
         g_mode_task_init_progress_storage,
         g_mode_task_init_progress_ready_flags,
-        sizeof(ModeTaskInitProgressMessage),
-        MODE_TASK_INIT_PROGRESS_CHANNEL_CAPACITY);
+        sizeof(ModeTaskInitMessage),
+        MT_INIT_MSG_CAP);
     if (ret != OM_OK)
     {
         task_context_pool_free(g_mode_task_slot_id);
@@ -126,7 +126,7 @@ OmRet mode_task_start(void)
     ret = task_pipe_channel_init(
         &ctx->rc_channel,
         g_mode_task_rc_channel_storage,
-        MODE_TASK_RC_CHANNEL_CAPACITY_BYTES,
+        MT_RC_CHANNEL_BYTES,
         sizeof(InputRcSnapshot));
     if (ret != OM_OK)
     {
@@ -137,10 +137,10 @@ OmRet mode_task_start(void)
     }
 
     ret = task_pipe_channel_init(
-        &ctx->custom_controller_channel,
-        g_mode_task_custom_controller_channel_storage,
-        MODE_TASK_CUSTOM_CONTROLLER_CHANNEL_CAPACITY_BYTES,
-        sizeof(InputCustomControllerSnapshot));
+        &ctx->custom_channel,
+        g_mode_task_custom_ch_storage,
+        MT_CUSTOM_CH_BYTES,
+        sizeof(InputCustomSnapshot));
     if (ret != OM_OK)
     {
         task_pipe_channel_deinit(&ctx->rc_channel);
@@ -156,11 +156,11 @@ OmRet mode_task_start(void)
         (uint8_t)(sizeof(g_mode_operational_phase_states) / sizeof(g_mode_operational_phase_states[0])),
         OM_NULL,
         0u,
-        (StateId)MODE_TASK_OPERATIONAL_PHASE_RELEASE,
+        (StateId)MT_OPERATIONAL_PHASE_RELEASE,
         ctx);
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->custom_channel);
         task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
         task_context_pool_free(g_mode_task_slot_id);
@@ -174,11 +174,11 @@ OmRet mode_task_start(void)
         (uint8_t)(sizeof(g_mode_motion_mode_states) / sizeof(g_mode_motion_mode_states[0])),
         OM_NULL,
         0u,
-        (StateId)MODE_TASK_MOTION_MODE_PRESET_ACTION,
+        (StateId)MT_MOTION_MODE_PRESET_ACTION,
         ctx);
     if (ret != OM_OK)
     {
-        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->custom_channel);
         task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
         task_context_pool_free(g_mode_task_slot_id);
@@ -186,13 +186,13 @@ OmRet mode_task_start(void)
         return ret;
     }
 
-    mode_task_refresh_output_snapshots(ctx);
+    mode_task_refresh_snapshots(ctx);
     mode_task_update_debug_state(ctx);
 
     status = osal_thread_create(&mode_task_thread, &mode_task_attr, mode_task_entry, ctx);
     if (status != OSAL_OK)
     {
-        task_pipe_channel_deinit(&ctx->custom_controller_channel);
+        task_pipe_channel_deinit(&ctx->custom_channel);
         task_pipe_channel_deinit(&ctx->rc_channel);
         task_mpsc_channel_deinit(&g_mode_task_init_progress_channel);
         mode_task_thread = OM_NULL;
@@ -204,15 +204,15 @@ OmRet mode_task_start(void)
     return OM_OK;
 }
 
-OmRet mode_task_submit_init_progress(
-    const ModeTaskInitProgressMessage* message)
+OmRet mode_task_submit_init(
+    const ModeTaskInitMessage* message)
 {
     if (message == OM_NULL || g_mode_task_init_progress_channel.read_sem == OM_NULL)
     {
         return OM_ERROR;
     }
 
-    return task_mpsc_channel_submit_nonblocking(
+    return tmpsc_submit(
         &g_mode_task_init_progress_channel,
         message);
 }
@@ -225,28 +225,28 @@ OmRet mode_task_submit_rc_snapshot(
         return OM_ERROR_PARAM;
     }
 
-    return task_pipe_channel_submit_nonblocking(
+    return tpipe_submit(
         &g_mode_task_owner_context->rc_channel,
         snapshot,
         OM_TRUE);
 }
 
-OmRet mode_task_submit_custom_controller_snapshot(
-    const InputCustomControllerSnapshot* snapshot)
+OmRet mode_task_submit_custom(
+    const InputCustomSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
     {
         return OM_ERROR_PARAM;
     }
 
-    return task_pipe_channel_submit_nonblocking(
-        &g_mode_task_owner_context->custom_controller_channel,
+    return tpipe_submit(
+        &g_mode_task_owner_context->custom_channel,
         snapshot,
         OM_TRUE);
 }
 
-OmBool mode_task_copy_system_snapshot(
-    ModeTaskSystemSnapshot* snapshot)
+OmBool mode_task_copy_system(
+    ModeSystemSnap* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
     {
@@ -254,12 +254,12 @@ OmBool mode_task_copy_system_snapshot(
     }
 
     taskENTER_CRITICAL();
-    mode_task_build_system_snapshot(g_mode_task_owner_context, snapshot);
+    mode_task_build_system(g_mode_task_owner_context, snapshot);
     taskEXIT_CRITICAL();
     return OM_TRUE;
 }
 
-OmBool mode_task_copy_arm_mode_snapshot(
+OmBool mode_task_copy_arm_mode(
     ArmTaskModeSnapshot* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
@@ -268,13 +268,13 @@ OmBool mode_task_copy_arm_mode_snapshot(
     }
 
     taskENTER_CRITICAL();
-    mode_task_build_arm_mode_snapshot(g_mode_task_owner_context, snapshot);
+    mode_task_build_arm_mode(g_mode_task_owner_context, snapshot);
     taskEXIT_CRITICAL();
     return OM_TRUE;
 }
 
-OmBool mode_task_copy_chassis_mode_snapshot(
-    ChassisTaskModeSnapshot* snapshot)
+OmBool mode_task_copy_chassis_mode(
+    ChassisModeSnap* snapshot)
 {
     if (snapshot == OM_NULL || g_mode_task_owner_context == OM_NULL)
     {
@@ -282,7 +282,7 @@ OmBool mode_task_copy_chassis_mode_snapshot(
     }
 
     taskENTER_CRITICAL();
-    mode_task_build_chassis_mode_snapshot(g_mode_task_owner_context, snapshot);
+    mode_task_build_chassis(g_mode_task_owner_context, snapshot);
     taskEXIT_CRITICAL();
     return OM_TRUE;
 }

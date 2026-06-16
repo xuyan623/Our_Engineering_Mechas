@@ -28,7 +28,7 @@ typedef struct
     uint32_t age_ms;
     uint32_t feedback_sequence;
     uint8_t status;
-} MctDamiaoMotorDiagSnapshot;
+} MctDamiaoDiagItem;
 
 /* P1010B 最小诊断快照：
  * - last_feedback_ms：最近一次 active report/反馈帧时间戳
@@ -52,7 +52,7 @@ typedef struct
     uint8_t operational_active;
     uint32_t last_tx_request_sources_mask;
     uint8_t last_tx_request_overflowed;
-} MctRuntimeDebugSnapshot;
+} MctRuntimeDebug;
 
 /* 正式电机通信任务启动入口。
  * 该任务拥有：
@@ -65,22 +65,22 @@ OmRet mct_start(const BspDeviceRegistry* devices);
 /* 请求 owner 线程重新进入“正式可控态”。
  * 调用方只提交请求；真正的 bring-up 只在 mct 线程里执行。
  */
-OmRet mct_request_enter_operational_state(void);
+OmRet mct_request_enter(void);
 
 /* 请求 owner 线程退出“正式可控态”并进入持续失能路径。
  * 调用方只提交请求；真正的 leave 只在 mct 线程里执行。
  */
-OmRet mct_request_leave_operational_state(void);
+OmRet mct_request_leave(void);
 
 /* 请求 owner 线程执行一次 leave -> enter 的软件重置。
  * 调用方只提交请求；真正的 reset 只在 mct 线程里执行。
  */
-OmRet mct_request_reset_operational_state(void);
+OmRet mct_request_reset(void);
 
 /* 只读 owner 事实：当前是否已经进入正式可控态。 */
 OmBool mct_is_operational_active(void);
-OmRet mct_copy_runtime_debug_snapshot(
-    MctRuntimeDebugSnapshot* snapshot);
+OmRet mct_copy_runtime_debug(
+    MctRuntimeDebug* snapshot);
 
 /* 拷贝当前运行期恢复快照。
  * 该接口只暴露最小诊断信息，不改变现有 VOFA 通道布局。
@@ -90,25 +90,25 @@ OmRet mct_copy_recovery_snapshots(
     uint32_t capacity,
     uint32_t* snapshot_count);
 
-OmRet mct_copy_p1010b_predicate_snapshots(
-    MotorRecoveryP1010BPredicateSnapshot* snapshots,
+OmRet mct_copy_p1010b_checks(
+    MotorRecoveryP1010BInfo* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count);
 
 /* 拷贝 P1010B active-report 诊断快照。
  * 该接口只反映 owner task 当前看到的反馈新鲜度，不等同于 vendor driver 的全部内部状态。
  */
-OmRet mct_copy_p1010b_diag_snapshots(
+OmRet mct_copy_p1010b_diag(
     MctP1010BDiagSnapshot* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count);
 
 /* 拷贝达妙总线级诊断快照。 */
-OmRet mct_copy_damiao_diag(
+OmRet mct_copy_damiao_bus_diag(
     MctDamiaoDiagSnapshot* snapshot);
 
-OmRet mct_copy_damiao_motor_diag_snapshots(
-    MctDamiaoMotorDiagSnapshot* snapshots,
+OmRet mct_copy_damiao_diag_items(
+    MctDamiaoDiagItem* snapshots,
     uint32_t capacity,
     uint32_t* snapshot_count);
 

@@ -12,7 +12,7 @@
 #define DAMIAO_DM4310_TEST_STEP_INTERVAL_MS    (1000u)
 #define DAMIAO_DM4310_TEST_CAN_ID              (0x03u)
 #define DAMIAO_DM4310_TEST_MASTER_ID           (0x13u)
-#define DAMIAO_DM4310_TEST_POSITION_AMPLITUDE  (1.0f)
+#define DAMIAO_DM4310_TEST_SWING_AMPLITUDE  (1.0f)
 #define DAMIAO_DM4310_TEST_KP                  (5.0f)
 #define DAMIAO_DM4310_TEST_KD                  (0.0f)
 
@@ -25,12 +25,12 @@ typedef struct
     float last_velocity_rad_s;
     float last_torque_nm;
     uint8_t last_status_code;
-} DamiaoDm4310TestRuntime;
+} Damiao4310Runtime;
 
-static DamiaoDm4310TestRuntime g_damiao_dm4310_test_runtime = {0};
-DamiaoDm4310TestDebugState g_damiao_dm4310_test_debug = {0};
+static Damiao4310Runtime g_damiao_dm4310_test_runtime = {0};
+Damiao4310Debug g_damiao_dm4310_test_debug = {0};
 
-static OmRet damiao_dm4310_test_configure_can(Device* can_device)
+static OmRet d43_test_can(Device* can_device)
 {
     CanCfg can_cfg = CAN_DEFUALT_CFG;
     OmRet ret = OM_OK;
@@ -86,7 +86,7 @@ static OmRet damiao_dm4310_test_configure_can(Device* can_device)
     return OM_OK;
 }
 
-static OmRet damiao_dm4310_test_runtime_init(DamiaoDm4310TestRuntime* runtime, const BspDeviceRegistry* devices)
+static OmRet d43_test_init(Damiao4310Runtime* runtime, const BspDeviceRegistry* devices)
 {
     OmRet ret = OM_OK;
 
@@ -98,7 +98,7 @@ static OmRet damiao_dm4310_test_runtime_init(DamiaoDm4310TestRuntime* runtime, c
     memset(runtime, 0, sizeof(*runtime));
     runtime->can_device = devices->can1;
 
-    ret = damiao_dm4310_test_configure_can(runtime->can_device);
+    ret = d43_test_can(runtime->can_device);
     if (ret != OM_OK)
     {
         return ret;
@@ -127,7 +127,7 @@ static OmRet damiao_dm4310_test_runtime_init(DamiaoDm4310TestRuntime* runtime, c
     return OM_OK;
 }
 
-static void damiao_dm4310_test_refresh_debug(DamiaoDm4310TestRuntime* runtime, float target_position_rad)
+static void d43_test_dbg(Damiao4310Runtime* runtime, float target_position_rad)
 {
     float position_rad = 0.0f;
     float velocity_rad_s = 0.0f;
@@ -163,7 +163,7 @@ static void damiao_dm4310_test_refresh_debug(DamiaoDm4310TestRuntime* runtime, f
 
 static void damiao_dm4310_test_task_entry(void* arg)
 {
-    DamiaoDm4310TestRuntime* runtime = (DamiaoDm4310TestRuntime*)arg;
+    Damiao4310Runtime* runtime = (Damiao4310Runtime*)arg;
     OsalTimeMs deadline_cursor_ms = 0u;
     uint32_t phase_tick = 0u;
     float target_position_rad = 0.0f;
@@ -176,11 +176,11 @@ static void damiao_dm4310_test_task_entry(void* arg)
 
         if (((phase_tick / (DAMIAO_DM4310_TEST_STEP_INTERVAL_MS / DAMIAO_DM4310_TEST_LOOP_PERIOD_MS)) % 2u) == 0u)
         {
-            target_position_rad = DAMIAO_DM4310_TEST_POSITION_AMPLITUDE;
+            target_position_rad = DAMIAO_DM4310_TEST_SWING_AMPLITUDE;
         }
         else
         {
-            target_position_rad = -DAMIAO_DM4310_TEST_POSITION_AMPLITUDE;
+            target_position_rad = -DAMIAO_DM4310_TEST_SWING_AMPLITUDE;
         }
 
         damiao_motor_set_mit(&runtime->motor, target_position_rad, 0.0f, DAMIAO_DM4310_TEST_KP, DAMIAO_DM4310_TEST_KD, 0.0f);
@@ -188,7 +188,7 @@ static void damiao_dm4310_test_task_entry(void* arg)
 
         g_damiao_dm4310_test_debug.tx_count++;
         g_damiao_dm4310_test_debug.loop_count++;
-        damiao_dm4310_test_refresh_debug(runtime, target_position_rad);
+        d43_test_dbg(runtime, target_position_rad);
         (void)sh_beat(SH_TASK_DAMIAO_SMOKE);
 
         (void)osal_delay_until(&deadline_cursor_ms, DAMIAO_DM4310_TEST_LOOP_PERIOD_MS, OM_NULL);
@@ -214,7 +214,7 @@ OmRet damiao_dm4310_test_task_start(const BspDeviceRegistry* devices)
 
     memset(&g_damiao_dm4310_test_debug, 0, sizeof(g_damiao_dm4310_test_debug));
 
-    ret = damiao_dm4310_test_runtime_init(&g_damiao_dm4310_test_runtime, devices);
+    ret = d43_test_init(&g_damiao_dm4310_test_runtime, devices);
     if (ret != OM_OK)
     {
         return ret;

@@ -11,7 +11,7 @@ static float kinematics_normalize_angle(float angle_rad)
     return math_utils_wrap_pi_f32(angle_rad);
 }
 
-static void kinematics_clamp_chassis_velocity(
+static void kin_clamp_vel(
     float* vx_mm_per_s,
     float* vy_mm_per_s,
     float* vw_deg_per_s)
@@ -26,16 +26,16 @@ static void kinematics_clamp_chassis_velocity(
         return;
     }
 
-    *vx_mm_per_s = math_utils_clamp_float(*vx_mm_per_s, -APP_CHASSIS_MAX_VX_MM_PER_S, APP_CHASSIS_MAX_VX_MM_PER_S);
-    *vy_mm_per_s = math_utils_clamp_float(*vy_mm_per_s, -APP_CHASSIS_MAX_VY_MM_PER_S, APP_CHASSIS_MAX_VY_MM_PER_S);
-    *vw_deg_per_s = math_utils_clamp_float(*vw_deg_per_s, -APP_CHASSIS_MAX_VW_DEG_PER_S, APP_CHASSIS_MAX_VW_DEG_PER_S);
+    *vx_mm_per_s = math_utils_clamp_float(*vx_mm_per_s, -APP_CT_MAX_VX_MM_PER_S, APP_CT_MAX_VX_MM_PER_S);
+    *vy_mm_per_s = math_utils_clamp_float(*vy_mm_per_s, -APP_CT_MAX_VY_MM_PER_S, APP_CT_MAX_VY_MM_PER_S);
+    *vw_deg_per_s = math_utils_clamp_float(*vw_deg_per_s, -APP_CT_MAX_VW_DEG_PER_S, APP_CT_MAX_VW_DEG_PER_S);
 
-#if (APP_CHASSIS_TOTAL_SPEED_LIMIT_ENABLE == 1u)
+#if (APP_CT_TOTAL_LIMIT_ENABLE == 1u)
     {
-        const float equivalent_radius_mm = (APP_CHASSIS_WHEEL_TRACK_MM + APP_CHASSIS_WHEEL_BASE_MM) / 2.0f;
+        const float equivalent_radius_mm = (APP_CT_WHEEL_TRACK_MM + APP_CT_WHEEL_BASE_MM) / 2.0f;
 
         const float max_total_speed_sq =
-            APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S * APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S;
+            APP_CT_TOTAL_MAX_MM_S * APP_CT_TOTAL_MAX_MM_S;
 
         linear_speed_sq = (*vx_mm_per_s) * (*vx_mm_per_s) + (*vy_mm_per_s) * (*vy_mm_per_s);
         vw_linear_mm_per_s = (*vw_deg_per_s / APP_RADIAN_COEF) * equivalent_radius_mm;
@@ -46,7 +46,7 @@ static void kinematics_clamp_chassis_velocity(
             float total_speed = 0.0f;
 
             (void)arm_sqrt_f32(total_speed_sq, &total_speed);
-            scale = APP_CHASSIS_MAX_TOTAL_SPEED_MM_PER_S / total_speed;
+            scale = APP_CT_TOTAL_MAX_MM_S / total_speed;
             *vx_mm_per_s *= scale;
             *vy_mm_per_s *= scale;
             *vw_deg_per_s *= scale;
@@ -55,14 +55,14 @@ static void kinematics_clamp_chassis_velocity(
 #endif
 }
 
-static void kinematics_compute_mecanum_wheel_rpm_float(
+static void kin_mecanum_rpm(
     float vx_mm_per_s,
     float vy_mm_per_s,
     float vw_deg_per_s,
     float wheel_rpm_float[MECANUM_WHEEL_COUNT])
 {
-    const float rotate_ratio = ((APP_CHASSIS_WHEEL_BASE_MM + APP_CHASSIS_WHEEL_TRACK_MM) / 2.0f) / APP_RADIAN_COEF;
-    const float wheel_rpm_ratio = 60.0f / (APP_CHASSIS_WHEEL_PERIMETER_MM * APP_CHASSIS_DECEL_RATIO);
+    const float rotate_ratio = ((APP_CT_WHEEL_BASE_MM + APP_CT_WHEEL_TRACK_MM) / 2.0f) / APP_RADIAN_COEF;
+    const float wheel_rpm_ratio = 60.0f / (APP_CT_WHEEL_PERIMETER_MM * APP_CT_DECEL_RATIO);
 
     if (wheel_rpm_float == OM_NULL)
     {
@@ -79,7 +79,7 @@ static void kinematics_compute_mecanum_wheel_rpm_float(
         (-vx_mm_per_s + vy_mm_per_s - vw_deg_per_s * rotate_ratio) * wheel_rpm_ratio;
 }
 
-static void kinematics_scale_wheel_rpm_float(
+static void kin_scale_rpm(
     float wheel_rpm_float[MECANUM_WHEEL_COUNT],
     const OmBool active_wheel_flags[MECANUM_WHEEL_COUNT])
 {
@@ -106,9 +106,9 @@ static void kinematics_scale_wheel_rpm_float(
         }
     }
 
-    if (max_abs_rpm > APP_CHASSIS_MAX_WHEEL_RPM)
+    if (max_abs_rpm > APP_CT_MAX_WHEEL_RPM)
     {
-        const float scale = APP_CHASSIS_MAX_WHEEL_RPM / max_abs_rpm;
+        const float scale = APP_CT_MAX_WHEEL_RPM / max_abs_rpm;
 
         for (index = 0u; index < MECANUM_WHEEL_COUNT; index++)
         {
@@ -122,7 +122,7 @@ static void kinematics_scale_wheel_rpm_float(
     }
 }
 
-static void kinematics_write_wheel_rpm_int16(
+static void kin_write_rpm(
     const float wheel_rpm_float[MECANUM_WHEEL_COUNT],
     int16_t wheel_speeds_rpm[MECANUM_WHEEL_COUNT])
 {
@@ -170,10 +170,10 @@ void mecanum_calc(float vx_mm_per_s, float vy_mm_per_s, float vw_deg_per_s, int1
         return;
     }
 
-    kinematics_clamp_chassis_velocity(&vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
-    kinematics_compute_mecanum_wheel_rpm_float(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_rpm_float);
-    kinematics_scale_wheel_rpm_float(wheel_rpm_float, active_wheel_flags);
-    kinematics_write_wheel_rpm_int16(wheel_rpm_float, wheel_speeds_rpm);
+    kin_clamp_vel(&vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
+    kin_mecanum_rpm(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_rpm_float);
+    kin_scale_rpm(wheel_rpm_float, active_wheel_flags);
+    kin_write_rpm(wheel_rpm_float, wheel_speeds_rpm);
 }
 
 void mecanum_calc_three_wheel(
@@ -210,11 +210,11 @@ void mecanum_calc_three_wheel(
         return;
     }
 
-    kinematics_clamp_chassis_velocity(&vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
-    kinematics_compute_mecanum_wheel_rpm_float(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_rpm_float);
+    kin_clamp_vel(&vx_mm_per_s, &vy_mm_per_s, &vw_deg_per_s);
+    kin_mecanum_rpm(vx_mm_per_s, vy_mm_per_s, vw_deg_per_s, wheel_rpm_float);
     wheel_rpm_float[offline_wheel_id] = 0.0f;
-    kinematics_scale_wheel_rpm_float(wheel_rpm_float, active_wheel_flags);
-    kinematics_write_wheel_rpm_int16(wheel_rpm_float, wheel_speeds_rpm);
+    kin_scale_rpm(wheel_rpm_float, active_wheel_flags);
+    kin_write_rpm(wheel_rpm_float, wheel_speeds_rpm);
 }
 
 /**
@@ -242,17 +242,17 @@ void mecanum_calc_three_wheel(
  *         - OM_ERROR_NULL: 输出指针为空
  *         - OM_ERROR_PARAM: 参数无效（目标位置超出工作空间）
  * 
- * @note pitch2_motor_angle_rad 输出的是电机轴角度，已乘以减速比 APP_ARM_PITCH2_GEAR_RATIO
+ * @note pitch2_motor_angle_rad 输出的是电机轴角度，已乘以减速比 APP_AT_PITCH2_GEAR_RATIO
  * @note 如果目标位置超出机械臂可达工作空间，函数会返回 OM_ERROR_PARAM
  * @note 输出角度会自动限制在 [MIN_RAD, MAX_RAD] 范围内
  */
-OmRet Change_Position_to_Motor_Angle(float x_mm, float z_mm, float* pitch1_motor_angle_rad, float* pitch2_motor_angle_rad)
+OmRet kin_pos_to_motor(float x_mm, float z_mm, float* pitch1_motor_angle_rad, float* pitch2_motor_angle_rad)
 {
-    const float arm_coefficient_a = -2.0f * APP_ARM_LINK_A2_MM * z_mm - 2.0f * APP_ARM_LINK_D3_MM * x_mm;
-    const float arm_coefficient_b = -2.0f * APP_ARM_LINK_A2_MM * x_mm + 2.0f * APP_ARM_LINK_D3_MM * z_mm;
+    const float arm_coefficient_a = -2.0f * APP_AT_LINK_A2_MM * z_mm - 2.0f * APP_AT_LINK_D3_MM * x_mm;
+    const float arm_coefficient_b = -2.0f * APP_AT_LINK_A2_MM * x_mm + 2.0f * APP_AT_LINK_D3_MM * z_mm;
     const float arm_coefficient_c =
-        APP_ARM_LINK_A1_MM * APP_ARM_LINK_A1_MM -
-        (z_mm * z_mm + x_mm * x_mm + APP_ARM_LINK_A2_MM * APP_ARM_LINK_A2_MM + APP_ARM_LINK_D3_MM * APP_ARM_LINK_D3_MM);
+        APP_AT_LINK_A1_MM * APP_AT_LINK_A1_MM -
+        (z_mm * z_mm + x_mm * x_mm + APP_AT_LINK_A2_MM * APP_AT_LINK_A2_MM + APP_AT_LINK_D3_MM * APP_AT_LINK_D3_MM);
     float denominator = 0.0f;
     float phi = 0.0f;
     float elbow_angle = 0.0f;
@@ -284,19 +284,19 @@ OmRet Change_Position_to_Motor_Angle(float x_mm, float z_mm, float* pitch1_motor
     elbow_angle = asinf(asin_input) - phi;
     elbow_sin = arm_sin_f32(elbow_angle);
     elbow_cos = arm_cos_f32(elbow_angle);
-    pitch1_angle_y = z_mm - APP_ARM_LINK_A2_MM * elbow_sin + APP_ARM_LINK_D3_MM * elbow_cos;
-    pitch1_angle_x = x_mm - APP_ARM_LINK_D3_MM * elbow_sin - APP_ARM_LINK_A2_MM * elbow_cos;
+    pitch1_angle_y = z_mm - APP_AT_LINK_A2_MM * elbow_sin + APP_AT_LINK_D3_MM * elbow_cos;
+    pitch1_angle_x = x_mm - APP_AT_LINK_D3_MM * elbow_sin - APP_AT_LINK_A2_MM * elbow_cos;
     (void)arm_atan2_f32(pitch1_angle_y, pitch1_angle_x, &pitch1_angle);
     pitch2_angle = elbow_angle - pitch1_angle;
 
-    pitch1_angle = -kinematics_normalize_angle(pitch1_angle) + APP_ARM_PITCH1_ZERO_OFFSET_RAD;
-    pitch2_angle = kinematics_normalize_angle(pitch2_angle) + APP_ARM_PITCH2_ZERO_OFFSET_RAD;
+    pitch1_angle = -kinematics_normalize_angle(pitch1_angle) + APP_AT_PITCH1_ZERO_OFFSET_RAD;
+    pitch2_angle = kinematics_normalize_angle(pitch2_angle) + APP_AT_PITCH2_ZERO_OFFSET_RAD;
 
-    pitch1_angle = math_utils_clamp_float(pitch1_angle, APP_ARM_PITCH1_MIN_RAD, APP_ARM_PITCH1_MAX_RAD);
-    pitch2_angle = math_utils_clamp_float(pitch2_angle, APP_ARM_PITCH2_MIN_RAD, APP_ARM_PITCH2_MAX_RAD);
+    pitch1_angle = math_utils_clamp_float(pitch1_angle, APP_AT_PITCH1_MIN_RAD, APP_AT_PITCH1_MAX_RAD);
+    pitch2_angle = math_utils_clamp_float(pitch2_angle, APP_AT_PITCH2_MIN_RAD, APP_AT_PITCH2_MAX_RAD);
 
     *pitch1_motor_angle_rad = pitch1_angle;
-    *pitch2_motor_angle_rad = pitch2_angle * APP_ARM_PITCH2_GEAR_RATIO;
+    *pitch2_motor_angle_rad = pitch2_angle * APP_AT_PITCH2_GEAR_RATIO;
 
     return OM_OK;
 }

@@ -34,11 +34,11 @@ typedef struct
 } ArmIkIdealModel;
 
 static const ArmIkIdealModel g_arm_ik_model = {
-    APP_ARM_IK_SHOULDER_HEIGHT_M,
-    APP_ARM_IK_SHOULDER_OFFSET_M,
-    APP_ARM_IK_UPPER_ARM_LENGTH_M,
-    APP_ARM_IK_FOREARM_LENGTH_M,
-    APP_ARM_IK_TOOL_LENGTH_M,
+    APP_AT_IK_SHOULDER_HEIGHT_M,
+    APP_AT_IK_SHOULDER_OFFSET_M,
+    APP_AT_IK_UPPER_ARM_LENGTH_M,
+    APP_AT_IK_FOREARM_LENGTH_M,
+    APP_AT_IK_TOOL_LENGTH_M,
 };
 
 typedef struct
@@ -54,23 +54,23 @@ typedef struct
     ArmIkJointFrameCache joints[ARM_IK_JOINT_COUNT];
 } ArmIkForwardCache;
 
-static const float g_arm_ik_urdf_tool_offset_m = APP_ARM_IK_URDF_TOOL_OFFSET_M;
+static const float g_arm_ik_urdf_tool_offset_m = APP_AT_IK_URDF_TOOL_OFFSET_M;
 static const float g_arm_ik_home_offset_rad[ARM_IK_JOINT_COUNT] = {
-    APP_ARM_IK_HOME_BIG_YAW_RAD,
-    APP_ARM_IK_HOME_PITCH1_RAD,
-    APP_ARM_IK_HOME_PITCH2_RAD,
-    APP_ARM_IK_HOME_ROLL2_RAD,
-    APP_ARM_IK_HOME_PITCH3_RAD,
-    APP_ARM_IK_HOME_ROLL3_RAD,
+    APP_AT_IK_HOME_BIG_YAW_RAD,
+    APP_AT_IK_HOME_PITCH1_RAD,
+    APP_AT_IK_HOME_PITCH2_RAD,
+    APP_AT_IK_HOME_ROLL2_RAD,
+    APP_AT_IK_HOME_PITCH3_RAD,
+    APP_AT_IK_HOME_ROLL3_RAD,
 };
 
 static const ArmIkJointLimit g_arm_ik_urdf_limits[ARM_IK_JOINT_COUNT] = {
-    {APP_ARM_IK_BIG_YAW_MIN_RAD, APP_ARM_IK_BIG_YAW_MAX_RAD},
-    {APP_ARM_IK_PITCH1_MIN_RAD, APP_ARM_IK_PITCH1_MAX_RAD},
-    {APP_ARM_IK_URDF_PITCH2_MIN_RAD, APP_ARM_IK_URDF_PITCH2_MAX_RAD},
-    {APP_ARM_IK_ROLL2_MIN_RAD, APP_ARM_IK_ROLL2_MAX_RAD},
-    {APP_ARM_IK_PITCH3_MIN_RAD, APP_ARM_IK_PITCH3_MAX_RAD},
-    {APP_ARM_IK_URDF_ROLL3_MIN_RAD, APP_ARM_IK_URDF_ROLL3_MAX_RAD},
+    {APP_AT_IK_BIG_YAW_MIN_RAD, APP_AT_IK_BIG_YAW_MAX_RAD},
+    {APP_AT_IK_PITCH1_MIN_RAD, APP_AT_IK_PITCH1_MAX_RAD},
+    {APP_AT_IK_URDF_PITCH2_MIN_RAD, APP_AT_IK_URDF_PITCH2_MAX_RAD},
+    {APP_AT_IK_ROLL2_MIN_RAD, APP_AT_IK_ROLL2_MAX_RAD},
+    {APP_AT_IK_PITCH3_MIN_RAD, APP_AT_IK_PITCH3_MAX_RAD},
+    {APP_AT_IK_URDF_ROLL3_MIN_RAD, APP_AT_IK_URDF_ROLL3_MAX_RAD},
 };
 
 static const ArmIkUrdfJointOrigin g_arm_ik_urdf_origins[ARM_IK_JOINT_COUNT] = {
@@ -244,10 +244,10 @@ static void arm_ik_copy_vec(const float* source, float* destination, uint32_t si
     }
 }
 
-static void arm_ik_fill_pose_error_snapshot(
+static void aik_fill_pose_err(
     const float position_error[3],
     const float orientation_error[3],
-    ArmIkPoseErrorSnapshot* snapshot)
+    ArmIkPoseErr* snapshot)
 {
     if (snapshot == OM_NULL)
     {
@@ -270,7 +270,7 @@ static void arm_ik_fill_debug_snapshot(
     uint16_t iteration_count,
     uint16_t candidate_count,
     uint16_t valid_candidate_count,
-    ArmIkSolveDebugSnapshot* snapshot)
+    ArmIkSolveDiag* snapshot)
 {
     if (snapshot == OM_NULL)
     {
@@ -352,12 +352,12 @@ static void arm_ik_urdf_to_machine(
     machine->joint_rad[2] = -(urdf_joint_rad[2] - g_arm_ik_home_offset_rad[2]);
     machine->joint_rad[3] = urdf_joint_rad[3] - g_arm_ik_home_offset_rad[3];
     machine->joint_rad[4] = urdf_joint_rad[4] - g_arm_ik_home_offset_rad[4];
-    machine->joint_rad[5] = math_utils_resolve_nearest_equivalent_rad(
+    machine->joint_rad[5] = math_utils_resolve_rad(
         urdf_joint_rad[5] - g_arm_ik_home_offset_rad[5],
         reference_machine->joint_rad[5]);
 }
 
-static void arm_ik_forward_cache_from_urdf_joint_vector(
+static void arm_ik_build_fk_cache(
     const float urdf_joint_rad[ARM_IK_JOINT_COUNT],
     ArmIkForwardCache* cache)
 {
@@ -420,7 +420,7 @@ static void arm_ik_forward_cache_from_urdf_joint_vector(
     }
 }
 
-static void arm_ik_pose_from_forward_cache(
+static void aik_pose_from_fk(
     const ArmIkForwardCache* cache,
     ArmIkPose* pose)
 {
@@ -511,7 +511,7 @@ static void arm_ik_rotation_error_vector(
     error_vector[2] = (delta[1][0] - delta[0][1]) / (2.0f * sin_theta) * theta;
 }
 
-static void arm_ik_build_geometric_jacobian(
+static void aik_build_jac(
     const ArmIkForwardCache* cache,
     float jacobian[ARM_IK_DIM_6][ARM_IK_DIM_6])
 {
@@ -540,7 +540,7 @@ static void arm_ik_build_geometric_jacobian(
     }
 }
 
-static OmBool arm_ik_solve_spd_system(
+static OmBool aik_solve_spd(
     const float* matrix_in,
     const float* rhs_in,
     uint32_t dimension,
@@ -594,7 +594,7 @@ static OmBool arm_ik_solve_spd_system(
     return OM_TRUE;
 }
 
-static OmBool arm_ik_full_pose_position_reachable(
+static OmBool arm_ik_full_pose_reach(
     const ArmIkPose* target_pose)
 {
     float target_rotation[3][3] = {{0.0f}};
@@ -643,7 +643,7 @@ static OmBool arm_ik_full_pose_position_reachable(
                : OM_FALSE;
 }
 
-static OmBool arm_ik_position_priority_reachable(
+static OmBool arm_ik_pos_reach(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector)
 {
@@ -757,7 +757,7 @@ static OmBool arm_ik_position_priority_reachable(
     return OM_FALSE;
 }
 
-static void arm_ik_compute_pose_error_internal(
+static void arm_ik_pose_error_inner(
     const ArmIkPose* target_pose,
     const ArmIkPose* current_pose,
     float position_error[3],
@@ -783,29 +783,29 @@ static void arm_ik_compute_pose_error_internal(
     arm_ik_rotation_error_vector(current_rotation, target_rotation, orientation_error);
 }
 
-static void arm_ik_forward_from_urdf_joint_vector(
+static void aik_forward_urdf(
     const float urdf_joint_rad[ARM_IK_JOINT_COUNT],
     ArmIkPose* pose)
 {
     ArmIkForwardCache cache = {0};
 
-    arm_ik_forward_cache_from_urdf_joint_vector(urdf_joint_rad, &cache);
-    arm_ik_pose_from_forward_cache(&cache, pose);
+    arm_ik_build_fk_cache(urdf_joint_rad, &cache);
+    aik_pose_from_fk(&cache, pose);
 }
 
-static OmRet arm_ik_inverse_full_pose_local_internal(
+static OmRet aik_inverse_full(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector,
     ArmIkJointVector* solved_joint_vector,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot,
-    ArmIkSolveDebugSnapshot* solve_debug_snapshot)
+    ArmIkPoseErr* pose_error_snapshot,
+    ArmIkSolveDiag* solve_debug_snapshot)
 {
     float solution_urdf[ARM_IK_JOINT_COUNT] = {0.0f};
     uint32_t iteration = 0u;
 
     arm_ik_machine_to_urdf(reference_joint_vector, solution_urdf);
 
-    for (iteration = 0u; iteration < APP_ARM_IK_FULL_POSE_MAX_ITERATIONS; iteration++)
+    for (iteration = 0u; iteration < APP_AT_IK_FULL_POSE_MAX_ITERATIONS; iteration++)
     {
         ArmIkForwardCache current_cache = {0};
         ArmIkPose current_pose = {0};
@@ -824,9 +824,9 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
         uint32_t row = 0u;
         uint32_t col = 0u;
 
-        arm_ik_forward_cache_from_urdf_joint_vector(solution_urdf, &current_cache);
-        arm_ik_pose_from_forward_cache(&current_cache, &current_pose);
-        arm_ik_compute_pose_error_internal(
+        arm_ik_build_fk_cache(solution_urdf, &current_cache);
+        aik_pose_from_fk(&current_cache, &current_pose);
+        arm_ik_pose_error_inner(
             target_pose,
             &current_pose,
             position_error,
@@ -841,11 +841,11 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
         error[4] = orientation_error[1];
         error[5] = orientation_error[2];
 
-        if (position_error_norm <= APP_ARM_IK_FULL_POSE_POSITION_TOLERANCE_M &&
-            orientation_error_norm <= APP_ARM_IK_FULL_POSE_ORIENTATION_TOLERANCE_RAD)
+        if (position_error_norm <= APP_AT_IK_FULL_POS_TOL_M &&
+            orientation_error_norm <= APP_AT_IK_FULL_ORI_TOL_RAD)
         {
             arm_ik_urdf_to_machine(solution_urdf, reference_joint_vector, solved_joint_vector);
-            arm_ik_fill_pose_error_snapshot(
+            aik_fill_pose_err(
                 position_error,
                 orientation_error,
                 pose_error_snapshot);
@@ -859,7 +859,7 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
             return OM_OK;
         }
 
-        arm_ik_build_geometric_jacobian(&current_cache, jacobian);
+        aik_build_jac(&current_cache, jacobian);
 
         for (row = 0u; row < ARM_IK_DIM_6; row++)
         {
@@ -881,14 +881,14 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
                 }
                 if (row == col)
                 {
-                    value += APP_ARM_IK_FULL_POSE_DAMPING * APP_ARM_IK_FULL_POSE_DAMPING;
+                    value += APP_AT_IK_FULL_POSE_DAMPING * APP_AT_IK_FULL_POSE_DAMPING;
                 }
                 damping_matrix[row][col] = value;
             }
             damping_rhs[row] = error[row];
         }
 
-        if (arm_ik_solve_spd_system(
+        if (aik_solve_spd(
                 &damping_matrix[0][0],
                 damping_rhs,
                 ARM_IK_DIM_6,
@@ -909,9 +909,9 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
         }
 
         step_norm = arm_ik_vecn_norm(step, ARM_IK_DIM_6);
-        if (step_norm > APP_ARM_IK_FULL_POSE_STEP_LIMIT_RAD)
+        if (step_norm > APP_AT_IK_FULL_POSE_STEP_LIMIT_RAD)
         {
-            const float scale = APP_ARM_IK_FULL_POSE_STEP_LIMIT_RAD / step_norm;
+            const float scale = APP_AT_IK_FULL_POSE_STEP_LIMIT_RAD / step_norm;
             for (row = 0u; row < ARM_IK_DIM_6; row++)
             {
                 step[row] *= scale;
@@ -933,41 +933,41 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
         float position_error[3] = {0.0f};
         float orientation_error[3] = {0.0f};
 
-        arm_ik_forward_from_urdf_joint_vector(solution_urdf, &current_pose);
-        arm_ik_compute_pose_error_internal(
+        aik_forward_urdf(solution_urdf, &current_pose);
+        arm_ik_pose_error_inner(
             target_pose,
             &current_pose,
             position_error,
             orientation_error);
 
         if (arm_ik_vec3_norm(position_error) <=
-                APP_ARM_IK_FULL_POSE_ACCEPT_POSITION_ERROR_M &&
+                APP_AT_IK_FULL_ACCEPT_POS_ERR_M &&
             arm_ik_vec3_norm(orientation_error) <=
-                APP_ARM_IK_FULL_POSE_ACCEPT_ORIENTATION_ERROR_RAD)
+                APP_AT_IK_FULL_ACCEPT_ORI_ERR_RAD)
         {
             arm_ik_urdf_to_machine(solution_urdf, reference_joint_vector, solved_joint_vector);
-            arm_ik_fill_pose_error_snapshot(
+            aik_fill_pose_err(
                 position_error,
                 orientation_error,
                 pose_error_snapshot);
             arm_ik_fill_debug_snapshot(
                 ARM_IK_SOLVER_FULL_POSE_LOCAL,
                 ARM_IK_FAILURE_NONE,
-                APP_ARM_IK_FULL_POSE_MAX_ITERATIONS,
+                APP_AT_IK_FULL_POSE_MAX_ITERATIONS,
                 1u,
                 1u,
                 solve_debug_snapshot);
             return OM_OK;
         }
 
-        arm_ik_fill_pose_error_snapshot(
+        aik_fill_pose_err(
             position_error,
             orientation_error,
             pose_error_snapshot);
         arm_ik_fill_debug_snapshot(
             ARM_IK_SOLVER_FULL_POSE_LOCAL,
             ARM_IK_FAILURE_LOCAL_SOLVER_FAILED,
-            APP_ARM_IK_FULL_POSE_MAX_ITERATIONS,
+            APP_AT_IK_FULL_POSE_MAX_ITERATIONS,
             0u,
             0u,
             solve_debug_snapshot);
@@ -976,12 +976,12 @@ static OmRet arm_ik_inverse_full_pose_local_internal(
     return OM_ERROR;
 }
 
-static OmRet arm_ik_inverse_position_priority_local_internal(
+static OmRet aik_inverse_pos(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector,
     ArmIkJointVector* solved_joint_vector,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot,
-    ArmIkSolveDebugSnapshot* solve_debug_snapshot)
+    ArmIkPoseErr* pose_error_snapshot,
+    ArmIkSolveDiag* solve_debug_snapshot)
 {
     float solution_urdf[ARM_IK_JOINT_COUNT] = {0.0f};
     float fixed_roll3_urdf = 0.0f;
@@ -990,7 +990,7 @@ static OmRet arm_ik_inverse_position_priority_local_internal(
     arm_ik_machine_to_urdf(reference_joint_vector, solution_urdf);
     fixed_roll3_urdf = solution_urdf[5];
 
-    for (iteration = 0u; iteration < APP_ARM_IK_POSITION_PRIORITY_MAX_ITERATIONS; iteration++)
+    for (iteration = 0u; iteration < APP_AT_IK_POS_PRI_MAX_ITERS; iteration++)
     {
         ArmIkForwardCache current_cache = {0};
         ArmIkPose current_pose = {0};
@@ -1007,17 +1007,17 @@ static OmRet arm_ik_inverse_position_priority_local_internal(
         uint32_t row = 0u;
         uint32_t col = 0u;
 
-        arm_ik_forward_cache_from_urdf_joint_vector(solution_urdf, &current_cache);
-        arm_ik_pose_from_forward_cache(&current_cache, &current_pose);
+        arm_ik_build_fk_cache(solution_urdf, &current_cache);
+        aik_pose_from_fk(&current_cache, &current_pose);
         position_error[0] = target_pose->position_m[0] - current_pose.position_m[0];
         position_error[1] = target_pose->position_m[1] - current_pose.position_m[1];
         position_error[2] = target_pose->position_m[2] - current_pose.position_m[2];
         position_error_norm = arm_ik_vec3_norm(position_error);
 
-        if (position_error_norm <= APP_ARM_IK_POSITION_PRIORITY_TOLERANCE_M)
+        if (position_error_norm <= APP_AT_IK_POS_PRI_TOL_M)
         {
             arm_ik_urdf_to_machine(solution_urdf, reference_joint_vector, solved_joint_vector);
-            arm_ik_fill_pose_error_snapshot(
+            aik_fill_pose_err(
                 position_error,
                 zero_orientation_error,
                 pose_error_snapshot);
@@ -1031,7 +1031,7 @@ static OmRet arm_ik_inverse_position_priority_local_internal(
             return OM_OK;
         }
 
-        arm_ik_build_geometric_jacobian(&current_cache, full_jacobian);
+        aik_build_jac(&current_cache, full_jacobian);
         for (row = 0u; row < ARM_IK_DIM_3; row++)
         {
             for (col = 0u; col < ARM_IK_DIM_6; col++)
@@ -1061,14 +1061,14 @@ static OmRet arm_ik_inverse_position_priority_local_internal(
                 if (row == col)
                 {
                     value +=
-                        APP_ARM_IK_POSITION_PRIORITY_DAMPING *
-                        APP_ARM_IK_POSITION_PRIORITY_DAMPING;
+                        APP_AT_IK_POS_PRI_DAMPING *
+                        APP_AT_IK_POS_PRI_DAMPING;
                 }
                 damping_matrix[row][col] = value;
             }
         }
 
-        if (arm_ik_solve_spd_system(
+        if (aik_solve_spd(
                 &damping_matrix[0][0],
                 position_error,
                 ARM_IK_DIM_3,
@@ -1089,9 +1089,9 @@ static OmRet arm_ik_inverse_position_priority_local_internal(
         }
 
         step_norm = arm_ik_vecn_norm(step, ARM_IK_DIM_6);
-        if (step_norm > APP_ARM_IK_POSITION_PRIORITY_STEP_LIMIT_RAD)
+        if (step_norm > APP_AT_IK_POS_PRI_STEP_MAX_RAD)
         {
-            const float scale = APP_ARM_IK_POSITION_PRIORITY_STEP_LIMIT_RAD / step_norm;
+            const float scale = APP_AT_IK_POS_PRI_STEP_MAX_RAD / step_norm;
             for (row = 0u; row < ARM_IK_DIM_6; row++)
             {
                 step[row] *= scale;
@@ -1114,37 +1114,37 @@ static OmRet arm_ik_inverse_position_priority_local_internal(
         float position_error[3] = {0.0f};
         float zero_orientation_error[3] = {0.0f, 0.0f, 0.0f};
 
-        arm_ik_forward_from_urdf_joint_vector(solution_urdf, &current_pose);
+        aik_forward_urdf(solution_urdf, &current_pose);
         position_error[0] = target_pose->position_m[0] - current_pose.position_m[0];
         position_error[1] = target_pose->position_m[1] - current_pose.position_m[1];
         position_error[2] = target_pose->position_m[2] - current_pose.position_m[2];
 
         if (arm_ik_vec3_norm(position_error) <=
-            APP_ARM_IK_POSITION_PRIORITY_ACCEPT_POSITION_ERROR_M)
+            APP_AT_IK_POS_PRI_ACCEPT_POS_ERR_M)
         {
             arm_ik_urdf_to_machine(solution_urdf, reference_joint_vector, solved_joint_vector);
-            arm_ik_fill_pose_error_snapshot(
+            aik_fill_pose_err(
                 position_error,
                 zero_orientation_error,
                 pose_error_snapshot);
             arm_ik_fill_debug_snapshot(
                 ARM_IK_SOLVER_POSITION_PRIORITY_LOCAL,
                 ARM_IK_FAILURE_NONE,
-                APP_ARM_IK_POSITION_PRIORITY_MAX_ITERATIONS,
+                APP_AT_IK_POS_PRI_MAX_ITERS,
                 1u,
                 1u,
                 solve_debug_snapshot);
             return OM_OK;
         }
 
-        arm_ik_fill_pose_error_snapshot(
+        aik_fill_pose_err(
             position_error,
             zero_orientation_error,
             pose_error_snapshot);
         arm_ik_fill_debug_snapshot(
             ARM_IK_SOLVER_POSITION_PRIORITY_LOCAL,
             ARM_IK_FAILURE_LOCAL_SOLVER_FAILED,
-            APP_ARM_IK_POSITION_PRIORITY_MAX_ITERATIONS,
+            APP_AT_IK_POS_PRI_MAX_ITERS,
             0u,
             0u,
             solve_debug_snapshot);
@@ -1159,7 +1159,7 @@ OmRet arm_kinematics_forward(
 {
     float urdf_joint_rad[ARM_IK_JOINT_COUNT] = {0.0f};
 
-#if (APP_ARM_IK_FORWARD_ENABLE != 1u)
+#if (APP_AT_IK_FORWARD_ENABLE != 1u)
     (void)joint_vector;
     (void)pose;
     return OM_ERROR_UNSUPPORTED;
@@ -1170,17 +1170,17 @@ OmRet arm_kinematics_forward(
     }
 
     arm_ik_machine_to_urdf(joint_vector, urdf_joint_rad);
-    arm_ik_forward_from_urdf_joint_vector(urdf_joint_rad, pose);
+    aik_forward_urdf(urdf_joint_rad, pose);
     return OM_OK;
 #endif
 }
 
-OmRet arm_kinematics_inverse_full_pose_local(
+OmRet aik_inverse_full_local(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector,
     ArmIkJointVector* solved_joint_vector,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot,
-    ArmIkSolveDebugSnapshot* solve_debug_snapshot)
+    ArmIkPoseErr* pose_error_snapshot,
+    ArmIkSolveDiag* solve_debug_snapshot)
 {
     if (target_pose == OM_NULL || reference_joint_vector == OM_NULL ||
         solved_joint_vector == OM_NULL)
@@ -1188,7 +1188,7 @@ OmRet arm_kinematics_inverse_full_pose_local(
         return OM_ERROR_NULL;
     }
 
-    if (arm_ik_full_pose_position_reachable(target_pose) != OM_TRUE)
+    if (arm_ik_full_pose_reach(target_pose) != OM_TRUE)
     {
         if (pose_error_snapshot != OM_NULL)
         {
@@ -1204,7 +1204,7 @@ OmRet arm_kinematics_inverse_full_pose_local(
         return OM_ERROR_PARAM;
     }
 
-    return arm_ik_inverse_full_pose_local_internal(
+    return aik_inverse_full(
         target_pose,
         reference_joint_vector,
         solved_joint_vector,
@@ -1212,12 +1212,12 @@ OmRet arm_kinematics_inverse_full_pose_local(
         solve_debug_snapshot);
 }
 
-OmRet arm_kinematics_inverse_position_priority_local(
+OmRet aik_inverse_pos_local(
     const ArmIkPose* target_pose,
     const ArmIkJointVector* reference_joint_vector,
     ArmIkJointVector* solved_joint_vector,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot,
-    ArmIkSolveDebugSnapshot* solve_debug_snapshot)
+    ArmIkPoseErr* pose_error_snapshot,
+    ArmIkSolveDiag* solve_debug_snapshot)
 {
     if (target_pose == OM_NULL || reference_joint_vector == OM_NULL ||
         solved_joint_vector == OM_NULL)
@@ -1225,7 +1225,7 @@ OmRet arm_kinematics_inverse_position_priority_local(
         return OM_ERROR_NULL;
     }
 
-    if (arm_ik_position_priority_reachable(target_pose, reference_joint_vector) != OM_TRUE)
+    if (arm_ik_pos_reach(target_pose, reference_joint_vector) != OM_TRUE)
     {
         if (pose_error_snapshot != OM_NULL)
         {
@@ -1241,7 +1241,7 @@ OmRet arm_kinematics_inverse_position_priority_local(
         return OM_ERROR_PARAM;
     }
 
-    return arm_ik_inverse_position_priority_local_internal(
+    return aik_inverse_pos(
         target_pose,
         reference_joint_vector,
         solved_joint_vector,
@@ -1249,10 +1249,10 @@ OmRet arm_kinematics_inverse_position_priority_local(
         solve_debug_snapshot);
 }
 
-OmRet arm_kinematics_compute_pose_error(
+OmRet aik_pose_error(
     const ArmIkPose* target_pose,
     const ArmIkPose* current_pose,
-    ArmIkPoseErrorSnapshot* pose_error_snapshot)
+    ArmIkPoseErr* pose_error_snapshot)
 {
     float position_error[3] = {0.0f};
     float orientation_error[3] = {0.0f};
@@ -1263,21 +1263,21 @@ OmRet arm_kinematics_compute_pose_error(
         return OM_ERROR_NULL;
     }
 
-    arm_ik_compute_pose_error_internal(
+    arm_ik_pose_error_inner(
         target_pose,
         current_pose,
         position_error,
         orientation_error);
-    arm_ik_fill_pose_error_snapshot(
+    aik_fill_pose_err(
         position_error,
         orientation_error,
         pose_error_snapshot);
     return OM_OK;
 }
 
-OmRet arm_kinematics_classify_pose_features(
+OmRet aik_classify_pose(
     const ArmIkJointVector* joint_vector,
-    ArmIkPoseFeatureSnapshot* pose_feature_snapshot)
+    ArmIkPoseFeat* pose_feature_snapshot)
 {
     ArmIkPose pose = {0};
     float target_rotation[3][3] = {{0.0f}};

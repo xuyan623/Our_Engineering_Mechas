@@ -22,12 +22,12 @@ static void sh_self_test_task_entry(void* arg)
     {
         elapsed_ms = (OsalTimeMs)(osal_time_now_monotonic() - start_time_ms);
 
-        if (fault_injected != OM_TRUE && elapsed_ms >= APP_SYSTEM_HEALTH_SELF_TEST_DELAY_MS)
+        if (fault_injected != OM_TRUE && elapsed_ms >= APP_SH_SELF_TEST_DELAY_MS)
         {
-#if (APP_SYSTEM_HEALTH_SELF_TEST_MODE == APP_SYSTEM_HEALTH_SELF_TEST_MODE_RUNTIME_TIMEOUT)
+#if (APP_SH_SELF_TEST_MODE == APP_SH_SELF_TEST_MODE_RT_TIMEOUT)
             /* 专用自测任务停止心跳，验证 timeout -> runtime fault 链路。 */
             fault_injected = OM_TRUE;
-#elif (APP_SYSTEM_HEALTH_SELF_TEST_MODE == APP_SYSTEM_HEALTH_SELF_TEST_MODE_FATAL)
+#elif (APP_SH_SELF_TEST_MODE == APP_SH_SELF_TEST_MODE_FATAL)
             sh_report_fatal(SH_ERR_SELF_TEST_FATAL, "system_health self-test fatal injected");
             fault_injected = OM_TRUE;
 #else
@@ -49,7 +49,7 @@ static void sh_self_test_task_entry(void* arg)
 
 OmRet sh_self_test_task_start(void)
 {
-#if (APP_SYSTEM_HEALTH_SELF_TEST_MODE == APP_SYSTEM_HEALTH_SELF_TEST_MODE_OFF)
+#if (APP_SH_SELF_TEST_MODE == APP_SH_SELF_TEST_MODE_OFF)
     return OM_OK;
 #else
     static OsalThread* self_test_task_thread = OM_NULL;

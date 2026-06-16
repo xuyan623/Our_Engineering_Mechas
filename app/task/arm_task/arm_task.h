@@ -1,5 +1,5 @@
-#ifndef NEW_ROBOT_ARM_TASK_H
-#define NEW_ROBOT_ARM_TASK_H
+#ifndef NEW_ROBOT_AT_H
+#define NEW_ROBOT_AT_H
 
 #include "core/om_def.h"
 #include "task/input_task/input_task_snapshot.h"
@@ -18,11 +18,11 @@
  * - 物理收发仍只归 motor_communications_task
  */
 OmRet arm_task_start(void);
-OmRet arm_task_submit_mode_control_snapshot(
+OmRet arm_task_submit_mode_snapshot(
     const ArmTaskModeSnapshot* snapshot);
 OmRet arm_task_submit_rc_snapshot(
     const InputRcSnapshot* snapshot);
-OmRet arm_task_submit_custom_controller_snapshot(
-    const InputCustomControllerSnapshot* snapshot);
+OmRet arm_task_submit_custom(
+    const InputCustomSnapshot* snapshot);
 
 #endif

@@ -13,17 +13,17 @@
  * 供 runtime/vendor/diag 三个实现文件共享。
  */
 #define MCT_LOOP_PERIOD_MS                              APP_MCT_LOOP_PERIOD_MS
-#define MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS      APP_MCT_OPERATIONAL_FORMAL_TRANSMIT_PERIOD_MS
-#define MCT_OPERATIONAL_OBSERVATION_PERIOD_MS          APP_MCT_OPERATIONAL_OBSERVATION_PERIOD_MS
-#define MCT_NON_OPERATIONAL_PERIOD_MS                  APP_MCT_NON_OPERATIONAL_PERIOD_MS
-#define MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS   APP_MCT_NON_OPERATIONAL_P1010B_OBSERVE_PERIOD_MS
+#define MCT_OPERATIONAL_TX_MS      APP_MCT_OPERATIONAL_TX_MS
+#define MCT_OPERATIONAL_OBSERVE_MS          APP_MCT_OPERATIONAL_OBSERVE_MS
+#define MCT_IDLE_PERIOD_MS                  APP_MCT_IDLE_PERIOD_MS
+#define MCT_IDLE_P1010B_OBSERVE_MS   APP_MCT_IDLE_P1010B_OBSERVE_MS
 #define MCT_STACK_WORDS                             (1024u)
 #define MCT_PRIORITY                                (4u)
 #define MCT_DJI_CHASSIS_COUNT                       (4u)
 #define MCT_P1010B_COUNT                            (2u)
 #define MCT_DAMIAO_COUNT                            (6u)
-#define MCT_DJI_ROLL3_ID                            APP_MOTOR_DJI_ID_ROLL3
-#define MCT_GO8010_PITCH2_ID                        APP_MOTOR_GO8010_ID_PITCH2
+#define MCT_DJI_ROLL3_ID                            APP_MDJI_ID_ROLL3
+#define MCT_GO8010_PITCH2_ID                        APP_MG8_ID_PITCH2
 #define MCT_DAMIAO_MODE_SETTLE_MS                   (10u)
 
 /* 下列配置表只描述“正式电机命名 -> vendor 内部 id”的静态事实，
@@ -98,7 +98,7 @@ typedef struct
     OmBool p1010b_non_operational_disable_confirmed[MCT_P1010B_COUNT];
     uint8_t next_non_operational_p1010b_observation_index;
     OmBool damiao_non_operational_disable_confirmed[MCT_DAMIAO_COUNT];
-    uint32_t damiao_non_operational_disable_sequence_base[MCT_DAMIAO_COUNT];
+    uint32_t damiao_idle_dis_seq_base[MCT_DAMIAO_COUNT];
     uint32_t last_tx_request_sources_mask;
     OmBool last_tx_request_overflowed;
 } MctRuntime;
@@ -127,7 +127,7 @@ OmRet mct_runtime_init(
  *
  * 这是后续“遥控器触发的软件重置”要复用的核心入口。
  */
-OmRet mct_runtime_enter_operational_state(MctRuntime* runtime);
+OmRet mct_runtime_enter_active(MctRuntime* runtime);
 
 /* 保留 wiring 和注册表不变，只把正式通信 owner 退回到“安全退出”状态：
  * - 清 loop/query/dispatch 运行态
@@ -136,13 +136,13 @@ OmRet mct_runtime_enter_operational_state(MctRuntime* runtime);
  *
  * 当前设计面向“立即重进”的软件 bring-up 复用，不是长期 disabled 模式机。
  */
-OmRet mct_runtime_leave_operational_state(MctRuntime* runtime);
+OmRet mct_runtime_leave_active(MctRuntime* runtime);
 
 /* non-operational owner 路径：
  * - 持续把正式电机保持在 disabled / safe output
  * - 不推进正常 query / receive / recovery
  */
-OmRet mct_runtime_run_non_operational_cycle(MctRuntime* runtime);
+OmRet mct_runtime_run_idle(MctRuntime* runtime);
 
 /* GO8010 零位捕获：
  * 首个有效反馈到来后，在 owner 侧锁存初始零位，供 arm_task 只读消费。

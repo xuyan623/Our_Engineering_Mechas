@@ -84,7 +84,7 @@ float math_utils_normalize_deg(float angle_deg)
     return angle_deg;
 }
 
-float math_utils_resolve_nearest_equivalent_deg(float target_deg, float reference_deg)
+float math_utils_resolve_deg(float target_deg, float reference_deg)
 {
     float target_normalized_deg = math_utils_normalize_deg(target_deg);
     float reference_normalized_deg = math_utils_normalize_deg(reference_deg);
@@ -104,7 +104,7 @@ float math_utils_resolve_nearest_equivalent_deg(float target_deg, float referenc
     return target_normalized_deg + (reference_deg - reference_normalized_deg);
 }
 
-float math_utils_resolve_nearest_equivalent_rad(float target_rad, float reference_rad)
+float math_utils_resolve_rad(float target_rad, float reference_rad)
 {
     return reference_rad + math_utils_wrap_pi_f32(target_rad - reference_rad);
 }
@@ -142,7 +142,7 @@ float math_utils_rad_per_s_to_rpm(float angular_velocity_rad_per_s)
     return angular_velocity_rad_per_s * (60.0f / (2.0f * APP_PI));
 }
 
-float math_utils_apply_symmetric_deadband(float value_deg, float deadband_deg)
+float math_utils_symmetric_deadband(float value_deg, float deadband_deg)
 {
     if (value_deg > deadband_deg)
     {

@@ -32,6 +32,6 @@ void mecanum_calc_three_wheel(
  * - pitch1_motor_angle_rad：Pitch1 电机参考角（rad）
  * - pitch2_motor_angle_rad：Pitch2 电机参考角（rad），已乘减速比
  */
-OmRet Change_Position_to_Motor_Angle(float x_mm, float z_mm, float* pitch1_motor_angle_rad, float* pitch2_motor_angle_rad);
+OmRet kin_pos_to_motor(float x_mm, float z_mm, float* pitch1_motor_angle_rad, float* pitch2_motor_angle_rad);
 
 #endif

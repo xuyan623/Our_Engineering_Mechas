@@ -10,15 +10,15 @@
 
 #define P1010B_LEFT_LEG_TEST_LOOP_PERIOD_MS               (10u)
 #define P1010B_LEFT_LEG_TEST_RETRY_DELAY_MS               (50u)
-#define P1010B_LEFT_LEG_TEST_PREPARE_RETRY_INTERVAL_LOOPS (10u)
+#define P1010B_LEFT_LEG_TEST_RETRY_LOOPS (10u)
 #define P1010B_LEFT_LEG_TEST_CAN_BAUDRATE                 (CAN_BAUD_1M)
 #define P1010B_LEFT_LEG_TEST_MOTOR_ID                     (2u)
 #define P1010B_LEFT_LEG_TEST_DEFAULT_MODE                 (P1010B_MODE_CURRENT)
-#define P1010B_LEFT_LEG_TEST_QUERY_CONFIG_PERIOD_MS       (1u)
-#define P1010B_LEFT_LEG_TEST_ONLINE_TIMEOUT_MS            (100u)
+#define P1010B_LEFT_TEST_QUERY_MS       (1u)
+#define P1010B_LEFT_TEST_ONLINE_MS            (100u)
 #define P1010B_LEFT_LEG_TEST_ENCODER_WRAP                 (32768)
-#define P1010B_LEFT_LEG_TEST_ENCODER_HALF_WRAP            (16384)
-#define P1010B_LEFT_LEG_TEST_ANGLE_RATIO_DEG              (360.0f / 32768.0f)
+#define P1010B_LEFT_TEST_HALF_WRAP            (16384)
+#define P1010B_LEFT_TEST_SCALE_DEG              (360.0f / 32768.0f)
 
 typedef struct
 {
@@ -32,17 +32,17 @@ typedef struct
     OmBool offset_initialized_flag;
     OmBool bus_initialized_flag;
     uint32_t last_feedback_timestamp_ms;
-} P1010BLeftLegTestRuntime;
+} P1010BLeftRuntime;
 
-static P1010BLeftLegTestRuntime g_p1010b_left_leg_test_runtime = {0};
-P1010BLeftLegTestDebugState g_p1010b_left_leg_test_debug = {0};
+static P1010BLeftRuntime g_p1010b_left_leg_test_runtime = {0};
+P1010BLeftDebug g_p1010b_left_leg_test_debug = {0};
 
-static P1010BActiveReportConfig p1010b_left_leg_test_make_query_mode_config(void)
+static P1010BActiveReportConfig p10lt_query_cfg(void)
 {
     return (P1010BActiveReportConfig){
         /* 查询模式下驱动仍要求 periodMs 非 0，这里给 1ms 占位。 */
         .enable = false,
-        .periodMs = P1010B_LEFT_LEG_TEST_QUERY_CONFIG_PERIOD_MS,
+        .periodMs = P1010B_LEFT_TEST_QUERY_MS,
         .dataTypeSlots = {
             (uint8_t)P1010B_REPORT_DATA_ABSOLUTE_POSITION,
             (uint8_t)P1010B_REPORT_DATA_SPEED_RPM,
@@ -52,7 +52,7 @@ static P1010BActiveReportConfig p1010b_left_leg_test_make_query_mode_config(void
     };
 }
 
-static OmRet p1010b_left_leg_test_configure_can(Device* can_device)
+static OmRet p10lt_can(Device* can_device)
 {
     CanCfg can_cfg = CAN_DEFUALT_CFG;
     OmRet ret = OM_OK;
@@ -102,8 +102,8 @@ static OmRet p1010b_left_leg_test_configure_can(Device* can_device)
     return OM_OK;
 }
 
-static void p1010b_left_leg_test_update_position_tracking(
-    P1010BLeftLegTestRuntime* runtime,
+static void p10lt_track_pos(
+    P1010BLeftRuntime* runtime,
     uint16_t absolute_position_raw)
 {
     if (runtime == OM_NULL)
@@ -125,11 +125,11 @@ static void p1010b_left_leg_test_update_position_tracking(
         int32_t encoder_delta =
             (int32_t)absolute_position_raw - (int32_t)runtime->last_absolute_position_raw;
 
-        if (encoder_delta > P1010B_LEFT_LEG_TEST_ENCODER_HALF_WRAP)
+        if (encoder_delta > P1010B_LEFT_TEST_HALF_WRAP)
         {
             runtime->round_count--;
         }
-        else if (encoder_delta < -P1010B_LEFT_LEG_TEST_ENCODER_HALF_WRAP)
+        else if (encoder_delta < -P1010B_LEFT_TEST_HALF_WRAP)
         {
             runtime->round_count++;
         }
@@ -142,8 +142,8 @@ static void p1010b_left_leg_test_update_position_tracking(
     }
 }
 
-static void p1010b_left_leg_test_write_feedback_values(
-    P1010BLeftLegTestRuntime* runtime,
+static void p10lt_write_fb(
+    P1010BLeftRuntime* runtime,
     uint16_t absolute_position_raw,
     int16_t speed_raw,
     int16_t iq_raw,
@@ -157,11 +157,11 @@ static void p1010b_left_leg_test_write_feedback_values(
 
     runtime->last_feedback_timestamp_ms = timestamp_ms;
     g_p1010b_left_leg_test_debug.feedback_count++;
-    p1010b_left_leg_test_update_position_tracking(runtime, absolute_position_raw);
+    p10lt_track_pos(runtime, absolute_position_raw);
 
     g_p1010b_left_leg_test_debug.absolute_position_raw = (float)absolute_position_raw;
     g_p1010b_left_leg_test_debug.total_angle_deg =
-        ((float)runtime->total_encoder_counts) * P1010B_LEFT_LEG_TEST_ANGLE_RATIO_DEG;
+        ((float)runtime->total_encoder_counts) * P1010B_LEFT_TEST_SCALE_DEG;
     g_p1010b_left_leg_test_debug.speed_rpm = ((float)speed_raw) / 10.0f;
     g_p1010b_left_leg_test_debug.speed_deg_per_s =
         g_p1010b_left_leg_test_debug.speed_rpm * 6.0f;
@@ -169,7 +169,7 @@ static void p1010b_left_leg_test_write_feedback_values(
     g_p1010b_left_leg_test_debug.bus_voltage_v = ((float)bus_voltage_raw) / 10.0f;
 }
 
-static OmRet p1010b_left_leg_test_query_feedback(P1010BLeftLegTestRuntime* runtime)
+static OmRet p10lt_query_fb(P1010BLeftRuntime* runtime)
 {
     P1010BResponse response = {0};
     OmRet ret = OM_OK;
@@ -201,7 +201,7 @@ static OmRet p1010b_left_leg_test_query_feedback(P1010BLeftLegTestRuntime* runti
     iq_raw = response.data.activeQueryValues[2];
     bus_voltage_raw = response.data.activeQueryValues[3];
 
-    p1010b_left_leg_test_write_feedback_values(
+    p10lt_write_fb(
         runtime,
         absolute_position_raw,
         speed_raw,
@@ -211,7 +211,7 @@ static OmRet p1010b_left_leg_test_query_feedback(P1010BLeftLegTestRuntime* runti
     return OM_OK;
 }
 
-static void p1010b_left_leg_test_update_online_flag(P1010BLeftLegTestRuntime* runtime)
+static void p10lt_online(P1010BLeftRuntime* runtime)
 {
     uint32_t now_ms = 0u;
     uint32_t age_ms = 0u;
@@ -230,15 +230,15 @@ static void p1010b_left_leg_test_update_online_flag(P1010BLeftLegTestRuntime* ru
     g_p1010b_left_leg_test_debug.last_rx_age_ms = age_ms;
     g_p1010b_left_leg_test_debug.online_flag =
         (runtime->last_feedback_timestamp_ms > 0u &&
-         age_ms <= P1010B_LEFT_LEG_TEST_ONLINE_TIMEOUT_MS)
+         age_ms <= P1010B_LEFT_TEST_ONLINE_MS)
             ? 1u
             : 0u;
 }
 
-static OmRet p1010b_left_leg_test_prepare_motor(P1010BLeftLegTestRuntime* runtime)
+static OmRet p10lt_prep_motor(P1010BLeftRuntime* runtime)
 {
     const P1010BActiveReportConfig query_mode_config =
-        p1010b_left_leg_test_make_query_mode_config();
+        p10lt_query_cfg();
     P1010BResponse response = {0};
     OmRet ret = OM_OK;
 
@@ -269,8 +269,8 @@ static OmRet p1010b_left_leg_test_prepare_motor(P1010BLeftLegTestRuntime* runtim
     return ret;
 }
 
-static OmRet p1010b_left_leg_test_runtime_init(
-    P1010BLeftLegTestRuntime* runtime,
+static OmRet p10lt_init(
+    P1010BLeftRuntime* runtime,
     const BspDeviceRegistry* devices)
 {
     P1010BConfig driver_config = P1010B_DEFAULT_CONFIG(P1010B_LEFT_LEG_TEST_MOTOR_ID);
@@ -285,9 +285,9 @@ static OmRet p1010b_left_leg_test_runtime_init(
     runtime->can_device = devices->can1;
 
     driver_config.defaultMode = P1010B_LEFT_LEG_TEST_DEFAULT_MODE;
-    driver_config.activeReport = p1010b_left_leg_test_make_query_mode_config();
+    driver_config.activeReport = p10lt_query_cfg();
 
-    ret = p1010b_left_leg_test_configure_can(runtime->can_device);
+    ret = p10lt_can(runtime->can_device);
     if (ret != OM_OK)
     {
         return ret;
@@ -319,9 +319,9 @@ static OmRet p1010b_left_leg_test_runtime_init(
     return OM_OK;
 }
 
-static void p1010b_left_leg_test_task_entry(void* arg)
+static void p10lt_entry(void* arg)
 {
-    P1010BLeftLegTestRuntime* runtime = (P1010BLeftLegTestRuntime*)arg;
+    P1010BLeftRuntime* runtime = (P1010BLeftRuntime*)arg;
     OsalTimeMs deadline_cursor_ms = 0u;
     uint32_t retry_loop_count = 0u;
 
@@ -334,29 +334,29 @@ static void p1010b_left_leg_test_task_entry(void* arg)
     }
 
     g_p1010b_left_leg_test_debug.prepare_ret =
-        (int32_t)p1010b_left_leg_test_prepare_motor(runtime);
+        (int32_t)p10lt_prep_motor(runtime);
 
     while (1)
     {
         retry_loop_count++;
         g_p1010b_left_leg_test_debug.driver_state = (uint8_t)p1010b_get_state(&runtime->driver);
 
-        if (p1010b_left_leg_test_query_feedback(runtime) != OM_OK &&
-            (retry_loop_count % P1010B_LEFT_LEG_TEST_PREPARE_RETRY_INTERVAL_LOOPS) == 0u)
+        if (p10lt_query_fb(runtime) != OM_OK &&
+            (retry_loop_count % P1010B_LEFT_LEG_TEST_RETRY_LOOPS) == 0u)
         {
             g_p1010b_left_leg_test_debug.prepare_ret =
-                (int32_t)p1010b_left_leg_test_prepare_motor(runtime);
+                (int32_t)p10lt_prep_motor(runtime);
             (void)osal_sleep_ms(P1010B_LEFT_LEG_TEST_RETRY_DELAY_MS);
             continue;
         }
 
-        p1010b_left_leg_test_update_online_flag(runtime);
+        p10lt_online(runtime);
         (void)sh_beat(SH_TASK_P1010B_LEFT_LEG_SMOKE);
         (void)osal_delay_until(&deadline_cursor_ms, P1010B_LEFT_LEG_TEST_LOOP_PERIOD_MS, OM_NULL);
     }
 }
 
-OmRet p1010b_left_leg_test_task_start(const BspDeviceRegistry* devices)
+OmRet p10lt_start(const BspDeviceRegistry* devices)
 {
     static OsalThread* p1010b_left_leg_test_task = OM_NULL;
     const OsalThreadAttr p1010b_left_leg_test_attr = {
@@ -378,7 +378,7 @@ OmRet p1010b_left_leg_test_task_start(const BspDeviceRegistry* devices)
 
     memset(&g_p1010b_left_leg_test_debug, 0, sizeof(g_p1010b_left_leg_test_debug));
 
-    ret = p1010b_left_leg_test_runtime_init(&g_p1010b_left_leg_test_runtime, devices);
+    ret = p10lt_init(&g_p1010b_left_leg_test_runtime, devices);
     g_p1010b_left_leg_test_debug.init_ret = (int32_t)ret;
     if (ret != OM_OK)
     {
@@ -388,7 +388,7 @@ OmRet p1010b_left_leg_test_task_start(const BspDeviceRegistry* devices)
     status = osal_thread_create(
         &p1010b_left_leg_test_task,
         &p1010b_left_leg_test_attr,
-        p1010b_left_leg_test_task_entry,
+        p10lt_entry,
         &g_p1010b_left_leg_test_runtime);
     if (status != OSAL_OK)
     {
